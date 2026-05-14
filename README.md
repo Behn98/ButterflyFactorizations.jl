@@ -1,7 +1,7 @@
 # ButterflyFactorizations
 
 <p align="center">
-  <img src="assets/logo.png" width="220" alt="ButterflyFactorizations Logo"/>
+  <img src="assets/logo.png" width="400" alt="ButterflyFactorizations Logo"/>
 </p>
  
 <p align="center">
