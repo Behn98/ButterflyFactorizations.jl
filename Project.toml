@@ -1,0 +1,13 @@
+name = "ButterflyFactorizations"
+uuid = "1afcf66b-6a8b-44ef-a816-9c75916d68ab"
+authors = ["Ben Christopher Merten <ben.merten@uni-rostock.de>"]
+version = "1.0.0-DEV"
+
+[compat]
+julia = "1.10"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
