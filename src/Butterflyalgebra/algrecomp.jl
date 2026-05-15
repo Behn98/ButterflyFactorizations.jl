@@ -21,7 +21,6 @@ operations is only supported for the Dictionary versions of the Butterflies, as 
 matrix-based format is not designed for algebraic manipulations and would require a complete
 restructuring of the underlying data representation to support such operations effectively.
 """
-
 function recompress_BF(Butterfly::BF, τ)
     Q = Butterfly.Q
     R = Butterfly.R

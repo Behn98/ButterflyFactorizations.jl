@@ -14,7 +14,6 @@ concatenation cannot occur, so the BFs are simply joined into a new structure.
 Note that this resulting structure is purely algebraic and loses its direct physical
 interpretation, similar to adding the two dense matrices directly.
 """
-
 function add_eqbfs(BF1::BF, BF_2::BF, τ)
     @assert BF1.NS == BF_2.NS && BF1.NO == BF_2.NO "rootids must match for addition."
     # --- Case 1: Same source and observer clusters ---

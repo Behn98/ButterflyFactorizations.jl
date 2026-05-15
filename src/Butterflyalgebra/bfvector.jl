@@ -10,10 +10,14 @@ end
 """
     apply_BF(Butterfly::BF, v::AbstractVector{ComplexF64})
 
-Applies the sequence of Butterfly Factorization factors (`Q`, `R`, and `P`)
-to a vector `v` and returns the resulting vector.
+Applies the sequence of Butterfly Factorization factors (`Q`, `R`, and `P`) to a vector `v`
+and returns the resulting vector. Do note that this function is optimized for the structure
+of `BF` and uses a "ping-pong" strategy to minimize memory allocations during the sequential
+application of the `R` factors. The indices of the dictionaries are matching the row and
+column indices of the skeleton associated with the underlying Matrix structure thus we can
+perform a block by block matrix vector product using the well known algebra for matrices,
+while retaining the semantical structure of the corresponding clusters.
 """
-
 function apply_BF(Butterfly::BF, v::AbstractVector{ComplexF64})
     Q = Butterfly.Q
     R = Butterfly.R
@@ -88,7 +92,6 @@ end
 Applies the sequential matrix operations (`Q`, `R` layers, and `P`) of a
 `BF_Mats` factorization to a vector `v` and returns the output vector.
 """
-
 function applyBF_Mats(t::BF_Mats, v::AbstractVector{ComplexF64})
     y = v
     y = t.Q * y

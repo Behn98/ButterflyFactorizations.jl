@@ -12,23 +12,25 @@ Butterfly blocks. Keep in mind that as off right now this work is still restrict
 balanced trees in the sense that all leaves need to be on leaf level.
 
 **Arguments:**
-- `operator`: The integral operator (e.g., Maxwell single-layer) to be evaluated.
-- `testspace`: The observer (test) function space.
-- `trialspace`: The source (trial) function space.
-- `tree`: A coupled `BlockTree` representing the hierarchical clustering.
-- `k`: The physical wavenumber of the problem.
+
+  - `operator`: The integral operator (e.g., Maxwell single-layer) to be evaluated.
+  - `testspace`: The observer (test) function space.
+  - `trialspace`: The source (trial) function space.
+  - `tree`: A coupled `BlockTree` representing the hierarchical clustering.
+  - `k`: The physical wavenumber of the problem.
 
 **Keyword Arguments:**
-- `Compressor`: The low-rank approximation strategy (default: `PartialQR()`).
-- `tol`: The relative precision tolerance for compression (default: `1e-3`).
-- `ntasks`: Number of threads to use for parallel near-field assembly.
-- `α`: The geometric admissibility parameter (default: `2.0`).
+
+  - `Compressor`: The low-rank approximation strategy (default: `PartialQR()`).
+  - `tol`: The relative precision tolerance for compression (default: `1e-3`).
+  - `ntasks`: Number of threads to use for parallel near-field assembly.
+  - `α`: The geometric admissibility parameter (default: `2.0`).
 
 **Returns:**
-- A `PetrovGalerkinBF` struct containing the near-field matrix and the array of far-field
-  `BF` blocks.
-"""
 
+  - A `PetrovGalerkinBF` struct containing the near-field matrix and the array of far-field
+    `BF` blocks.
+"""
 function PetrovGalerkinBF(
     operator,
     testspace,
@@ -84,23 +86,25 @@ matrices. This format requires more memory but provides significantly faster Mat
 multiplication.
 
 **Arguments:**
-- `operator`: The integral operator to be evaluated.
-- `testspace`: The observer (test) function space.
-- `trialspace`: The source (trial) function space.
-- `tree`: A coupled `BlockTree` representing the hierarchical clustering.
-- `k`: The physical wavenumber of the problem.
+
+  - `operator`: The integral operator to be evaluated.
+  - `testspace`: The observer (test) function space.
+  - `trialspace`: The source (trial) function space.
+  - `tree`: A coupled `BlockTree` representing the hierarchical clustering.
+  - `k`: The physical wavenumber of the problem.
 
 **Keyword Arguments:**
-- `Compressor`: The low-rank approximation strategy (default: `PartialQR()`).
-- `tol`: The relative precision tolerance for compression (default: `1e-3`).
-- `ntasks`: Number of threads to use for parallel near-field assembly.
-- `α`: The geometric admissibility parameter (default: `2.0`).
+
+  - `Compressor`: The low-rank approximation strategy (default: `PartialQR()`).
+  - `tol`: The relative precision tolerance for compression (default: `1e-3`).
+  - `ntasks`: Number of threads to use for parallel near-field assembly.
+  - `α`: The geometric admissibility parameter (default: `2.0`).
 
 **Returns:**
-- A `PetrovGalerkinBF_mats` struct containing the near-field matrix and the array of
-  far-field `BF_Mats` blocks.
-"""
 
+  - A `PetrovGalerkinBF_mats` struct containing the near-field matrix and the array of
+    far-field `BF_Mats` blocks.
+"""
 function PetrovGalerkinBF_mats(
     operator,
     testspace,

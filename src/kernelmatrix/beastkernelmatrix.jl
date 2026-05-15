@@ -1,3 +1,8 @@
+"""
+    BEASTKernelMatrix
+
+A wrapper structure for BEAST boundary integral operator matrices.
+"""
 struct BEASTKernelMatrix{T,NearBlockAssemblerType} <: AbstractKernelMatrix{T}
     nearassembler::NearBlockAssemblerType
     function BEASTKernelMatrix{T}(nearassembler) where {T}

@@ -25,7 +25,6 @@ tree structure is desired, such as in the case of recompression or algebraic ope
 the factors. However, it requires careful handling of index permutations to ensure correct
 MV products, which is managed through the `PermQ` and `PermP` dictionaries.
 """
-
 function subroutine_BF(
     kernelmatrix,
     H2Blocktree,
@@ -246,9 +245,7 @@ as of now this version of the subroutine is still a WIP to handle the case of un
 treees. However it is basically inserting ghost nodes to make the tree balanced, and then
 skipping the empty nodes during the traversal. Thus in the usual case one would want to
 simply use a balanced tree with the desired aspect as discussed.
-
 """
-
 function subroutine_BF_pruned(
     kernelmatrix,
     H2Blocktree,
@@ -551,7 +548,6 @@ overhead), it allows for dramatically faster direct Matrix-Vector applications u
 standard linear algebra methods. It also provides a clear visual and algebraic
 representation of the overall block structure, which is invaluable for debugging.
 """
-
 function subroutine_BF_mats(
     kernelmatrix,
     H2Blocktree,

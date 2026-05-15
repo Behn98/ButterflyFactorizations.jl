@@ -16,7 +16,6 @@ matrix-vector products while preserving the overall accuracy within the specifie
 In terms of storage future work has to include more aggressive recompression strategies to
 prevent the intermediate factors from growing too large.
 """
-
 function mulBFs(BF_1::BF, BF_2::BF, τ::Float64)
     @assert length(BF_1) == length(BF_2) "Both BFs must have the same number of levels"
     @assert BF_1.NS == BF_2.NO "Source and Observer dimensions must match"
@@ -273,4 +272,13 @@ function lowrank_add!(U, S, V, A_new, τ, kmax)
     r = min(sum(F.S .> τ), kmax)
 
     return F.U[:, 1:r], F.S[1:r], F.V[:, 1:r]
+end
+
+function LinearAlgebra.mul!(
+    C::ButterflyFactorizations.BF,
+    A::ButterflyFactorizations.BF,
+    B::ButterflyFactorizations.BF,
+)
+    copyto!(C, mulBFs(A, B, max(A.τ, B.τ)))
+    return C
 end

@@ -184,11 +184,12 @@ The implementation has been tested on benchmark scattering scenarios.
 
 Parameters:
 ```txt
-N = 4821
-radius = 1
-distance = 3
-λ = 1
-h = 0.1
+N = number of unknowns,
+radius,
+distance,
+λ = wavelength,
+h = discretization stepsize,
+
 ```
 
 ### Compression Accuracy
@@ -246,13 +247,13 @@ The current development roadmap focuses on:
 
 ```julia
 using Pkg
-Pkg.add(url="https://github.com/YOUR_USERNAME/ButterflyFactorizations.jl")
+Pkg.add(url="https://github.com/Behn98/ButterflyFactorizations.jl")
 ```
         
 Or clone locally:
         
 ```bash
-git clone https://github.com/YOUR_USERNAME/ButterflyFactorizations.jl
+git clone https://github.com/Behn98/ButterflyFactorizations.jl
 cd ButterflyFactorizations.jl
 ```
         
@@ -319,15 +320,15 @@ ButterflyFactorizations.jl/
         
 ---
         
-## References
+## References (selection)
         
 This project builds upon ideas introduced in:
         
-- Michielssen & Boag (1994, 1996)
-- Kaplan & Brick (2022)
-- Li et al. (2015)
-- Guo et al. (2017)
-- Heldring, Ubeda & Rius
+- Michielssen & Boag https://ieeexplore.ieee.org/document/511816, https://onlinelibrary.wiley.com/doi/abs/10.1002/mop.4650071707 (1994, 1996)
+- Kaplan & Brick https://ieeexplore.ieee.org/document/9732959 (2022)
+- Li et al. https://arxiv.org/abs/1502.01379 (2015)
+- Guo et al. https://ieeexplore.ieee.org/document/7982657 (2017)
+- Heldring, Ubeda & Rius https://ieeexplore.ieee.org/abstract/document/11231064 (2026)
         
 ---
         

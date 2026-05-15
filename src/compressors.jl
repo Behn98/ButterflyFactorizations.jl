@@ -5,7 +5,6 @@ abstract type Abstractcompressor end
 
 A type representing the Partial QR compression strategy for low-rank approximations.
 """
-
 struct PartialQR <: Abstractcompressor
     PartialQR() = new()
 end
@@ -22,18 +21,19 @@ A pivoted QR decomposition is then applied to find a basis and an active set of 
 indices (the "skeleton").
 
 **Arguments:**
-- `farassembler`: A function that assembles entries of the interaction matrix.
-- `src_index`: Vector of global indices for the source (trial) cluster.
-- `obs_index`: Vector of global indices for the observer (test) cluster.
-- `n_otilde`: The number of rows to sample randomly.
-- `ε`: The relative tolerance used to determine the rank truncation.
+
+  - `farassembler`: A function that assembles entries of the interaction matrix.
+  - `src_index`: Vector of global indices for the source (trial) cluster.
+  - `obs_index`: Vector of global indices for the observer (test) cluster.
+  - `n_otilde`: The number of rows to sample randomly.
+  - `ε`: The relative tolerance used to determine the rank truncation.
 
 **Returns:**
-- `tmp`: The compressed coefficient matrix (size `r × n_src`).
-- `k`: The optimal skeleton of source indices selected by the pivot strategy.
-- `r`: The estimated mathematical rank of the block.
-"""
 
+  - `tmp`: The compressed coefficient matrix (size `r × n_src`).
+  - `k`: The optimal skeleton of source indices selected by the pivot strategy.
+  - `r`: The estimated mathematical rank of the block.
+"""
 function (t::PartialQR)(
     farassembler, src_index::Vector{Int}, obs_index::Vector{Int}, n_otilde::Int, ε::Float64
 )

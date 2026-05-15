@@ -8,12 +8,13 @@ zeros. The resulting matrix has dimensions equal to the sum of the dimensions of
 matrices.
 
 **Arguments:**
-- `blocks`: A variable number of dense matrices (`AbstractMatrix`).
+
+  - `blocks`: A variable number of dense matrices (`AbstractMatrix`).
 
 **Returns:**
-- A single dense matrix `M` containing the block diagonal combination.
-"""
 
+  - A single dense matrix `M` containing the block diagonal combination.
+"""
 function blockdiag(blocks::AbstractMatrix...)
     isempty(blocks) && return zeros(0, 0)
 
@@ -45,12 +46,13 @@ Each input matrix is converted to a sparse matrix and placed on the diagonal,
 with off-diagonal blocks remaining empty (structural zeros).
 
 **Arguments:**
-- `blocks`: A variable number of matrices (`AbstractMatrix`).
+
+  - `blocks`: A variable number of matrices (`AbstractMatrix`).
 
 **Returns:**
-- A `SparseMatrixCSC` encompassing all input blocks diagonally.
-"""
 
+  - A `SparseMatrixCSC` encompassing all input blocks diagonally.
+"""
 function sparse_blockdiag(blocks::AbstractMatrix...)
     isempty(blocks) && return spzeros(ComplexF64, 0, 0)
 
@@ -68,12 +70,13 @@ Each input matrix is stacked on top of the next. All blocks must have the same n
 columns.
 
 **Arguments:**
-- `blocks`: A variable number of matrices (`AbstractMatrix`).
+
+  - `blocks`: A variable number of matrices (`AbstractMatrix`).
 
 **Returns:**
-- A `SparseMatrixCSC` resulting from the vertical stack.
-"""
 
+  - A `SparseMatrixCSC` resulting from the vertical stack.
+"""
 function sparse_vcat(blocks::AbstractMatrix...)
     isempty(blocks) && return spzeros(ComplexF64, 0, 0)
 
@@ -92,12 +95,13 @@ row and column indices essential for the `BlockSparseMatrix` custom type, allowi
 seamless combination of both regular matrices and block-sparse matrices.
 
 **Arguments:**
-- `blocks`: Variables number of regular `Matrix` or `BlockSparseMatrix` objects.
+
+  - `blocks`: Variables number of regular `Matrix` or `BlockSparseMatrix` objects.
 
 **Returns:**
-- A well-formed `BlockSparseMatrix` representing the block diagonal.
-"""
 
+  - A well-formed `BlockSparseMatrix` representing the block diagonal.
+"""
 function blocksparse_blockdiag(blocks...)
     isempty(blocks) && return BlockSparseMatrix(
         Matrix{ComplexF64}[], UnitRange{Int}[], UnitRange{Int}[], (0, 0)
@@ -140,12 +144,13 @@ by appropriately combining the row indices while keeping the column indices
 consistent across the blocks.
 
 **Arguments:**
-- `blocks`: Variables number of regular `Matrix` or `BlockSparseMatrix` objects.
+
+  - `blocks`: Variables number of regular `Matrix` or `BlockSparseMatrix` objects.
 
 **Returns:**
-- A vertically concatenated `BlockSparseMatrix`.
-"""
 
+  - A vertically concatenated `BlockSparseMatrix`.
+"""
 function blocksparse_vcat(blocks...)
     isempty(blocks) && return BlockSparseMatrix(
         Matrix{ComplexF64}[], UnitRange{Int}[], UnitRange{Int}[], (0, 0)
@@ -185,7 +190,6 @@ If the specified key does not exist in the outer dictionary, it initializes a ne
 inner dictionary at that key and returns it. This allows for safe, on-the-fly construction
 of nested dictionaries like those used for `Q`, `R`, and `P` factors.
 """
-
 @inline function getsubdict!(D::Dict{Int,Dict{Int,T}}, k::Int) where {T}
     get!(D, k) do
         return Dict{Int,T}()
@@ -217,13 +221,14 @@ observer/source tree indices stored within the ButterflyFactorizations's hierarc
 factors.
 
 **Arguments:**
-- `R`: The nested dictionary representing the `R` factor block.
-- `col_idx`: The column target key to search for.
+
+  - `R`: The nested dictionary representing the `R` factor block.
+  - `col_idx`: The column target key to search for.
 
 **Returns:**
-- A `Vector` of row keys that map to the given column index.
-"""
 
+  - A `Vector` of row keys that map to the given column index.
+"""
 function find_rows_for_column(R::Dict{T,Dict{T,U}}, col_idx::T) where {T,U}
     rows = Vector{T}()
     for (row, inner_dict) in R
@@ -243,9 +248,9 @@ Starting from a specified `root` node, it traverses the tree level by level,
 collecting the nodes at each depth.
 
 **Returns:**
-- A `Vector{Vector{Int}}` where each inner vector represents the node IDs at that level.
-"""
 
+  - A `Vector{Vector{Int}}` where each inner vector represents the node IDs at that level.
+"""
 function h2treelevels(tree::T, root::Int64) where {T}
     isleaf = H2Trees.isleaf
     getchildren = H2Trees.children
@@ -309,13 +314,14 @@ a perfectly balanced structure in unbalanced trees, this function artificially p
 shallow leaf nodes down to the maximum depth of the tree block.
 
 **Arguments:**
-- `H2tree`: The hierarchical block tree.
-- `root`: The ID of the root node to traverse from.
+
+  - `H2tree`: The hierarchical block tree.
+  - `root`: The ID of the root node to traverse from.
 
 **Returns:**
-- A `Vector{Vector{Int}}` representing the padded tree nodes per level.
-"""
 
+  - A `Vector{Vector{Int}}` representing the padded tree nodes per level.
+"""
 function traverseandpad(H2tree::T, root::Int64) where {T}
     isleaf = H2Trees.isleaf
     tree = h2treelevels(H2tree, root)
@@ -332,7 +338,6 @@ end
 """
 Abstract base type defining how physical spaces inside the `H2Trees` are ordered.
 """
-
 permute(space, perm) = permute!(copy(space), perm)
 
 abstract type SpaceOrderingStyle end
@@ -343,7 +348,6 @@ abstract type SpaceOrderingStyle end
 A `SpaceOrderingStyle` that permutes the test and trial spaces in place
 according to the permutation derived from the tree leaf structure.
 """
-
 struct PermuteSpaceInPlace <: SpaceOrderingStyle end
 function (::PermuteSpaceInPlace)(tree, testspace, trialspace)
     testperm = permutation(testtree(tree))
