@@ -361,10 +361,10 @@ function subroutine_BF_pruned(
                                 the tree is properly balanced."
                                 continue
                             end
+
                             n_otilde = estimate_rank_3d(
                                 k, trialT, testT, Svert, Ochild, τ; C=1.0, Cε=3.0, Rmin=3
                             )
-
                             q_ks, k_l, r_l = Compressor(
                                 kernelmatrix, srcindex, obsindex, n_otilde, τ
                             )
@@ -421,10 +421,12 @@ function subroutine_BF_pruned(
                                 ]
                                 last += ks
                             end
+                            getsubdict!(K, Svert)[Overt] = k_l
                         else
-                            getsubdict!(R[l], (Overt, Svert))[(Overt, Svert)] = q_ks
+                            getsubdict!(R[l], (Overt, Svert))[(Overt, Svert)] = I(
+                                size(R[l - 1][(Overt, Svert)][(Overt, Svert)], 1)
+                            )
                         end
-                        getsubdict!(K, Svert)[Overt] = k_l
                     end
                 end
             end
@@ -434,26 +436,29 @@ function subroutine_BF_pruned(
                 if !isleaf(testT, Overt)
                     for Ochild in children(testT, Overt)
                         obsindex = values(testT, Ochild)
-                        for Svert in treeS[1]
-                            srcindex = K[Svert][Overt]
-                            if isempty(srcindex)
-                                @show "Warning: empty source index for Svert $Svert and
-                                Ochild $Overt at level $l. This should not happen if the
-                                tree is properly balanced."
-                                continue
-                            end
-                            n_otilde = estimate_rank_3d(
-                                k, trialT, testT, Svert, Ochild, τ; C=1.0, Cε=3.0, Rmin=3
-                            )
-                            q_ks, k_l, r_l = Compressor(
-                                kernelmatrix, srcindex, obsindex, n_otilde, τ
-                            )
-                            last = 0
-                            getsubdict!(R[l], (Ochild, Svert))[(Overt, Svert)] = q_ks
-                            getsubdict!(K, Svert)[Ochild] = k_l
+                        Svert = NS
+                        srcindex = K[Svert][Overt]
+                        if isempty(srcindex)
+                            @show "Warning: empty source index for Svert $Svert and
+                            Ochild $Overt at level $l. This should not happen if the
+                            tree is properly balanced."
+                            continue
                         end
+                        n_otilde = estimate_rank_3d(
+                            k, trialT, testT, Svert, Ochild, τ; C=1.0, Cε=3.0, Rmin=3
+                        )
+                        q_ks, k_l, r_l = Compressor(
+                            kernelmatrix, srcindex, obsindex, n_otilde, τ
+                        )
+                        last = 0
+                        getsubdict!(R[l], (Ochild, Svert))[(Overt, Svert)] = q_ks
+                        getsubdict!(K, Svert)[Ochild] = k_l
                     end
                 else
+                    Svert = NS
+                    getsubdict!(R[l], (Overt, Svert))[(Overt, Svert)] = I(
+                        size(R[l - 1][(Overt, Svert)][(Overt, Svert)], 1)
+                    )
                 end
             end
 
@@ -491,6 +496,9 @@ function subroutine_BF_pruned(
                         end
                         getsubdict!(K, Svert)[Overt] = k_l
                     else
+                        getsubdict!(R[l], (Overt, Svert))[(Overt, Svert)] = I(
+                            size(R[l - 1][(Overt, Svert)][(Overt, Svert)], 1)
+                        )
                     end
                 end
             end
