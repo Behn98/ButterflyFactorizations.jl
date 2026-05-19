@@ -15,7 +15,7 @@
     end
     return y
 end
-# ...existing code...
+
 @views function LinearAlgebra.mul!(
     y::AbstractVecOrMat,
     At::LinearMaps.TransposeMap{<:Any,<:ButterflyFactorizations.PetrovGalerkinBF},
