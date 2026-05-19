@@ -265,23 +265,23 @@ cd ButterflyFactorizations.jl
 using BEAST
 using CompScienceMeshes
 using H2Trees
-using ButterflyFactorization
+using ButterflyFactorizations
 
 h = 0.05
 lambda = 1
-k = 2 * pi / lmabda
+k = 2 * pi / lambda
 m = meshsphere(1.0, h)
 X = raviartthomas(m)
 op = Maxwell3D.singlelayer(; wavenumber=k)
 blktree2 = TwoNTree(X, X, lambda / 10)
 
-@time Bfmat = ButterflyFactorization.PetrovGalerkinBF(
+@time Bfmat = ButterflyFactorizations.PetrovGalerkinBF(
     op,
     X,
     X,
     blktree2,
     k;
-    Compressor=ButterflyFactorization.PartialQR(),
+    Compressor=ButterflyFactorizations.PartialQR(),
     tol=1e-3,
     ntasks=1,
     α=2,
