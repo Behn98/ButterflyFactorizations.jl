@@ -1,6 +1,7 @@
 @testitem "Testing Full Matrix Assembly" begin
     using Test
     using H2Trees
+    using OhMyThreads
     using CompScienceMeshes
     using BEAST
     using ButterflyFactorizations

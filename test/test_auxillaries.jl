@@ -1,6 +1,7 @@
 @testitem "Testing custom Blockconstructions" begin
     using ButterflyFactorizations
     using LinearAlgebra
+    using OhMyThreads
     using SparseArrays
     using BlockSparseMatrices
     using Test

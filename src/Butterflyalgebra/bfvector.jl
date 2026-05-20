@@ -52,7 +52,8 @@ function apply_BF(Butterfly::BF, v::AbstractVector{ComplexF64})
     NS = Butterfly.NS
     PermQ = Butterfly.PermQ
     PermP = Butterfly.PermP
-
+    old_blas = BLAS.get_num_threads()
+    BLAS.set_num_threads(1)
     # ------------------------------------------------------------
     # Leaf initialization (Q)
     # ------------------------------------------------------------
@@ -115,9 +116,9 @@ function apply_BF(Butterfly::BF, v::AbstractVector{ComplexF64})
     # Säker ihopslagnig på slutet i Main tråden!
     result = zeros(ComplexF64, Butterfly.dim[1])
     for (inds, out) in p_results
-        result[inds] .= out
+        result[inds] .+= out
     end
-
+    BLAS.set_num_threads(old_blas)
     return result
 end
 

@@ -109,32 +109,69 @@ function subroutine_BF(
         # Compute R blocks
         # --------------------------------------------------------------
         if !source_is_frozen && !obs_is_frozen
+            K_new = Dict{Int,Dict{Int,Vector{Int}}}()
             build_nonfrozen_R_blocks!(
-                R, K, U, Q, treeS, treeO, l, trialT, testT, kernelmatrix, Compressor, k, τ
+                R,
+                K,
+                K_new,
+                U,
+                Q,
+                treeS,
+                treeO,
+                l,
+                trialT,
+                testT,
+                kernelmatrix,
+                Compressor,
+                k,
+                τ,
+                LS,
             )
+            K = K_new
         elseif source_is_frozen && !obs_is_frozen
+            K_new = Dict{Int,Dict{Int,Vector{Int}}}()
             build_sourcefrozen_R_blocks!(
-                R, K, Q, NS, treeO, l, trialT, testT, kernelmatrix, Compressor, k, τ
+                R, K, K_new, Q, NS, treeO, l, trialT, testT, kernelmatrix, Compressor, k, τ
             )
-
+            K = K_new
         else #!source_is_frozen && obs_is_frozen
+            K_new = Dict{Int,Dict{Int,Vector{Int}}}()
             build_observerfrozen_R_blocks!(
-                R, K, U, Q, treeS, treeO, l, trialT, testT, kernelmatrix, Compressor, k, τ
+                R,
+                K,
+                K_new,
+                U,
+                Q,
+                treeS,
+                treeO,
+                l,
+                trialT,
+                testT,
+                kernelmatrix,
+                Compressor,
+                k,
+                τ,
+                LO,
+                LS,
             )
+            K = K_new
         end
     end
 
     # ------------------------------------------------------------------
     # Final P blocks
     # ------------------------------------------------------------------
-    leaf_results = tmap(treeO[LO]) do Oleaf
-        col = K[NS][Oleaf]
-        row = values(testT, Oleaf)
 
-        Z = zeros(ComplexF64, length(row), length(col))
-        kernelmatrix(Z, row, col)
-        perm_p_val = [obs_map[g] for g in row]
-        (Oleaf, perm_p_val, Z)
+    leaf_results = let K = K
+        tmap(treeO[LO]) do Oleaf
+            col = K[NS][Oleaf]
+            row = values(testT, Oleaf)
+
+            Z = zeros(ComplexF64, length(row), length(col))
+            kernelmatrix(Z, row, col)
+            perm_p_val = [obs_map[g] for g in row]
+            (Oleaf, perm_p_val, Z)
+        end
     end
     for (Oleaf, perm_p_val, Z) in leaf_results
         PermP[Oleaf] = perm_p_val
@@ -171,7 +208,7 @@ function build_union_skeletons!(
             temp = Int[]
             if !isleaf(trialT, Svert)
                 for Schild in children(trialT, Svert)
-                    Ks = getsubdict!(K, Schild)
+                    Ks = K[Schild]
                     ks = get(Ks, Overt, nothing)
                     if ks === nothing
                         continue
@@ -198,6 +235,7 @@ end
 function build_nonfrozen_R_blocks!(
     R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}},
     K::Dict{Int,Dict{Int,Vector{Int}}},
+    K_new::Dict{Int,Dict{Int,Vector{Int}}},
     U::Dict{Int,Dict{Int,Vector{Int}}},
     Q::Dict{Int,Matrix{ComplexF64}},
     treeS,
@@ -209,8 +247,8 @@ function build_nonfrozen_R_blocks!(
     Compressor,
     k,
     τ,
+    LS,
 )
-    LS = length(treeS)
     results = tmap(treeO[l]) do Overt
         # 1. Skapa lokala ordböcker
         local_R = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
@@ -231,7 +269,7 @@ function build_nonfrozen_R_blocks!(
                         last = 0
                         for Schild in children(trialT, Svert)
                             # Vi KAN läsa från globala K här, eftersom Schild (nivån nedanför) redan är färdigberäknad
-                            ks = length(getsubdict!(K, Schild)[Overt])
+                            ks = length(K[Schild][Overt])
                             getsubdict!(local_R, (Ochild, Svert))[(Overt, Schild)] = q_ks[
                                 :, (last + 1):(last + ks)
                             ]
@@ -256,7 +294,7 @@ function build_nonfrozen_R_blocks!(
                     )
                     last = 0
                     for Schild in children(trialT, Svert)
-                        ks = length(getsubdict!(K, Schild)[Overt])
+                        ks = length(K[Schild][Overt])
                         getsubdict!(local_R, (Overt, Svert))[(Overt, Schild)] = q_ks[
                             :, (last + 1):(last + ks)
                         ]
@@ -280,6 +318,7 @@ function build_nonfrozen_R_blocks!(
                             size(Q[Svert], 1)
                         )
                     end
+                    getsubdict!(local_K, Svert)[Overt] = K[Svert][Overt]
                 end
             end
         end
@@ -300,7 +339,7 @@ function build_nonfrozen_R_blocks!(
 
         # Merga in i globala K
         for (svert, o_dict) in local_K
-            target_K_dict = getsubdict!(K, svert)
+            target_K_dict = getsubdict!(K_new, svert)
             for (obs_idx, k_l_val) in o_dict
                 target_K_dict[obs_idx] = k_l_val
             end
@@ -313,6 +352,7 @@ end
 function build_sourcefrozen_R_blocks!(
     R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}},
     K::Dict{Int,Dict{Int,Vector{Int}}},
+    K_new::Dict{Int,Dict{Int,Vector{Int}}},
     Q::Dict{Int,Matrix{ComplexF64}},
     NS,
     treeO,
@@ -353,6 +393,7 @@ function build_sourcefrozen_R_blocks!(
             else
                 getsubdict!(local_R, (Overt, Svert))[(Overt, Svert)] = I(size(Q[Svert], 1))
             end
+            getsubdict!(local_K, Svert)[Overt] = K[Svert][Overt]
         end
         (local_R, local_K)
     end
@@ -366,7 +407,7 @@ function build_sourcefrozen_R_blocks!(
             end
         end
         for (svert, o_dict) in local_K
-            target_K_dict = getsubdict!(K, svert)
+            target_K_dict = getsubdict!(K_new, svert)
             for (obs_idx, k_l_val) in o_dict
                 target_K_dict[obs_idx] = k_l_val
             end
@@ -379,6 +420,7 @@ end
 function build_observerfrozen_R_blocks!(
     R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}},
     K::Dict{Int,Dict{Int,Vector{Int}}},
+    K_new::Dict{Int,Dict{Int,Vector{Int}}},
     U::Dict{Int,Dict{Int,Vector{Int}}},
     Q::Dict{Int,Matrix{ComplexF64}},
     treeS,
@@ -390,6 +432,8 @@ function build_observerfrozen_R_blocks!(
     Compressor,
     k,
     τ,
+    LO,
+    LS,
 )
     LO = length(treeO)
     LS = length(treeS)
@@ -409,7 +453,7 @@ function build_observerfrozen_R_blocks!(
             if !isleaf(trialT, Svert)
                 last = 0
                 for Schild in children(trialT, Svert)
-                    ks = length(getsubdict!(K, Schild)[Overt])
+                    ks = length(K[Schild][Overt])
                     getsubdict!(local_R, (Overt, Svert))[(Overt, Schild)] = q_ks[
                         :, (last + 1):(last + ks)
                     ]
@@ -427,6 +471,7 @@ function build_observerfrozen_R_blocks!(
                 else
                     getsubdict!(local_R, (Overt, Svert))[(Overt, Svert)] = I(size(Q[Svert], 1))
                 end
+                getsubdict!(local_K, Svert)[Overt] = K[Svert][Overt]
             end
         end
         (local_R, local_K)
@@ -441,7 +486,7 @@ function build_observerfrozen_R_blocks!(
             end
         end
         for (svert, o_dict) in local_K
-            target_K_dict = getsubdict!(K, svert)
+            target_K_dict = getsubdict!(K_new, svert)
             for (obs_idx, k_l_val) in o_dict
                 target_K_dict[obs_idx] = k_l_val
             end

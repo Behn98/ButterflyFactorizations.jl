@@ -35,45 +35,63 @@ indices (the "skeleton").
   - `r`: The estimated mathematical rank of the block.
 """
 function (t::PartialQR)(
-    farassembler, src_index::Vector{Int}, obs_index::Vector{Int}, n_otilde::Int, ε::Float64
+    farassembler,
+    src_index::Vector{Int},
+    obs_index::Vector{Int},
+    n_otilde_guess::Int,
+    ε::Float64,
 )
     n_obs = length(obs_index)
     n_src = length(src_index)
-    n_otilde = min(n_otilde, n_obs)
 
-    # --- random row sampling (type stable) ---
-    idx = randperm(n_obs)
-    row = @view obs_index[idx[1:n_otilde]]
-    col = src_index  # full view, no copy
+    # 1. Starta med den geometriska gissningen, men garantera minst t.ex. 10 rader
+    n_otilde = min(max(n_otilde_guess, 10), n_obs)
 
-    # --- assemble Z ---
-    Z = zeros(ComplexF64, n_otilde, n_src)
-    farassembler(Z, row, col)
+    while true
+        # --- random row sampling ---
+        idx = randperm(n_obs)
+        row = @view obs_index[idx[1:n_otilde]]
+        col = src_index  # full view, no copy
 
-    # --- pivoted QR (LAPACK-backed) ---
-    Fqr = pqr(Z; rtol=ε)
+        # --- assemble Z ---
+        Z = zeros(ComplexF64, n_otilde, n_src)
+        farassembler(Z, row, col)
 
-    Q = Fqr[1]
-    R = Fqr[2]
-    P = Fqr[3]
+        # --- pivoted QR (LAPACK-backed) ---
+        Fqr = pqr(Z; rtol=ε)
 
-    r = size(Q, 2)
+        Q = Fqr[1]
+        R = Fqr[2]
+        P = Fqr[3]
 
-    # --- views to avoid allocations ---
-    Q1 = @view Q[:, 1:r]
-    R11 = UpperTriangular(@view R[1:r, 1:r])
+        r = size(Q, 2)
 
-    # --- compute q_ks without inv ---
-    # tmp = Q1' * Z
-    tmp = Matrix{ComplexF64}(undef, r, n_src)
-    mul!(tmp, adjoint(Q1), Z)
+        # ==========================================================
+        # ADAPTIV KOLL: Om ranken maxade ut vårt sample (eller är
+        # väldigt nära), har vi antagligen för lite rader testade!
+        # ==========================================================
+        if r >= n_otilde - 2 && n_otilde < n_obs
+            # Dubbla antalet rader vi samplar och försök igen
+            n_otilde = min(n_otilde * 2, n_obs)
+            continue
+        end
 
-    # q_ks = R11 \ tmp
-    ldiv!(R11, tmp)
+        # Om r < n_otilde är vi ganska säkra på att vi fångat hela ranken.
+        # --- views to avoid allocations ---
+        Q1 = @view Q[:, 1:r]
+        R11 = UpperTriangular(@view R[1:r, 1:r])
 
-    k = src_index[P[1:r]]
+        # --- compute q_ks without inv ---
+        tmp = Matrix{ComplexF64}(undef, r, n_src)
+        mul!(tmp, adjoint(Q1), Z)
 
-    return tmp, k, r
+        # q_ks = R11 \ tmp
+        ldiv!(R11, tmp)
+
+        k = src_index[P[1:r]]
+
+        return tmp, k, r
+    end
 end
 
 """
@@ -119,7 +137,7 @@ function estimate_rank_3d(
     d = norm(c_s .- c_o)
 
     # Minimum separation (avoid singular or near-field cases)
-    dmin = max(d - 0.5 * (a_s + a_o), 1e-12)
+    dmin = max(d - 0.5 * (a_s + a_o), 1e-4)
 
     # Geometric directional rank estimate
     R_geom = C * k * (a_s * a_o) / dmin
@@ -142,7 +160,7 @@ function estimate_rank_3d(
     ε::Float64;
     C=1.0,
     Cε=3.0,
-    Rmin=3,
+    Rmin=5,
 )
     center = H2Trees.center
     halfsize = H2Trees.halfsize
@@ -157,7 +175,7 @@ function estimate_rank_3d(
     d = norm(c_s .- c_o)
 
     # Minimum separation (avoid singular or near-field cases)
-    dmin = max(d - 0.5 * (a_s + a_o), 1e-12)
+    dmin = max(d - 0.5 * (a_s + a_o), 1e-4)
 
     # Geometric directional rank estimate
     R_geom = C * k * (a_s * a_o) / dmin
@@ -180,7 +198,7 @@ function estimate_rank_3d(
     ε::Float64;
     C=1.0,
     Cε=3.0,
-    Rmin=3,
+    Rmin=5,
 )
     center = H2Trees.center
     radius = H2Trees.radius
@@ -194,8 +212,9 @@ function estimate_rank_3d(
     # Center separation
     d = norm(c_s .- c_o)
 
-    # Minimum separation (avoid singular or near-field cases)
-    dmin = max(d - 0.5 * (a_s + a_o), 1e-12)
+    # Minimum separation: Radierna MÅSTE subtraheras i sin helhet!
+    # Bytt ut 1e-12 mot 1e-4 för att förhindra IntegerOverflow vid överlappande löv
+    dmin = max(d - 0.5 * (a_s + a_o), 1e-4)
 
     # Geometric directional rank estimate
     R_geom = C * k * (a_s * a_o) / dmin

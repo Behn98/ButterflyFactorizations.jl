@@ -3,8 +3,10 @@
 ) where {T}
     LinearMaps.check_dim_mul(y, A, x)
     fill!(y, zero(T))
-    y .+= A.nearinteractions * x
-
+    y_near = A.nearinteractions * x
+    y .+= y_near
+    old_blas = BLAS.get_num_threads()
+    BLAS.set_num_threads(1)
     y_lock = Threads.SpinLock()
 
     @tasks for i in eachindex(A.BFs)
@@ -22,6 +24,8 @@
             y[go] .+= res
         end
     end
+    # Återställ BLAS
+    BLAS.set_num_threads(old_blas)
 
     return y
 end

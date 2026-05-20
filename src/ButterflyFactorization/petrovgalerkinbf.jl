@@ -58,14 +58,14 @@ function PetrovGalerkinBF(
     # 2. Mät tid för Near-field assembly (Tät matrisuträkning)
     #t_near = @elapsed begin
     blocks = Vector{Matrix{acctype}}(undef, length(values))
-    #let nearmatrix = nearmatrix
-    @tasks for i in eachindex(values)
-        @set scheduler = DynamicScheduler() #SerialScheduler
-        blk = zeros(ComplexF64, length(values[i]), length(nearvalues[i]))
-        nearmatrix(blk, values[i], nearvalues[i])
-        blocks[i] = blk
+    let nearmatrix = nearmatrix
+        @tasks for i in eachindex(values)
+            @set scheduler = DynamicScheduler() #SerialScheduler
+            blk = zeros(ComplexF64, length(values[i]), length(nearvalues[i]))
+            nearmatrix(blk, values[i], nearvalues[i])
+            blocks[i] = blk
+        end
     end
-    #end
     nears = BlockSparseMatrix(blocks, values, nearvalues, size(nearmatrix))
     #end
     #println("2. Near-field matrix assembly : ", round(t_near; digits=4), " s")
@@ -86,17 +86,17 @@ function PetrovGalerkinBF(
     #   length(far_tasks),
     #    ")",
     #)
-    #nearmatrix = AbstractKernelMatrix(operator, testspace, trialspace; type=:far)
+    nearmatrix = AbstractKernelMatrix(operator, testspace, trialspace; type=:far)
     # 4. Mät tid för uppbyggnad av Butterfly Factorizations
     #t_far = @elapsed begin
     fly = Vector{BF}(undef, length(far_tasks))
-    #let nearmatrix = nearmatrix
-    @tasks for i in eachindex(far_tasks)
-        @set scheduler = DynamicScheduler() #SerialScheduler()
-        (NO, NS) = far_tasks[i]
-        fly[i] = subroutine_BF(nearmatrix, tree, NO, NS, k, tol; Compressor=Compressor)
+    let nearmatrix = nearmatrix
+        @tasks for i in eachindex(far_tasks)
+            @set scheduler = DynamicScheduler() #SerialScheduler()
+            (NO, NS) = far_tasks[i]
+            fly[i] = subroutine_BF(nearmatrix, tree, NO, NS, k, tol; Compressor=Compressor)
+        end
     end
-    #end
     #end
     #println("4. Far-field Butterfly Factor.: ", round(t_far; digits=4), " s")
     #println("----------------------------------\n")

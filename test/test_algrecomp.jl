@@ -2,6 +2,7 @@
     using Test
     using H2Trees
     using CompScienceMeshes
+    using OhMyThreads
     using BEAST
     using ButterflyFactorizations
     using StaticArrays
