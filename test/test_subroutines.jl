@@ -3,6 +3,7 @@
     using H2Trees
     using CompScienceMeshes
     using BEAST
+    using OhMyThreads
     using ButterflyFactorizations
     using StaticArrays
     using LinearAlgebra
