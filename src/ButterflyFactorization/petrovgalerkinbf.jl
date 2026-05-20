@@ -46,56 +46,60 @@ function PetrovGalerkinBF(
     old_blas_threads = BLAS.get_num_threads()
     BLAS.set_num_threads(1)
 
-    println("\n--- Profiling PetrovGalerkinBF ---")
+    #println("\n--- Profiling PetrovGalerkinBF ---")
     # 1. Mät tid för uppsättning och träd-sökning
-    t_nearfar = @elapsed begin
-        nearmatrix = AbstractKernelMatrix(operator, testspace, trialspace;)
-        #quadstrat=nearquadstrat
-        values, nearvalues, farints = nearandfar(tree, α)
-    end
-    println("1. nearandfar & initial setup : ", round(t_nearfar; digits=4), " s")
+    #t_nearfar = @elapsed begin
+    nearmatrix = AbstractKernelMatrix(operator, testspace, trialspace; type=:near)
+    #quadstrat=nearquadstrat
+    values, nearvalues, farints = nearandfar(tree, α)
+    #end
+    #println("1. nearandfar & initial setup : ", round(t_nearfar; digits=4), " s")
 
     # 2. Mät tid för Near-field assembly (Tät matrisuträkning)
-    t_near = @elapsed begin
-        blocks = Vector{Matrix{acctype}}(undef, length(values))
-        @tasks for i in eachindex(values)
-            @set scheduler = DynamicScheduler() #SerialScheduler
-            blk = zeros(ComplexF64, length(values[i]), length(nearvalues[i]))
-            nearmatrix(blk, values[i], nearvalues[i])
-            blocks[i] = blk
-        end
-        nears = BlockSparseMatrix(blocks, values, nearvalues, size(nearmatrix))
+    #t_near = @elapsed begin
+    blocks = Vector{Matrix{acctype}}(undef, length(values))
+    #let nearmatrix = nearmatrix
+    @tasks for i in eachindex(values)
+        @set scheduler = DynamicScheduler() #SerialScheduler
+        blk = zeros(ComplexF64, length(values[i]), length(nearvalues[i]))
+        nearmatrix(blk, values[i], nearvalues[i])
+        blocks[i] = blk
     end
-    println("2. Near-field matrix assembly : ", round(t_near; digits=4), " s")
+    #end
+    nears = BlockSparseMatrix(blocks, values, nearvalues, size(nearmatrix))
+    #end
+    #println("2. Near-field matrix assembly : ", round(t_near; digits=4), " s")
 
     # 3. Mät tid för list-allokering (detta borde vara nära 0 sekunder)
-    t_list = @elapsed begin
-        far_tasks = Tuple{Int,Int}[]
-        for (NO, source_nodes) in farints
-            for NS in source_nodes
-                push!(far_tasks, (NO, NS))
-            end
+    #t_list = @elapsed begin
+    far_tasks = Tuple{Int,Int}[]
+    for (NO, source_nodes) in farints
+        for NS in source_nodes
+            push!(far_tasks, (NO, NS))
         end
     end
-    println(
-        "3. Far-field task generation  : ",
-        round(t_list; digits=4),
-        " s (Antal block: ",
-        length(far_tasks),
-        ")",
-    )
-
+    #end
+    #println(
+    #    "3. Far-field task generation  : ",
+    #    round(t_list; digits=4),
+    #    " s (Antal block: ",
+    #   length(far_tasks),
+    #    ")",
+    #)
+    #nearmatrix = AbstractKernelMatrix(operator, testspace, trialspace; type=:far)
     # 4. Mät tid för uppbyggnad av Butterfly Factorizations
-    t_far = @elapsed begin
-        fly = Vector{BF}(undef, length(far_tasks))
-        @tasks for i in eachindex(far_tasks)
-            @set scheduler = DynamicScheduler() #SerialScheduler()
-            (NO, NS) = far_tasks[i]
-            fly[i] = subroutine_BF(nearmatrix, tree, NO, NS, k, tol; Compressor=Compressor)
-        end
+    #t_far = @elapsed begin
+    fly = Vector{BF}(undef, length(far_tasks))
+    #let nearmatrix = nearmatrix
+    @tasks for i in eachindex(far_tasks)
+        @set scheduler = DynamicScheduler() #SerialScheduler()
+        (NO, NS) = far_tasks[i]
+        fly[i] = subroutine_BF(nearmatrix, tree, NO, NS, k, tol; Compressor=Compressor)
     end
-    println("4. Far-field Butterfly Factor.: ", round(t_far; digits=4), " s")
-    println("----------------------------------\n")
+    #end
+    #end
+    #println("4. Far-field Butterfly Factor.: ", round(t_far; digits=4), " s")
+    #println("----------------------------------\n")
 
     # Återställ BLAS-trådarna innan vi returnerar
     BLAS.set_num_threads(old_blas_threads)
