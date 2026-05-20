@@ -266,6 +266,7 @@ using BEAST
 using CompScienceMeshes
 using H2Trees
 using ButterflyFactorizations
+using LinearAlgebra
 
 h = 0.05
 lambda = 1
@@ -294,31 +295,6 @@ diff2 = norm(xs - xs1) / norm(xs)
 ```
         
 > Examples will be expanded with reproducible benchmark scripts.
-        
----
-        
-## Repository Structure
-        
-```txt
-ButterflyFactorizations.jl/
-│── assets/
-│ ├── logo.png
-│ ├── application_domains.png
-│ ├── tree_decomposition.png
-│ ├── admissibility_criterion.png
-│ ├── skeleton_mapping.png
-│ ├── mv_product_pipeline.png
-│ ├── runtime_scaling.png
-│ ├── storage_scaling.png
-│ └── error_analysis.png
-│
-│── src/
-│── test/
-│── docs/
-│── README.md
-```
-        
----
         
 ## References (selection)
         

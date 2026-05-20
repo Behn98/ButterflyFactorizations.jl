@@ -1,6 +1,7 @@
 @testitem "Testing custom Blockconstructions" begin
     using ButterflyFactorizations
     using LinearAlgebra
+    using OhMyThreads
     using SparseArrays
     using BlockSparseMatrices
     using Test
@@ -87,6 +88,7 @@ end
     using H2Trees
     using CompScienceMeshes
     using BEAST
+    using OhMyThreads
     using ButterflyFactorizations
     using StaticArrays
     using LinearAlgebra

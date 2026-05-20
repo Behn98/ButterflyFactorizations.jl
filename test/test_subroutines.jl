@@ -3,6 +3,7 @@
     using H2Trees
     using CompScienceMeshes
     using BEAST
+    using OhMyThreads
     using ButterflyFactorizations
     using StaticArrays
     using LinearAlgebra
@@ -23,7 +24,7 @@
     U = raviartthomas(y)
     T2 = raviartthomas(x2)
     U2 = raviartthomas(y2)
-
+    length(T2)
     ##
     #========================================================================
     =========================================================================
@@ -33,8 +34,12 @@
 
     tree1 = TwoNTree(T, U, lambda / 10)     #testspace, trialspace
     tree2 = TwoNTree(U, T, lambda / 10)
-    tree3 = TwoNTree(U2, T, lambda / 10)
-    tree4 = TwoNTree(U, T2, lambda / 10)
+    tree31 = TwoNTree(U2.pos, lambda / 2.5)
+    tree32 = TwoNTree(T.pos, lambda / 10)
+    tree3 = BlockTree(tree31, tree32)
+    tree41 = TwoNTree(U.pos, lambda / 10)
+    tree42 = TwoNTree(T2.pos, lambda / 2.5)
+    tree4 = BlockTree(tree41, tree42)
 
     go1 = H2Trees.values(tree1.testcluster, H2Trees.root(tree1.testcluster))
     go2 = H2Trees.values(tree2.testcluster, H2Trees.root(tree2.testcluster))

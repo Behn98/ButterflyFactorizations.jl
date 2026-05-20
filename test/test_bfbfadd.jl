@@ -1,6 +1,7 @@
 @testitem "Testing Addition of Butterflies" begin
     using Test
     using H2Trees
+    using OhMyThreads
     using CompScienceMeshes
     using BEAST
     using ButterflyFactorizations
