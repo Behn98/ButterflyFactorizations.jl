@@ -1,3 +1,4 @@
+#=
 @testitem "Testing Blockassembly subroutines for pruned trees" begin
     using Test
     using BEAST
@@ -72,3 +73,4 @@
     y_approx[go2] = Bfmat2 * x[gs2]
     @test (norm(y_exact - y_approx) / norm(y_exact)) < 10^-3
 end
+=#

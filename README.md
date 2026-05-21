@@ -274,17 +274,16 @@ k = 2 * pi / lambda
 m = meshsphere(1.0, h)
 X = raviartthomas(m)
 op = Maxwell3D.singlelayer(; wavenumber=k)
-blktree2 = TwoNTree(X, X, lambda / 10)
+blktree = TwoNTree(X, X, lambda / 10)
 
 @time Bfmat = ButterflyFactorizations.PetrovGalerkinBF(
     op,
     X,
     X,
-    blktree2,
+    blktree,
     k;
     Compressor=ButterflyFactorizations.PartialQR(),
     tol=1e-3,
-    ntasks=1,
     α=2,
 )
 A = assemble(op, X, X)
