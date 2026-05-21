@@ -86,6 +86,18 @@ function (t::isFarFunctor)(
     else
         return false
     end
+    #=
+    cs = H2Trees.center(srctree, snode)
+    co = H2Trees.center(tsttree, onode)
+    rs = H2Trees.radius(srctree, snode)
+    ro = H2Trees.radius(tsttree, onode)
+
+    d = norm(cs .- co)
+
+    # GARANTERA att sfärerna har ett tryggt gap mellan varandra!
+    # α bestämmer hur stort gapet ska vara i relation till radierna.
+    return d > t.α * (rs + ro)
+    =#
 end
 
 """

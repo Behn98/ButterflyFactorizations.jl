@@ -44,6 +44,8 @@ function (t::PartialQR)(
     n_obs = length(obs_index)
     n_src = length(src_index)
 
+    old_blas = BLAS.get_num_threads()
+    BLAS.set_num_threads(1)
     # 1. Starta med den geometriska gissningen, men garantera minst t.ex. 10 rader
     n_otilde = min(max(n_otilde_guess, 10), n_obs)
 
@@ -51,6 +53,8 @@ function (t::PartialQR)(
         # --- random row sampling ---
         idx = randperm(n_obs)
         row = @view obs_index[idx[1:n_otilde]]
+        #idx = [1 + round(Int, (i - 1) * (n_obs - 1) / (n_otilde - 1)) for i in 1:n_otilde]
+        #row = @view obs_index[idx]
         col = src_index  # full view, no copy
 
         # --- assemble Z ---
@@ -70,7 +74,7 @@ function (t::PartialQR)(
         # ADAPTIV KOLL: Om ranken maxade ut vårt sample (eller är
         # väldigt nära), har vi antagligen för lite rader testade!
         # ==========================================================
-        if r >= n_otilde - 2 && n_otilde < n_obs
+        if r == n_otilde && n_otilde < n_obs
             # Dubbla antalet rader vi samplar och försök igen
             n_otilde = min(n_otilde * 2, n_obs)
             continue
@@ -89,7 +93,7 @@ function (t::PartialQR)(
         ldiv!(R11, tmp)
 
         k = src_index[P[1:r]]
-
+        BLAS.set_num_threads(old_blas)
         return tmp, k, r
     end
 end
@@ -128,7 +132,7 @@ function estimate_rank_3d(
     a_o::Float64,
     ε::Float64,
     ;
-    C=1.0,
+    C=0.5,
     Cε=3.0,
     Rmin=5,
 )
@@ -158,7 +162,7 @@ function estimate_rank_3d(
     Snode::Int,
     Onode::Int,
     ε::Float64;
-    C=1.0,
+    C=0.5,
     Cε=3.0,
     Rmin=5,
 )
@@ -196,7 +200,7 @@ function estimate_rank_3d(
     Snode::Int,
     Onode::Int,
     ε::Float64;
-    C=1.0,
+    C=0.5,
     Cε=3.0,
     Rmin=5,
 )

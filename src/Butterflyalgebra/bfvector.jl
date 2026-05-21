@@ -52,25 +52,24 @@ function apply_BF(Butterfly::BF, v::AbstractVector{ComplexF64})
     NS = Butterfly.NS
     PermQ = Butterfly.PermQ
     PermP = Butterfly.PermP
+
     old_blas = BLAS.get_num_threads()
     BLAS.set_num_threads(1)
+
     # ------------------------------------------------------------
     # Leaf initialization (Q)
     # ------------------------------------------------------------
     q_keys = collect(keys(Q))
     q_results = tmap(q_keys) do Sleaf
         srcvals = PermQ[Sleaf]
-        # Allokera thread-lokal vektor och beräkna direkt
         out = Vector{ComplexF64}(undef, size(Q[Sleaf], 1))
         @views mul!(out, Q[Sleaf], v[srcvals])
         ((NO, Sleaf), out)
     end
 
-    # Skapa current-ordboken blixtsnabbt från listan av Pairs
     coeffs_current = Dict{Tuple{Int,Int},Vector{ComplexF64}}(q_results)
 
     # Step 2: Sequentially apply R factors (Ping-Pong strategi)
-    # Själva nivåerna KAN INTE parallelliseras, men blocken PÅ en nivå kan!
     for l in eachindex(R)
         r_keys = collect(keys(R[l]))
         r_results = let coeffs_current = coeffs_current
@@ -92,7 +91,7 @@ function apply_BF(Butterfly::BF, v::AbstractVector{ComplexF64})
 
                 (row, out)
             end
-        end # SLUT PÅ let-BLOCKET
+        end
 
         # Uppdatera next till current inför nästa nivå
         coeffs_current = Dict{Tuple{Int,Int},Vector{ComplexF64}}(r_results)

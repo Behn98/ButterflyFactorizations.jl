@@ -40,6 +40,7 @@ function PetrovGalerkinBF(
     Compressor=ButterflyFactorizations.PartialQR(),
     tol=1e-3,
     α=2,
+    scheduler=OhMyThreads.DynamicScheduler(),
     acctype=ComplexF64,
 )
     # 0. Spara gammal BLAS-inställning och sätt till 1 för att undvika överbelastning
@@ -60,7 +61,7 @@ function PetrovGalerkinBF(
     blocks = Vector{Matrix{acctype}}(undef, length(values))
     let nearmatrix = nearmatrix
         @tasks for i in eachindex(values)
-            @set scheduler = DynamicScheduler() #SerialScheduler
+            @set scheduler = scheduler #DynamicScheduler() #SerialScheduler
             blk = zeros(ComplexF64, length(values[i]), length(nearvalues[i]))
             nearmatrix(blk, values[i], nearvalues[i])
             blocks[i] = blk
@@ -92,7 +93,7 @@ function PetrovGalerkinBF(
     fly = Vector{BF}(undef, length(far_tasks))
     let nearmatrix = nearmatrix
         @tasks for i in eachindex(far_tasks)
-            @set scheduler = DynamicScheduler() #SerialScheduler()
+            @set scheduler = scheduler
             (NO, NS) = far_tasks[i]
             fly[i] = subroutine_BF(nearmatrix, tree, NO, NS, k, tol; Compressor=Compressor)
         end
