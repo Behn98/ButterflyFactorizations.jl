@@ -270,7 +270,7 @@ using LinearAlgebra
 
 h = 0.05
 lambda = 1
-k = 2 * pi / lmabda
+k = 2 * pi / lambda
 m = meshsphere(1.0, h)
 X = raviartthomas(m)
 op = Maxwell3D.singlelayer(; wavenumber=k)
