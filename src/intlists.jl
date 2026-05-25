@@ -166,7 +166,8 @@ function process_nodes!(
     nearsv,
     nearov,
 )
-    if admissible(srctree, tsttree, node_s, node_o)
+    if admissible(srctree, tsttree, node_s, node_o) &&
+        !(isleaf(tsttree, node_o) && isleaf(srctree, node_s))
         push!(get!(farinteractions, node_o, Int64[]), node_s)
         return nothing
     elseif isleaf(tsttree, node_o) && isleaf(srctree, node_s)
@@ -175,6 +176,7 @@ function process_nodes!(
         return nothing
     end
     # split the larger node
+
     if H2Trees.halfsize(tsttree, node_o) >= H2Trees.halfsize(srctree, node_s)
         for child_o in collect(children(tsttree, node_o))
             process_nodes!(
@@ -202,6 +204,22 @@ function process_nodes!(
             )
         end
     end
+    #=
+    for child_o in collect(children(tsttree, node_o))
+        for child_s in collect(children(srctree, node_s))
+            process_nodes!(
+                srctree,
+                tsttree,
+                child_o,
+                child_s,
+                admissible,
+                farinteractions,
+                nearsv,
+                nearov,
+            )
+        end
+    end
+    =#
 end
 
 function process_nodes!(
@@ -214,7 +232,8 @@ function process_nodes!(
     nearsv,
     nearov,
 )
-    if admissible(srctree, tsttree, node_s, node_o)
+    if admissible(srctree, tsttree, node_s, node_o) &&
+        !(isleaf(tsttree, node_o) && isleaf(srctree, node_s))
         push!(get!(farinteractions, node_o, Int64[]), node_s)
         return nothing
     elseif isleaf(tsttree, node_o) && isleaf(srctree, node_s)
@@ -223,6 +242,7 @@ function process_nodes!(
         return nothing
     end
     # split the larger node
+
     if H2Trees.radius(tsttree, node_o) >= H2Trees.radius(srctree, node_s)
         for child_o in collect(children(tsttree, node_o))
             process_nodes!(
@@ -250,4 +270,20 @@ function process_nodes!(
             )
         end
     end
+    #=
+    for child_o in collect(children(tsttree, node_o))
+        for child_s in collect(children(srctree, node_s))
+            process_nodes!(
+                srctree,
+                tsttree,
+                child_o,
+                child_s,
+                admissible,
+                farinteractions,
+                nearsv,
+                nearov,
+            )
+        end
+    end
+    =#
 end

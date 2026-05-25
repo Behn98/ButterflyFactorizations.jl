@@ -161,3 +161,17 @@ function Base.transpose(B::ButterflyFactorizations.AlgBF)
     end
     return AlgBF(reverse(B.dim), P_adj, R_adj, Q_adj)
 end
+
+"""
+    adjoint(bf::FlatBF)
+
+Returnerar en ny `FlatBF` som representerar det konjugerade transponatet (Aᴴ).
+"""
+Base.adjoint(bf::FlatBF) = transform_bf(bf, true)
+
+"""
+    transpose(bf::FlatBF)
+
+Returnerar en ny `FlatBF` som representerar transponatet (Aᵀ).
+"""
+Base.transpose(bf::FlatBF) = transform_bf(bf, false)

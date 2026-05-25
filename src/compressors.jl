@@ -49,53 +49,53 @@ function (t::PartialQR)(
     # 1. Starta med den geometriska gissningen, men garantera minst t.ex. 10 rader
     n_otilde = min(max(n_otilde_guess, 10), n_obs)
 
-    while true
-        # --- random row sampling ---
-        idx = randperm(n_obs)
-        row = @view obs_index[idx[1:n_otilde]]
-        #idx = [1 + round(Int, (i - 1) * (n_obs - 1) / (n_otilde - 1)) for i in 1:n_otilde]
-        #row = @view obs_index[idx]
-        col = src_index  # full view, no copy
+    #while true
+    # --- random row sampling ---
+    idx = randperm(n_obs)
+    row = @view obs_index[idx[1:n_otilde]]
+    #idx = [1 + round(Int, (i - 1) * (n_obs - 1) / (n_otilde - 1)) for i in 1:n_otilde]
+    #row = @view obs_index[idx]
+    col = src_index  # full view, no copy
 
-        # --- assemble Z ---
-        Z = zeros(ComplexF64, n_otilde, n_src)
-        farassembler(Z, row, col)
+    # --- assemble Z ---
+    Z = zeros(ComplexF64, n_otilde, n_src)
+    farassembler(Z, row, col)
 
-        # --- pivoted QR (LAPACK-backed) ---
-        Fqr = pqr(Z; rtol=ε)
+    # --- pivoted QR (LAPACK-backed) ---
+    Fqr = pqr(Z; rtol=ε)
 
-        Q = Fqr[1]
-        R = Fqr[2]
-        P = Fqr[3]
+    Q = Fqr[1]
+    R = Fqr[2]
+    P = Fqr[3]
 
-        r = size(Q, 2)
+    r = size(Q, 2)
 
-        # ==========================================================
-        # ADAPTIV KOLL: Om ranken maxade ut vårt sample (eller är
-        # väldigt nära), har vi antagligen för lite rader testade!
-        # ==========================================================
-        if r == n_otilde && n_otilde < n_obs
-            # Dubbla antalet rader vi samplar och försök igen
-            n_otilde = min(n_otilde * 2, n_obs)
-            continue
-        end
+    # ==========================================================
+    # ADAPTIV KOLL: Om ranken maxade ut vårt sample (eller är
+    # väldigt nära), har vi antagligen för lite rader testade!
+    # ==========================================================
+    #if r == n_otilde && n_otilde < n_obs
+    # Dubbla antalet rader vi samplar och försök igen
+    #n_otilde = min(n_otilde * 2, n_obs)
+    #continue
+    #end
 
-        # Om r < n_otilde är vi ganska säkra på att vi fångat hela ranken.
-        # --- views to avoid allocations ---
-        Q1 = @view Q[:, 1:r]
-        R11 = UpperTriangular(@view R[1:r, 1:r])
+    # Om r < n_otilde är vi ganska säkra på att vi fångat hela ranken.
+    # --- views to avoid allocations ---
+    Q1 = @view Q[:, 1:r]
+    R11 = UpperTriangular(@view R[1:r, 1:r])
 
-        # --- compute q_ks without inv ---
-        tmp = Matrix{ComplexF64}(undef, r, n_src)
-        mul!(tmp, adjoint(Q1), Z)
+    # --- compute q_ks without inv ---
+    tmp = Matrix{ComplexF64}(undef, r, n_src)
+    mul!(tmp, adjoint(Q1), Z)
 
-        # q_ks = R11 \ tmp
-        ldiv!(R11, tmp)
+    # q_ks = R11 \ tmp
+    ldiv!(R11, tmp)
 
-        k = src_index[P[1:r]]
-        BLAS.set_num_threads(old_blas)
-        return tmp, k, r
-    end
+    k = src_index[P[1:r]]
+    BLAS.set_num_threads(old_blas)
+    return tmp, k, r
+    #end
 end
 
 """

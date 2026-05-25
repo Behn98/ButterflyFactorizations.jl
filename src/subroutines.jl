@@ -225,12 +225,7 @@ function build_union_skeletons!(
             temp = Int[]
             if !isleaf(trialT, Svert)
                 for Schild in children(trialT, Svert)
-                    #Ks = K[Schild]
-                    #ks = get(Ks, Overt, nothing)
                     ks = K[Schild][Overt]
-                    #if ks === nothing
-                    #    continue
-                    #end
                     append!(temp, ks)
                 end
             else
@@ -297,16 +292,11 @@ function build_nonfrozen_R_blocks!(
                             local_R[(Ochild, Svert)][(Overt, Schild)] = q_ks[
                                 :, (last + 1):(last + ks)
                             ]
-                            #getsubdict!(local_R, (Ochild, Svert))[(Overt, Schild)] = q_ks[
-                            #    :, (last + 1):(last + ks)
-                            #]
                             last += ks
                         end
                     else
-                        #getsubdict!(local_R, (Ochild, Svert))[(Overt, Svert)] = q_ks
                         local_R[(Ochild, Svert)][(Overt, Svert)] = q_ks
                     end
-                    #getsubdict!(local_K, Svert)[Ochild] = k_l
                     local_K[Svert][Ochild] = k_l
                 end
             end
@@ -331,39 +321,34 @@ function build_nonfrozen_R_blocks!(
                         local_R[(Overt, Svert)][(Overt, Schild)] = q_ks[
                             :, (last + 1):(last + ks)
                         ]
-                        #getsubdict!(local_R, (Overt, Svert))[(Overt, Schild)] = q_ks[
-                        #    :, (last + 1):(last + ks)
-                        #]
                         last += ks
                     end
-                    #getsubdict!(local_K, Svert)[Overt] = k_l
                     local_K[Svert][Overt] = k_l
                 else
                     if l > 1
-                        #getsubdict!(local_R, (Overt, Svert))[(Overt, Svert)] = I(
-                        #    size(
-                        #        R[l - 1][(Overt, Svert)][first(
-                        #            keys(R[l - 1][(Overt, Svert)])
-                        #        )],
-                        #        1,
-                        #    ),
-                        #)
-                        local_R[(Overt, Svert)][(Overt, Svert)] = I(
+                        #=local_R[(Overt, Svert)][(Overt, Svert)] = I(
                             size(
                                 R[l - 1][(Overt, Svert)][first(
                                     keys(R[l - 1][(Overt, Svert)])
                                 )],
                                 1,
                             ),
+                        )=#
+                        n = size(
+                            R[l - 1][(Overt, Svert)][first(keys(R[l - 1][(Overt, Svert)]))],
+                            1,
+                        )
+                        local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(
+                            I, n, n
                         )
                     else
-                        # För l=1, läs från Q istället (första nivån har inga R-blocks)
-                        #getsubdict!(local_R, (Overt, Svert))[(Overt, Svert)] = I(
-                        #    size(Q[Svert], 1)
-                        #)
-                        local_R[(Overt, Svert)][(Overt, Svert)] = I(size(Q[Svert], 1))
+                        #local_R[(Overt, Svert)][(Overt, Svert)] = I(size(Q[Svert], 1))
+
+                        n = size(Q[Svert], 1)
+                        local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(
+                            I, n, n
+                        )
                     end
-                    #getsubdict!(local_K, Svert)[Overt] = K[Svert][Overt]
                     local_K[Svert][Overt] = K[Svert][Overt]
                 end
             end
@@ -431,32 +416,26 @@ function build_sourcefrozen_R_blocks!(
                 q_ks, k_l, r_l = Compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
                 local_R[(Ochild, Svert)][(Overt, Svert)] = q_ks
                 local_K[Svert][Ochild] = k_l
-                #getsubdict!(local_R, (Ochild, Svert))[(Overt, Svert)] = q_ks
-                #getsubdict!(local_K, Svert)[Ochild] = k_l
             end
         else
             if !haskey(local_R, (Overt, Svert))
                 local_R[(Overt, Svert)] = Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}()
             end
             if l > 1
-                local_R[(Overt, Svert)][(Overt, Svert)] = I(
+                #=local_R[(Overt, Svert)][(Overt, Svert)] = I(
                     size(
                         R[l - 1][(Overt, Svert)][first(keys(R[l - 1][(Overt, Svert)]))],
                         1,
                     ),
-                )
-                #getsubdict!(local_R, (Overt, Svert))[(Overt, Svert)] = I(
-                #    size(
-                #        R[l - 1][(Overt, Svert)][first(keys(R[l - 1][(Overt, Svert)]))],
-                #        1,
-                #    ),
-                #)
+                )=#
+                n = size(R[l - 1][(Overt, Svert)][first(keys(R[l - 1][(Overt, Svert)]))], 1)
+                local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(I, n, n)
             else
-                local_R[(Overt, Svert)][(Overt, Svert)] = I(size(Q[Svert], 1))
-                #getsubdict!(local_R, (Overt, Svert))[(Overt, Svert)] = I(size(Q[Svert], 1))
+                #local_R[(Overt, Svert)][(Overt, Svert)] = I(size(Q[Svert], 1))
+                n = size(Q[Svert], 1)
+                local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(I, n, n)
             end
             local_K[Svert][Overt] = K[Svert][Overt]
-            #getsubdict!(local_K, Svert)[Overt] = K[Svert][Overt]
         end
         (local_R, local_K)
     end
@@ -524,32 +503,24 @@ function build_observerfrozen_R_blocks!(
                     local_R[(Overt, Svert)][(Overt, Schild)] = q_ks[
                         :, (last + 1):(last + ks)
                     ]
-                    #getsubdict!(local_R, (Overt, Svert))[(Overt, Schild)] = q_ks[
-                    #    :, (last + 1):(last + ks)
-                    #]
                     last += ks
                 end
                 local_K[Svert][Overt] = k_l
-                #getsubdict!(local_K, Svert)[Overt] = k_l
             else
                 if l > 1
-                    #getsubdict!(local_R, (Overt, Svert))[(Overt, Svert)] = I(
-                    #    size(
-                    #        R[l - 1][(Overt, Svert)][first(keys(R[l - 1][(Overt, Svert)]))],
-                    #        1,
-                    #    ),
-                    #)
-                    local_R[(Overt, Svert)][(Overt, Svert)] = I(
+                    #=local_R[(Overt, Svert)][(Overt, Svert)] = I(
                         size(
                             R[l - 1][(Overt, Svert)][first(keys(R[l - 1][(Overt, Svert)]))],
                             1,
                         ),
-                    )
+                    )=#
+                    n = size(R[l - 1][(Overt, Svert)][first(keys(R[l - 1][(Overt, Svert)]))], 1)
+                    local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(I, n, n)
                 else
-                    #getsubdict!(local_R, (Overt, Svert))[(Overt, Svert)] = I(size(Q[Svert], 1))
-                    local_R[(Overt, Svert)][(Overt, Svert)] = I(size(Q[Svert], 1))
+                    #local_R[(Overt, Svert)][(Overt, Svert)] = I(size(Q[Svert], 1))
+                    n = size(Q[Svert], 1)
+                    local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(I, n, n)
                 end
-                #getsubdict!(local_K, Svert)[Overt] = K[Svert][Overt]
                 local_K[Svert][Overt] = K[Svert][Overt]
             end
         end
