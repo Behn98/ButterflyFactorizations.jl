@@ -134,7 +134,7 @@ function estimate_rank_3d(
     ;
     C=0.5,
     Cε=3.0,
-    Rmin=5,
+    Rmin=3,
 )
 
     # Center separation
@@ -164,7 +164,7 @@ function estimate_rank_3d(
     ε::Float64;
     C=0.5,
     Cε=3.0,
-    Rmin=5,
+    Rmin=3,
 )
     center = H2Trees.center
     halfsize = H2Trees.halfsize
@@ -202,7 +202,7 @@ function estimate_rank_3d(
     ε::Float64;
     C=0.5,
     Cε=3.0,
-    Rmin=5,
+    Rmin=3,
 )
     center = H2Trees.center
     radius = H2Trees.radius
