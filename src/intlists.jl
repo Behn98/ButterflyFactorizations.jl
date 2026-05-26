@@ -177,7 +177,10 @@ function process_nodes!(
     end
     # split the larger node
 
-    if H2Trees.halfsize(tsttree, node_o) >= H2Trees.halfsize(srctree, node_s)
+    if (
+        H2Trees.halfsize(tsttree, node_o) >= H2Trees.halfsize(srctree, node_s) &&
+        !isleaf(tsttree, node_o)
+    ) || isleaf(srctree, node_s)
         for child_o in collect(children(tsttree, node_o))
             process_nodes!(
                 srctree,
@@ -243,7 +246,10 @@ function process_nodes!(
     end
     # split the larger node
 
-    if H2Trees.radius(tsttree, node_o) >= H2Trees.radius(srctree, node_s)
+    if (
+        H2Trees.radius(tsttree, node_o) >= H2Trees.radius(srctree, node_s) &&
+        !isleaf(tsttree, node_o)
+    ) || isleaf(srctree, node_s)
         for child_o in collect(children(tsttree, node_o))
             process_nodes!(
                 srctree,

@@ -62,11 +62,40 @@ function PetrovGalerkinBF(
     let nearmatrix = nearmatrix
         @tasks for i in eachindex(values)
             @set scheduler = scheduler #DynamicScheduler() #SerialScheduler
-            blk = zeros(ComplexF64, length(values[i]), length(nearvalues[i]))
+            blk = zeros(acctype, length(values[i]), length(nearvalues[i]))
             nearmatrix(blk, values[i], nearvalues[i])
             blocks[i] = blk
         end
     end
+    #=
+    # --- NYTT: Konvertera till standard SparseMatrixCSC ---
+    # Räkna ut totala antalet element för att allokera prestandasmart
+    nnz_total = sum(length(b) for b in blocks)
+
+    I = Vector{Int}(undef, nnz_total)
+    J = Vector{Int}(undef, nnz_total)
+    V = Vector{acctype}(undef, nnz_total)
+
+    offset = 0
+    for ind in eachindex(blocks)
+        blk = blocks[ind]
+        rows = values[ind]
+        cols = nearvalues[ind]
+
+        for c in 1:length(cols)
+            c_idx = cols[c]
+            for r in 1:length(rows)
+                offset += 1
+                I[offset] = rows[r]
+                J[offset] = c_idx
+                V[offset] = blk[r, c]
+            end
+        end
+    end
+
+    nears = SparseArrays.sparse(I, J, V, size(nearmatrix)[1], size(nearmatrix)[2])
+    # ------------------------------------------------------
+    =#
     nears = BlockSparseMatrix(blocks, values, nearvalues, size(nearmatrix))
     #end
     #println("2. Near-field matrix assembly : ", round(t_near; digits=4), " s")
@@ -166,7 +195,7 @@ function PetrovGalerkinBF_mats(
     blocks = Vector{Matrix{acctype}}(undef, length(values))
     @tasks for i in eachindex(values)
         @set scheduler = DynamicScheduler() #SerialScheduler()
-        blk = zeros(ComplexF64, length(values[i]), length(nearvalues[i]))
+        blk = zeros(acctype, length(values[i]), length(nearvalues[i]))
         nearmatrix(blk, values[i], nearvalues[i])
         blocks[i] = blk
     end
