@@ -126,11 +126,20 @@ end
 function mul_flat_bf(bf::FlatBF, x::AbstractVector; scheduler=OhMyThreads.SerialScheduler())
     # 1. Allokera temporära arbetsvektorer baserat på lagrens storlek
     layer_vectors = Vector{Vector{ComplexF64}}(undef, length(bf.R) + 1)
-    layer_vectors[1] = zeros(ComplexF64, bf.R[1].in_size)
-    for l in 1:length(bf.R)
-        layer_vectors[l + 1] = zeros(ComplexF64, bf.R[l].out_size)
+    if length(bf.R) == 0
+        # Räkna ut exakt hur stor den mellanliggande vektorn måste vara
+        int_size = if isempty(bf.Q.blocks)
+            0
+        else
+            (bf.Q.col_offsets[end] + size(bf.Q.blocks[end], 1) - 1)
+        end
+        layer_vectors[1] = zeros(ComplexF64, int_size)
+    else
+        layer_vectors[1] = zeros(ComplexF64, bf.R[1].in_size)
+        for l in 1:length(bf.R)
+            layer_vectors[l + 1] = zeros(ComplexF64, bf.R[l].out_size)
+        end
     end
-
     y = zeros(ComplexF64, bf.dim[1])
 
     # --- STEG 1: Applicera Q ---

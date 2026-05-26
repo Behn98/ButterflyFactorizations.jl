@@ -2,6 +2,38 @@ function flatten_bf(bf::BF)
     L = length(bf.R)
     NO = bf.NO
     NS = bf.NS
+
+    # -- NYTT: Om BF bara består av Q och P (nivå 0 för R) --
+    if L == 0
+        q_blocks = Matrix{ComplexF64}[]
+        q_col_offsets = Int[]
+        q_perms = Vector{Int}[]
+        curr_offset_q = 1
+        for (Sleaf, block) in bf.Q
+            push!(q_blocks, block)
+            push!(q_perms, bf.PermQ[Sleaf])
+            push!(q_col_offsets, curr_offset_q)
+            curr_offset_q += size(block, 2) # Ut-dimension för Q
+        end
+        flat_Q = FlatQLayer(q_blocks, q_col_offsets, q_perms)
+
+        p_blocks = Matrix{ComplexF64}[]
+        p_row_offsets = Int[]
+        p_perms = Vector{Int}[]
+        curr_offset_p = 1
+        for (Oleaf, block) in bf.P
+            push!(p_blocks, block)
+            push!(p_perms, bf.PermP[Oleaf])
+            push!(p_row_offsets, curr_offset_p)
+            curr_offset_p += size(block, 2) # In-dimension för P
+        end
+        flat_P = FlatPLayer(p_blocks, p_row_offsets, p_perms)
+
+        # Returnera direkt med en tom array av FlatLinearLayer
+        return FlatBF(flat_Q, FlatLinearLayer[], flat_P, bf.dim, NS, NO)
+    end
+    # -------------------------------------------------------
+
     # 1. Bygg synkroniserade ID-mappningar för alla R-nivåer
     R_col_maps = Vector{Dict{Tuple{Int,Int},Int32}}(undef, L)
     R_row_maps = Vector{Dict{Tuple{Int,Int},Int32}}(undef, L)

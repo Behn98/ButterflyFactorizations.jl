@@ -166,8 +166,8 @@ function process_nodes!(
     nearsv,
     nearov,
 )
-    if admissible(srctree, tsttree, node_s, node_o) &&
-        !(isleaf(tsttree, node_o) && isleaf(srctree, node_s))
+    if admissible(srctree, tsttree, node_s, node_o) #&&
+        #!(isleaf(tsttree, node_o) && isleaf(srctree, node_s))
         push!(get!(farinteractions, node_o, Int64[]), node_s)
         return nothing
     elseif isleaf(tsttree, node_o) && isleaf(srctree, node_s)
@@ -232,8 +232,8 @@ function process_nodes!(
     nearsv,
     nearov,
 )
-    if admissible(srctree, tsttree, node_s, node_o) &&
-        !(isleaf(tsttree, node_o) && isleaf(srctree, node_s))
+    if admissible(srctree, tsttree, node_s, node_o) #&&
+        #!(isleaf(tsttree, node_o) && isleaf(srctree, node_s))
         push!(get!(farinteractions, node_o, Int64[]), node_s)
         return nothing
     elseif isleaf(tsttree, node_o) && isleaf(srctree, node_s)
