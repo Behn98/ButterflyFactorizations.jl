@@ -222,11 +222,11 @@ function build_union_skeletons!(
         local_U_S = Dict{Int,Vector{Int}}()
 
         for Overt in treeO[min(l, LO)]
-            temp = Int[]
             if !isleaf(trialT, Svert)
+                temp_size = sum(length(K[Schild][Overt]) for Schild in children(trialT, Svert))
+                temp = sizehint!(Int[], temp_size)
                 for Schild in children(trialT, Svert)
-                    ks = K[Schild][Overt]
-                    append!(temp, ks)
+                    append!(temp, K[Schild][Overt])
                 end
             else
                 temp = K[Svert][Overt]
@@ -289,9 +289,10 @@ function build_nonfrozen_R_blocks!(
                         last = 0
                         for Schild in children(trialT, Svert)
                             ks = length(K[Schild][Overt])
-                            local_R[(Ochild, Svert)][(Overt, Schild)] = q_ks[
-                                :, (last + 1):(last + ks)
-                            ]
+                            local_R[(Ochild, Svert)][(Overt, Schild)] = view(
+                                q_ks, :, (last + 1):(last + ks)
+                            )
+                            #q_ks[:, (last + 1):(last + ks)]
                             last += ks
                         end
                     else
@@ -318,9 +319,10 @@ function build_nonfrozen_R_blocks!(
                     last = 0
                     for Schild in children(trialT, Svert)
                         ks = length(K[Schild][Overt])
-                        local_R[(Overt, Svert)][(Overt, Schild)] = q_ks[
-                            :, (last + 1):(last + ks)
-                        ]
+                        local_R[(Overt, Svert)][(Overt, Schild)] = view(
+                            q_ks, :, (last + 1):(last + ks)
+                        )
+                        #q_ks[ :, (last + 1):(last + ks)]
                         last += ks
                     end
                     local_K[Svert][Overt] = k_l
@@ -334,20 +336,16 @@ function build_nonfrozen_R_blocks!(
                                 1,
                             ),
                         )=#
-                        n = size(
+                        #=n = size(
                             R[l - 1][(Overt, Svert)][first(keys(R[l - 1][(Overt, Svert)]))],
                             1,
-                        )
-                        local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(
-                            I, n, n
-                        )
+                        )=#
+                        local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(I, 0, 0)
                     else
                         #local_R[(Overt, Svert)][(Overt, Svert)] = I(size(Q[Svert], 1))
 
-                        n = size(Q[Svert], 1)
-                        local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(
-                            I, n, n
-                        )
+                        #=n = size(Q[Svert], 1)=#
+                        local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(I, 0, 0)
                     end
                     local_K[Svert][Overt] = K[Svert][Overt]
                 end
@@ -428,12 +426,12 @@ function build_sourcefrozen_R_blocks!(
                         1,
                     ),
                 )=#
-                n = size(R[l - 1][(Overt, Svert)][first(keys(R[l - 1][(Overt, Svert)]))], 1)
-                local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(I, n, n)
+                #n = size(R[l - 1][(Overt, Svert)][first(keys(R[l - 1][(Overt, Svert)]))], 1)
+                local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(I, 0, 0)
             else
                 #local_R[(Overt, Svert)][(Overt, Svert)] = I(size(Q[Svert], 1))
-                n = size(Q[Svert], 1)
-                local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(I, n, n)
+                #n = size(Q[Svert], 1)
+                local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(I, 0, 0)
             end
             local_K[Svert][Overt] = K[Svert][Overt]
         end
@@ -500,9 +498,10 @@ function build_observerfrozen_R_blocks!(
                 last = 0
                 for Schild in children(trialT, Svert)
                     ks = length(K[Schild][Overt])
-                    local_R[(Overt, Svert)][(Overt, Schild)] = q_ks[
-                        :, (last + 1):(last + ks)
-                    ]
+                    local_R[(Overt, Svert)][(Overt, Schild)] = view(
+                        q_ks, :, (last + 1):(last + ks)
+                    )
+                    #q_ks[:, (last + 1):(last + ks)]
                     last += ks
                 end
                 local_K[Svert][Overt] = k_l
@@ -514,12 +513,12 @@ function build_observerfrozen_R_blocks!(
                             1,
                         ),
                     )=#
-                    n = size(R[l - 1][(Overt, Svert)][first(keys(R[l - 1][(Overt, Svert)]))], 1)
-                    local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(I, n, n)
+                    #n = size(R[l - 1][(Overt, Svert)][first(keys(R[l - 1][(Overt, Svert)]))], 1)
+                    local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(I, 0, 0)
                 else
                     #local_R[(Overt, Svert)][(Overt, Svert)] = I(size(Q[Svert], 1))
-                    n = size(Q[Svert], 1)
-                    local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(I, n, n)
+                    #n = size(Q[Svert], 1)
+                    local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(I, 0, 0)
                 end
                 local_K[Svert][Overt] = K[Svert][Overt]
             end

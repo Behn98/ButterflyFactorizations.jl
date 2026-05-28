@@ -96,7 +96,9 @@ function PetrovGalerkinBF(
     nears = SparseArrays.sparse(I, J, V, size(nearmatrix)[1], size(nearmatrix)[2])
     # ------------------------------------------------------
     =#
-    nears = BlockSparseMatrix(blocks, values, nearvalues, size(nearmatrix))
+    nears = BlockSparseMatrix(
+        blocks, values, nearvalues, size(nearmatrix); scheduler=scheduler
+    )
     #end
     #println("2. Near-field matrix assembly : ", round(t_near; digits=4), " s")
 

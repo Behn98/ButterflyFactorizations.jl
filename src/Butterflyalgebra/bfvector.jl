@@ -1,5 +1,5 @@
 @views function LinearAlgebra.mul!(
-    y::AbstractVecOrMat, Butterfly::BF, x::AbstractVector{T}
+    y::AbstractVector, Butterfly::BF, x::AbstractVector{T}
 ) where {T}
     LinearMaps.check_dim_mul(y, Butterfly, x)
     fill!(y, zero(T))
@@ -8,7 +8,7 @@
 end
 
 @views function LinearAlgebra.mul!(
-    y::AbstractVecOrMat,
+    y::AbstractVector,
     At::LinearMaps.TransposeMap{<:Any,<:ButterflyFactorizations.BF},
     x::AbstractVector{T},
 ) where {T}
@@ -19,7 +19,7 @@ end
 end
 
 @views function LinearAlgebra.mul!(
-    y::AbstractVecOrMat,
+    y::AbstractVector,
     At::LinearMaps.AdjointMap{<:Any,<:ButterflyFactorizations.BF},
     x::AbstractVector{T},
 ) where {T}
@@ -79,15 +79,24 @@ function apply_BF(
                 cols = collect(keys(R[l][row]))
 
                 # Skapa ny vektor för första kolumn-bidraget
-                out = Vector{ComplexF64}(undef, size(R[l][row][cols[1]], 1))
-                @views mul!(out, R[l][row][cols[1]], coeffs_current[cols[1]])
-
+                if !isempty(R[l][row][cols[1]])
+                    out = Vector{ComplexF64}(undef, size(R[l][row][cols[1]], 1))
+                    @views mul!(out, R[l][row][cols[1]], coeffs_current[cols[1]])
+                else
+                    out = coeffs_current[cols[1]]
+                end
                 # Om fler kolumner ska slås ihop för denna "row"
                 if length(cols) > 1
                     coeff_temp = Vector{ComplexF64}(undef, length(out))
                     for i in 2:length(cols)
-                        @views mul!(coeff_temp, R[l][row][cols[i]], coeffs_current[cols[i]])
+                        in_vec_next = coeffs_current[cols[i]]
+
+                        #if isempty(R[l][row][cols[i]])
+                        #    out .+= in_vec_next
+                        #else
+                        @views mul!(coeff_temp, R[l][row][cols[i]], in_vec_next)
                         out .+= coeff_temp
+                        #end
                     end
                 end
 
@@ -161,19 +170,30 @@ function mul_flat_bf(bf::FlatBF, x::AbstractVector; scheduler=OhMyThreads.Serial
         tforeach(1:(length(layer.row_ptr) - 1); scheduler=scheduler) do i
             r_start = layer.row_offsets[i]
 
+            # Räkna ut n (storleken på blocket) baserat på offsets!
+            # OBS: Detta kräver att din 'flatten_bf'-funktion har satt in
+            # ett sista offset-värde (alltså length(row_offsets) == num_rows + 1)
+            nr = layer.row_offsets[i + 1] - r_start
+
             for b in layer.row_ptr[i]:(layer.row_ptr[i + 1] - 1)
                 j = layer.col_idx[b]
                 c_start = layer.col_offsets[j]
                 B = layer.blocks[b]
-                nr, nc = size(B)
 
-                @views mul!(
-                    v_out[r_start:(r_start + nr - 1)],
-                    B,
-                    v_in[c_start:(c_start + nc - 1)],
-                    1.0,
-                    1.0,
-                )
+                if isempty(B)
+                    # Identitetsmatris (0x0). Addera direkt från in till ut!
+                    @views v_out[r_start:(r_start + nr - 1)] .+= v_in[c_start:(c_start + nr - 1)]
+                else
+                    # Vanlig matris
+                    _nr, nc = size(B)
+                    @views mul!(
+                        v_out[r_start:(r_start + _nr - 1)],
+                        B,
+                        v_in[c_start:(c_start + nc - 1)],
+                        1.0,
+                        1.0,
+                    )
+                end
             end
         end
     end

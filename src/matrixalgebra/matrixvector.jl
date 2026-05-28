@@ -137,14 +137,23 @@ end
     fill!(y, zero(T))
     y_near = A.nearinteractions * x
     y .+= y_near
-    old_blas = BLAS.get_num_threads()
-    BLAS.set_num_threads(1)
+
     #y_lock = Threads.SpinLock()
     nt = Threads.maxthreadid()
     y_locals = [zeros(T, length(y)) for _ in 1:nt]
+    #=
+    batchlen = length(A.BFs)/Threads.nthreads()
+    @tasks for i in eachindex(y_locals)
+        @set scheduler = StaticScheduler()
 
+    end
+
+    =#
     @tasks for i in eachindex(A.BFs)
         @set scheduler = DynamicScheduler()
+        #=@local begin
+
+        end=#
 
         bf = A.BFs[i]
         gs = H2Trees.values(A.tree.trialcluster, bf.NS)
@@ -169,7 +178,7 @@ end
         y .+= y_locals[tid]
     end
     # Återställ BLAS
-    BLAS.set_num_threads(old_blas)
+    #BLAS.set_num_threads(old_blas)
 
     return y
 end
