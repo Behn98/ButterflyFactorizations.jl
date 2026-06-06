@@ -70,3 +70,8 @@ struct FlatBF
     NS::Int64
     NO::Int64
 end
+
+struct BFSTAT
+    Q_ratios::Vector{Tuple{Int,Float64}}
+    R_ratios::Vector{Vector{Tuple{Int,Float64}}}
+end

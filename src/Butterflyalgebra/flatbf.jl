@@ -57,7 +57,7 @@ function flatten_bf(bf::BF)
     # 2. Platta till R-nivåerna till FlatLinearLayer
     flat_R = Vector{FlatLinearLayer}(undef, L)
     # Behåll tidigare nivåers rad-storlekar för att kunna fylla i kolumn-storlekar i nästa nivå
-    old_row_sizes = zeros(Int, length(row_map))
+    old_row_sizes = zeros(Int, length(R_row_maps[1]))
     for l in 1:L
         R_dict = bf.R[l]
         row_map = R_row_maps[l]
@@ -69,18 +69,17 @@ function flatten_bf(bf::BF)
         row_sizes = zeros(Int, length(row_map))
         for (r_key, cols_dict) in R_dict
             for (c_key, block) in cols_dict
-                if isempty(block)
-                    if l == 1
-                        # För nivå 1, där blocken kommer direkt från Q, kan vi använda Q-blockets storlek
-                        q_block = bf.Q[c_key[2]]
-                        col_sizes[col_map[c_key]] = size(q_block, 1)
-                    else
-                        # För högre nivåer, där blocken kommer från R, kan vi använda det första blockets storlek
-                        col_sizes[col_map[c_key]] = old_row_sizes[R_row_maps[l - 1][c_key]]
-                    end
-                    continue
+                #if isempty(block)
+                if l == 1
+                    # För nivå 1, där blocken kommer direkt från Q, kan vi använda Q-blockets storlek
+                    q_block = bf.Q[c_key[2]]
+                    col_sizes[col_map[c_key]] = size(q_block, 1)
+                else
+                    # För högre nivåer, där blocken kommer från R, kan vi använda det första blockets storlek
+                    col_sizes[col_map[c_key]] = old_row_sizes[R_row_maps[l - 1][c_key]]
                 end
-                col_sizes[col_map[c_key]] = old_row_sizes[R_row_maps[l - 1][c_key]]
+                continue
+                #end
                 #col_sizes[col_map[c_key]] = size(block, 2)
             end
             if isempty(first(Base.values(cols_dict)))

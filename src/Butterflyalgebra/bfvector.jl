@@ -133,7 +133,7 @@ function apply_BF(
 end
 
 function mul_flat_bf(
-    bf::FlatBF, x::Vector{ComplexF64}; scheduler=OhMyThreads.SerialScheduler()
+    bf::FlatBF, x::AbstractVector{ComplexF64}; scheduler=OhMyThreads.SerialScheduler()
 )
     # 1. Allokera temporära arbetsvektorer baserat på lagrens storlek
     # (Detta kan optimeras ytterligare genom att återanvända minne mellan MV-anrop)
@@ -152,7 +152,7 @@ function mul_flat_bf(
             layer_vectors[l + 1] = zeros(ComplexF64, bf.R[l].out_size)
         end
     end
-    y = zeros(ComplexF64, bf.out_shape[1])
+    y = zeros(ComplexF64, bf.dim[1])
 
     # --- STEG 1: Applicera Q ---
     r1_in = layer_vectors[1]
@@ -177,14 +177,23 @@ function mul_flat_bf(
             r_start = layer.row_offsets[i]
 
             for b in layer.row_ptr[i]:(layer.row_ptr[i + 1] - 1)
-                if isempty(B)
-                    # Identitetsmatris (0x0). Addera direkt från in till ut!
-                    @views v_out[r_start:(r_start + nr - 1)] .+= v_in[c_start:(c_start + nr - 1)]
-                    continue
-                end
                 j = layer.col_idx[b]
                 c_start = layer.col_offsets[j]
                 B = layer.blocks[b]
+                if isempty(B)
+                    # FIX: Eftersom storleken av B är (0,0), räkna fram storleken
+                    # genom att titta på var NÄSTA rad offset börjar.
+                    # Om det är den sista raden lånar vi storleken via v_out:s längd.
+                    nr = if (i < length(layer.row_offsets))
+                        (layer.row_offsets[i + 1] - r_start)
+                    else
+                        (length(v_out) - r_start + 1)
+                    end
+
+                    # Identitetsmatris. Kopiera direkt från in till ut!
+                    @views v_out[r_start:(r_start + nr - 1)] .+= v_in[c_start:(c_start + nr - 1)]
+                    continue
+                end
                 nr, nc = size(B)
 
                 @views mul!(
