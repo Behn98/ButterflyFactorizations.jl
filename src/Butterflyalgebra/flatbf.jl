@@ -56,6 +56,8 @@ function flatten_bf(bf::BF)
 
     # 2. Platta till R-nivåerna till FlatLinearLayer
     flat_R = Vector{FlatLinearLayer}(undef, L)
+    # Behåll tidigare nivåers rad-storlekar för att kunna fylla i kolumn-storlekar i nästa nivå
+    old_row_sizes = zeros(Int, length(row_map))
     for l in 1:L
         R_dict = bf.R[l]
         row_map = R_row_maps[l]
@@ -63,8 +65,29 @@ function flatten_bf(bf::BF)
 
         # Räkna ut skalära storlekar/offsets för kolumner
         col_sizes = zeros(Int, length(col_map))
-        for (r_key, cols_dict) in R_dict, (c_key, block) in cols_dict
-            col_sizes[col_map[c_key]] = size(block, 2)
+        # Räkna ut skalära storlekar/offsets för rader
+        row_sizes = zeros(Int, length(row_map))
+        for (r_key, cols_dict) in R_dict
+            for (c_key, block) in cols_dict
+                if isempty(block)
+                    if l == 1
+                        # För nivå 1, där blocken kommer direkt från Q, kan vi använda Q-blockets storlek
+                        q_block = bf.Q[c_key[2]]
+                        col_sizes[col_map[c_key]] = size(q_block, 1)
+                    else
+                        # För högre nivåer, där blocken kommer från R, kan vi använda det första blockets storlek
+                        col_sizes[col_map[c_key]] = old_row_sizes[R_row_maps[l - 1][c_key]]
+                    end
+                    continue
+                end
+                col_sizes[col_map[c_key]] = old_row_sizes[R_row_maps[l - 1][c_key]]
+                #col_sizes[col_map[c_key]] = size(block, 2)
+            end
+            if isempty(first(Base.values(cols_dict)))
+                row_sizes[row_map[r_key]] = col_sizes[col_map[first(keys(cols_dict))]]
+                continue
+            end
+            row_sizes[row_map[r_key]] = size(first(Base.values(cols_dict)), 1)
         end
         col_offsets = Vector{Int}(undef, length(col_map))
         curr = 1
@@ -74,11 +97,6 @@ function flatten_bf(bf::BF)
         end
         in_size = curr - 1
 
-        # Räkna ut skalära storlekar/offsets för rader
-        row_sizes = zeros(Int, length(row_map))
-        for (r_key, cols_dict) in R_dict
-            row_sizes[row_map[r_key]] = size(first(Base.values(cols_dict)), 1)
-        end
         row_offsets = Vector{Int}(undef, length(row_map))
         curr = 1
         for i in 1:length(row_map)
@@ -110,6 +128,7 @@ function flatten_bf(bf::BF)
         flat_R[l] = FlatLinearLayer(
             row_ptr, col_idx, blocks, row_offsets, col_offsets, in_size, out_size
         )
+        old_row_sizes = row_sizes
     end
 
     # 3. Platta till Q (Kopplas till R[1]:s kolumn-offsets)

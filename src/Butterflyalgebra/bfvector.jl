@@ -132,8 +132,11 @@ function apply_BF(
     return result
 end
 
-function mul_flat_bf(bf::FlatBF, x::AbstractVector; scheduler=OhMyThreads.SerialScheduler())
+function mul_flat_bf(
+    bf::FlatBF, x::Vector{ComplexF64}; scheduler=OhMyThreads.SerialScheduler()
+)
     # 1. Allokera temporära arbetsvektorer baserat på lagrens storlek
+    # (Detta kan optimeras ytterligare genom att återanvända minne mellan MV-anrop)
     layer_vectors = Vector{Vector{ComplexF64}}(undef, length(bf.R) + 1)
     if length(bf.R) == 0
         # Räkna ut exakt hur stor den mellanliggande vektorn måste vara
@@ -149,7 +152,7 @@ function mul_flat_bf(bf::FlatBF, x::AbstractVector; scheduler=OhMyThreads.Serial
             layer_vectors[l + 1] = zeros(ComplexF64, bf.R[l].out_size)
         end
     end
-    y = zeros(ComplexF64, bf.dim[1])
+    y = zeros(ComplexF64, bf.out_shape[1])
 
     # --- STEG 1: Applicera Q ---
     r1_in = layer_vectors[1]
@@ -158,6 +161,7 @@ function mul_flat_bf(bf::FlatBF, x::AbstractVector; scheduler=OhMyThreads.Serial
         c_start = bf.Q.col_offsets[i]
         p = bf.Q.perm[i]
 
+        # Byt ut mot BLAS gemv! för maximal prestanda:
         @views mul!(r1_in[c_start:(c_start + size(B, 1) - 1)], B, x[p], 1.0, 1.0)
     end
 
@@ -167,33 +171,29 @@ function mul_flat_bf(bf::FlatBF, x::AbstractVector; scheduler=OhMyThreads.Serial
         v_in = layer_vectors[l]
         v_out = layer_vectors[l + 1]
 
+        # Denna loop är helt trådsäker eftersom trådarna skriver till helt olika segment i v_out!
+        # CPU-prefetchern kommer att älska denna sekventiella minnesläsning.
         tforeach(1:(length(layer.row_ptr) - 1); scheduler=scheduler) do i
             r_start = layer.row_offsets[i]
 
-            # Räkna ut n (storleken på blocket) baserat på offsets!
-            # OBS: Detta kräver att din 'flatten_bf'-funktion har satt in
-            # ett sista offset-värde (alltså length(row_offsets) == num_rows + 1)
-            nr = layer.row_offsets[i + 1] - r_start
-
             for b in layer.row_ptr[i]:(layer.row_ptr[i + 1] - 1)
-                j = layer.col_idx[b]
-                c_start = layer.col_offsets[j]
-                B = layer.blocks[b]
-
                 if isempty(B)
                     # Identitetsmatris (0x0). Addera direkt från in till ut!
                     @views v_out[r_start:(r_start + nr - 1)] .+= v_in[c_start:(c_start + nr - 1)]
-                else
-                    # Vanlig matris
-                    _nr, nc = size(B)
-                    @views mul!(
-                        v_out[r_start:(r_start + _nr - 1)],
-                        B,
-                        v_in[c_start:(c_start + nc - 1)],
-                        1.0,
-                        1.0,
-                    )
+                    continue
                 end
+                j = layer.col_idx[b]
+                c_start = layer.col_offsets[j]
+                B = layer.blocks[b]
+                nr, nc = size(B)
+
+                @views mul!(
+                    v_out[r_start:(r_start + nr - 1)],
+                    B,
+                    v_in[c_start:(c_start + nc - 1)],
+                    1.0,
+                    1.0,
+                )
             end
         end
     end
