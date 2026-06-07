@@ -44,8 +44,8 @@ function PetrovGalerkinBF(
     acctype=ComplexF64,
 )
     # 0. Spara gammal BLAS-inställning och sätt till 1 för att undvika överbelastning
-    old_blas_threads = BLAS.get_num_threads()
-    BLAS.set_num_threads(1)
+    #old_blas_threads = BLAS.get_num_threads()
+    #BLAS.set_num_threads(1)
 
     #println("\n--- Profiling PetrovGalerkinBF ---")
     # 1. Mät tid för uppsättning och träd-sökning
@@ -105,7 +105,7 @@ function PetrovGalerkinBF(
     #println("----------------------------------\n")
 
     # Återställ BLAS-trådarna innan vi returnerar
-    BLAS.set_num_threads(old_blas_threads)
+    #BLAS.set_num_threads(old_blas_threads)
 
     return PetrovGalerkinBF{acctype}(  #BEAST.scalartype(operator)
         nears,
@@ -213,8 +213,8 @@ function PetrovGalerkinBF(
     acctype=ComplexF64,
 )
     # 0. Spara gammal BLAS-inställning och sätt till 1 för att undvika överbelastning
-    old_blas_threads = BLAS.get_num_threads()
-    BLAS.set_num_threads(1)
+    #old_blas_threads = BLAS.get_num_threads()
+    #BLAS.set_num_threads(1)
 
     #println("\n--- Profiling PetrovGalerkinBF ---")
     # 1. Mät tid för uppsättning och träd-sökning
@@ -277,7 +277,7 @@ function PetrovGalerkinBF(
     #println("----------------------------------\n")
 
     # Återställ BLAS-trådarna innan vi returnerar
-    BLAS.set_num_threads(old_blas_threads)
+    #BLAS.set_num_threads(old_blas_threads)
 
     return PetrovGalerkinBF{acctype}(  #BEAST.scalartype(operator)
         nears,

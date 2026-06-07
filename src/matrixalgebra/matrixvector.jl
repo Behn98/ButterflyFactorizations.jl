@@ -5,41 +5,33 @@
     fill!(y, zero(T))
     y_near = A.nearinteractions * x
     y .+= y_near
-    old_blas = BLAS.get_num_threads()
-    BLAS.set_num_threads(1)
-    #y_lock = Threads.SpinLock()
-    nt = Threads.maxthreadid()
-    y_locals = [zeros(T, length(y)) for _ in 1:nt]
 
-    @tasks for i in eachindex(A.BFs)
+    n_chunks = min(length(A.BFs), Threads.nthreads() * 4)
+    chunk_size = cld(length(A.BFs), n_chunks)
+    y_locals = Vector{Vector{T}}(undef, n_chunks)
+
+    @tasks for c in 1:n_chunks
         @set scheduler = DynamicScheduler()
+        y_local = zeros(T, length(y))
+        start_idx = (c - 1) * chunk_size + 1
+        end_idx = min(c * chunk_size, length(A.BFs))
 
-        bf = A.BFs[i]
-        gs = H2Trees.values(A.tree.trialcluster, bf.NS)
-        go = H2Trees.values(A.tree.testcluster, bf.NO)
+        for i in start_idx:end_idx
+            bf = A.BFs[i]
+            gs = H2Trees.values(A.tree.trialcluster, bf.NS)
+            go = H2Trees.values(A.tree.testcluster, bf.NO)
 
-        # 2. Använd view(x, gs) för att slippa minnesallokering
-        x_view = view(x, gs)
-        res = apply_BF(bf, x_view; scheduler=OhMyThreads.SerialScheduler())
+            x_view = view(x, gs)
+            res = apply_BF(bf, x_view; scheduler=OhMyThreads.SerialScheduler())
 
-        # 3. Varje tråd uppdaterar enbart sin egen resultatvektor - Helt låsfritt!
-        tid = Threads.threadid()
-        y_locals[tid][go] .+= res
-        # Beräkna resultatet för blocket (detta sker helt parallellt)
-        #res = apply_BF(bf, x[gs]; scheduler=OhMyThreads.SerialScheduler())
-
-        # Lås kortvarigt när vi uppdaterar 'y' så att inte trådar skriver över varandra
-        #lock(y_lock) do
-        #    y[go] .+= res
-        #end
+            y_local[go] .+= res
+        end
+        y_locals[c] = y_local
     end
 
-    for tid in 1:nt
-        y .+= y_locals[tid]
+    for c in 1:n_chunks
+        y .+= y_locals[c]
     end
-
-    BLAS.set_num_threads(old_blas)
-
     return y
 end
 
@@ -51,42 +43,33 @@ end
     LinearMaps.check_dim_mul(y, At.lmap, x)
     fill!(y, zero(T))
     y .+= transpose(At.lmap.nearinteractions) * x
-    old_blas = BLAS.get_num_threads()
-    BLAS.set_num_threads(1)
-    #y_lock = Threads.SpinLock()
-    nt = Threads.maxthreadid()
-    y_locals = [zeros(T, length(y)) for _ in 1:nt]
 
-    @tasks for i in eachindex(At.lmap.BFs)
+    n_chunks = min(length(At.lmap.BFs), Threads.nthreads() * 4)
+    chunk_size = cld(length(At.lmap.BFs), n_chunks)
+    y_locals = Vector{Vector{T}}(undef, n_chunks)
+
+    @tasks for c in 1:n_chunks
         @set scheduler = DynamicScheduler()
-        gs = H2Trees.values(At.lmap.tree.trialcluster, At.lmap.BFs[i].NS)
-        go = H2Trees.values(At.lmap.tree.testcluster, At.lmap.BFs[i].NO)
+        y_local = zeros(T, length(y))
+        start_idx = (c - 1) * chunk_size + 1
+        end_idx = min(c * chunk_size, length(At.lmap.BFs))
 
-        # 2. Använd view(x, gs) för att slippa minnesallokering
-        x_view = view(x, go)
-        res = apply_BF(
-            transpose(At.lmap.BFs[i]), x_view; scheduler=OhMyThreads.SerialScheduler()
-        )
+        for i in start_idx:end_idx
+            bf = At.lmap.BFs[i]
+            gs = H2Trees.values(At.lmap.tree.trialcluster, bf.NS)
+            go = H2Trees.values(At.lmap.tree.testcluster, bf.NO)
 
-        # 3. Varje tråd uppdaterar enbart sin egen resultatvektor - Helt låsfritt!
-        tid = Threads.threadid()
-        y_locals[tid][gs] .+= res
+            x_view = view(x, go)
+            res = apply_BF(transpose(bf), x_view; scheduler=OhMyThreads.SerialScheduler())
 
-        # Beräkna resultatet för blocket (detta sker helt parallellt)
-        #res = apply_BF(
-        #    transpose(At.lmap.BFs[i]), x[go]; scheduler=OhMyThreads.SerialScheduler()
-        #)
-
-        # Lås kortvarigt när vi uppdaterar 'y' så att inte trådar skriver över varandra
-        #lock(y_lock) do
-        #    y[gs] .+= res
-        #end
+            y_local[gs] .+= res
+        end
+        y_locals[c] = y_local
     end
-    for tid in 1:nt
-        y .+= y_locals[tid]
+
+    for c in 1:n_chunks
+        y .+= y_locals[c]
     end
-    # Återställ BLAS
-    BLAS.set_num_threads(old_blas)
     return y
 end
 
@@ -98,35 +81,33 @@ end
     LinearMaps.check_dim_mul(y, At.lmap, x)
     fill!(y, zero(T))
     y .+= adjoint(At.lmap.nearinteractions) * x
-    old_blas = BLAS.get_num_threads()
-    BLAS.set_num_threads(1)
-    #y_lock = Threads.SpinLock()
-    nt = Threads.maxthreadid()
-    y_locals = [zeros(T, length(y)) for _ in 1:nt]
 
-    @tasks for i in eachindex(At.lmap.BFs)
+    n_chunks = min(length(At.lmap.BFs), Threads.nthreads() * 4)
+    chunk_size = cld(length(At.lmap.BFs), n_chunks)
+    y_locals = Vector{Vector{T}}(undef, n_chunks)
+
+    @tasks for c in 1:n_chunks
         @set scheduler = DynamicScheduler()
-        gs = H2Trees.values(At.lmap.tree.trialcluster, At.lmap.BFs[i].NS)
-        go = H2Trees.values(At.lmap.tree.testcluster, At.lmap.BFs[i].NO)
+        y_local = zeros(T, length(y))
+        start_idx = (c - 1) * chunk_size + 1
+        end_idx = min(c * chunk_size, length(At.lmap.BFs))
 
-        # 2. Använd view(x, gs) för att slippa minnesallokering
-        x_view = view(x, go)
-        res = apply_BF(At.lmap.BFs[i]', x_view; scheduler=OhMyThreads.SerialScheduler())
+        for i in start_idx:end_idx
+            bf = At.lmap.BFs[i]
+            gs = H2Trees.values(At.lmap.tree.trialcluster, bf.NS)
+            go = H2Trees.values(At.lmap.tree.testcluster, bf.NO)
 
-        # 3. Varje tråd uppdaterar enbart sin egen resultatvektor - Helt låsfritt!
-        tid = Threads.threadid()
-        y_locals[tid][gs] .+= res
-        #res = apply_BF(At.lmap.BFs[i]', x[go]; scheduler=OhMyThreads.SerialScheduler())
+            x_view = view(x, go)
+            res = apply_BF(bf', x_view; scheduler=OhMyThreads.SerialScheduler())
 
-        # Lås kortvarigt när vi uppdaterar 'y' så att inte trådar skriver över varandra
-        #lock(y_lock) do
-        #    y[gs] .+= res
-        #end
+            y_local[gs] .+= res
+        end
+        y_locals[c] = y_local
     end
-    for tid in 1:nt
-        y .+= y_locals[tid]
+
+    for c in 1:n_chunks
+        y .+= y_locals[c]
     end
-    BLAS.set_num_threads(old_blas)
     return y
 end
 
@@ -138,48 +119,32 @@ end
     y_near = A.nearinteractions * x
     y .+= y_near
 
-    #y_lock = Threads.SpinLock()
-    nt = Threads.maxthreadid()
-    y_locals = [zeros(T, length(y)) for _ in 1:nt]
-    #=
-    batchlen = length(A.BFs)/Threads.nthreads()
-    @tasks for i in eachindex(y_locals)
-        @set scheduler = StaticScheduler()
+    n_chunks = min(length(A.BFs), Threads.nthreads() * 4)
+    chunk_size = cld(length(A.BFs), n_chunks)
+    y_locals = Vector{Vector{T}}(undef, n_chunks)
 
-    end
-
-    =#
-    @tasks for i in eachindex(A.BFs)
+    @tasks for c in 1:n_chunks
         @set scheduler = DynamicScheduler()
-        #=@local begin
+        y_local = zeros(T, length(y))
+        start_idx = (c - 1) * chunk_size + 1
+        end_idx = min(c * chunk_size, length(A.BFs))
 
-        end=#
+        for i in start_idx:end_idx
+            bf = A.BFs[i]
+            gs = H2Trees.values(A.tree.trialcluster, bf.NS)
+            go = H2Trees.values(A.tree.testcluster, bf.NO)
 
-        bf = A.BFs[i]
-        gs = H2Trees.values(A.tree.trialcluster, bf.NS)
-        go = H2Trees.values(A.tree.testcluster, bf.NO)
+            x_view = view(x, gs)
+            res = mul_flat_bf(bf, x_view; scheduler=OhMyThreads.SerialScheduler())
 
-        # 2. Använd view(x, gs) för att slippa minnesallokering
-        x_view = view(x, gs)
-        res = mul_flat_bf(bf, x_view; scheduler=OhMyThreads.SerialScheduler())
-
-        # 3. Varje tråd uppdaterar enbart sin egen resultatvektor - Helt låsfritt!
-        tid = Threads.threadid()
-        y_locals[tid][go] .+= res
-        # Beräkna resultatet för blocket (detta sker helt parallellt)
-        #res = mul_flat_bf(bf, x[gs]; scheduler=OhMyThreads.SerialScheduler())
-
-        # Lås kortvarigt när vi uppdaterar 'y' så att inte trådar skriver över varandra
-        #lock(y_lock) do
-        #    y[go] .+= res
-        #end
+            y_local[go] .+= res
+        end
+        y_locals[c] = y_local
     end
-    for tid in 1:nt
-        y .+= y_locals[tid]
-    end
-    # Återställ BLAS
-    #BLAS.set_num_threads(old_blas)
 
+    for c in 1:n_chunks
+        y .+= y_locals[c]
+    end
     return y
 end
 
@@ -191,40 +156,35 @@ end
     LinearMaps.check_dim_mul(y, At.lmap, x)
     fill!(y, zero(T))
     y .+= transpose(At.lmap.nearinteractions) * x
-    old_blas = BLAS.get_num_threads()
-    BLAS.set_num_threads(1)
-    #y_lock = Threads.SpinLock()
-    nt = Threads.maxthreadid()
-    y_locals = [zeros(T, length(y)) for _ in 1:nt]
 
-    @tasks for i in eachindex(At.lmap.BFs)
+    n_chunks = min(length(At.lmap.BFs), Threads.nthreads() * 4)
+    chunk_size = cld(length(At.lmap.BFs), n_chunks)
+    y_locals = Vector{Vector{T}}(undef, n_chunks)
+
+    @tasks for c in 1:n_chunks
         @set scheduler = DynamicScheduler()
-        gs = H2Trees.values(At.lmap.tree.trialcluster, At.lmap.BFs[i].NS)
-        go = H2Trees.values(At.lmap.tree.testcluster, At.lmap.BFs[i].NO)
+        y_local = zeros(T, length(y))
+        start_idx = (c - 1) * chunk_size + 1
+        end_idx = min(c * chunk_size, length(At.lmap.BFs))
 
-        # 2. Använd view(x, gs) för att slippa minnesallokering
-        x_view = view(x, go)
-        res = mul_flat_bf(
-            transpose(At.lmap.BFs[i]), x_view; scheduler=OhMyThreads.SerialScheduler()
-        )
+        for i in start_idx:end_idx
+            bf = At.lmap.BFs[i]
+            gs = H2Trees.values(At.lmap.tree.trialcluster, bf.NS)
+            go = H2Trees.values(At.lmap.tree.testcluster, bf.NO)
 
-        # 3. Varje tråd uppdaterar enbart sin egen resultatvektor - Helt låsfritt!
-        tid = Threads.threadid()
-        y_locals[tid][gs] .+= res
-        # Beräkna resultatet för blocket (detta sker helt parallellt)
-        #res = mul_flat_bf(
-        #    transpose(At.lmap.BFs[i]), x[go]; scheduler=OhMyThreads.SerialScheduler()
-        #)
+            x_view = view(x, go)
+            res = mul_flat_bf(
+                transpose(bf), x_view; scheduler=OhMyThreads.SerialScheduler()
+            )
 
-        # Lås kortvarigt när vi uppdaterar 'y' så att inte trådar skriver över varandra
-        #lock(y_lock) do
-        #    y[gs] .+= res
-        #end
+            y_local[gs] .+= res
+        end
+        y_locals[c] = y_local
     end
-    for tid in 1:nt
-        y .+= y_locals[tid]
+
+    for c in 1:n_chunks
+        y .+= y_locals[c]
     end
-    BLAS.set_num_threads(old_blas)
     return y
 end
 
@@ -236,39 +196,37 @@ end
     LinearMaps.check_dim_mul(y, At.lmap, x)
     fill!(y, zero(T))
     y .+= adjoint(At.lmap.nearinteractions) * x
-    old_blas = BLAS.get_num_threads()
-    BLAS.set_num_threads(1)
-    #y_lock = Threads.SpinLock()
-    nt = Threads.maxthreadid()
-    y_locals = [zeros(T, length(y)) for _ in 1:nt]
 
-    @tasks for i in eachindex(At.lmap.BFs)
+    n_chunks = min(length(At.lmap.BFs), Threads.nthreads() * 4)
+    chunk_size = cld(length(At.lmap.BFs), n_chunks)
+    y_locals = Vector{Vector{T}}(undef, n_chunks)
+
+    @tasks for c in 1:n_chunks
         @set scheduler = DynamicScheduler()
-        gs = H2Trees.values(At.lmap.tree.trialcluster, At.lmap.BFs[i].NS)
-        go = H2Trees.values(At.lmap.tree.testcluster, At.lmap.BFs[i].NO)
+        y_local = zeros(T, length(y))
+        start_idx = (c - 1) * chunk_size + 1
+        end_idx = min(c * chunk_size, length(At.lmap.BFs))
 
-        # 2. Använd view(x, gs) för att slippa minnesallokering
-        x_view = view(x, go)
-        res = mul_flat_bf(At.lmap.BFs[i]', x_view; scheduler=OhMyThreads.SerialScheduler())
+        for i in start_idx:end_idx
+            bf = At.lmap.BFs[i]
+            gs = H2Trees.values(At.lmap.tree.trialcluster, bf.NS)
+            go = H2Trees.values(At.lmap.tree.testcluster, bf.NO)
 
-        # 3. Varje tråd uppdaterar enbart sin egen resultatvektor - Helt låsfritt!
-        tid = Threads.threadid()
-        y_locals[tid][gs] .+= res
-        # Beräkna resultatet för blocket (detta sker helt parallellt)
-        #res = mul_flat_bf(At.lmap.BFs[i]', x[go]; scheduler=OhMyThreads.SerialScheduler())
+            x_view = view(x, go)
+            res = mul_flat_bf(bf', x_view; scheduler=OhMyThreads.SerialScheduler())
 
-        # Lås kortvarigt när vi uppdaterar 'y' så att inte trådar skriver över varandra
-        #lock(y_lock) do
-        #    y[gs] .+= res
-        #end
+            y_local[gs] .+= res
+        end
+        y_locals[c] = y_local
     end
-    for tid in 1:nt
-        y .+= y_locals[tid]
+
+    for c in 1:n_chunks
+        y .+= y_locals[c]
     end
-    BLAS.set_num_threads(old_blas)
     return y
 end
 
+# ... (Här börjar dina orörda funktioner för PetrovGalerkinBF_mats) ...
 @views function LinearAlgebra.mul!(
     y::AbstractVecOrMat,
     A::ButterflyFactorizations.PetrovGalerkinBF_mats,

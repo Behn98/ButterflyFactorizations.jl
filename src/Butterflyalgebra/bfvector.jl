@@ -55,8 +55,8 @@ function apply_BF(
     PermQ = Butterfly.PermQ
     PermP = Butterfly.PermP
 
-    old_blas = BLAS.get_num_threads()
-    BLAS.set_num_threads(1)
+    #old_blas = BLAS.get_num_threads()
+    #BLAS.set_num_threads(1)
 
     # ------------------------------------------------------------
     # Leaf initialization (Q)
@@ -128,7 +128,7 @@ function apply_BF(
     for (inds, out) in p_results
         result[inds] .+= out
     end
-    BLAS.set_num_threads(old_blas)
+    #BLAS.set_num_threads(old_blas)
     return result
 end
 
