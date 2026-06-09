@@ -1,13 +1,16 @@
-function recompress_BF_left(Butterfly::AlgBF, τ)
-    return recompress_BF_right(Butterfly', τ)'
+import H2Trees: values, center, halfsize, children, isleaf, trialtree, testtree
+function recompress_BF_left(Butterfly::AlgBF, τ, tree::H2Trees.BlockTree)
+    return recompress_BF_right(
+        Butterfly', τ, H2Trees.BlockTree(trialtree(tree), testtree(tree))
+    )'
 end
 
-function recompress_BF(Butterfly::AlgBF, τ)
-    return recompress_BF_left(recompress_BF_right(Butterfly, τ), τ)
+function recompress_BF(Butterfly::AlgBF, τ, tree::H2Trees.BlockTree)
+    return recompress_BF_left(recompress_BF_right(Butterfly, τ, tree), τ, tree)
 end
 
 """
-    recompress_BF(Butterfly::BF, τ)
+    recompress_BF(Butterfly::BF, τ, tree::H2Trees.BlockTree)
 
 Recompresses a structural Butterfly Factorization (`BF`) by extracting its algebraic
 factors, recompressing them with tolerance `τ`, and restructuring the output back into a
@@ -21,12 +24,12 @@ operations is only supported for the Dictionary versions of the Butterflies, as 
 matrix-based format is not designed for algebraic manipulations and would require a complete
 restructuring of the underlying data representation to support such operations effectively.
 """
-function recompress_BF(Butterfly::BF, τ)
+function recompress_BF(Butterfly::BF, τ, tree::H2Trees.BlockTree)
     Q = Butterfly.Q
     R = Butterfly.R
     P = Butterfly.P
     BFalg = AlgBF(Butterfly.dim, Q, R, P)
-    BFalg = recompress_BF(BFalg, τ)
+    BFalg = recompress_BF(BFalg, τ, tree)
     return BF(
         BFalg.Q,
         BFalg.R,
@@ -41,49 +44,60 @@ function recompress_BF(Butterfly::BF, τ)
     )
 end
 
-function recompress_BF_right(Butterfly::AlgBF, τ)
+@views function recompress_BF_right(Butterfly::AlgBF, τ, tree::H2Trees.BlockTree)
     Q = Butterfly.Q
     R = Butterfly.R
     P = Butterfly.P
     lr = length(R)
+
     for l in eachindex(R)
         lold = lr - l + 1
-        R_u = Dict{Int,Dict{Int,Matrix{ComplexF64}}}()
-        col = Vector{Tuple{Int,Int}}(undef, 0)
-        for row in keys(R[lold])
-            col = unique(append!(col, keys(R[lold][row])))
-        end
-        for col_idx in col
-            rows_with_col = [
-                row for (row, inner_dict) in R[lold] if haskey(inner_dict, col_idx)
-            ]
-            R_k = Vector{Matrix{ComplexF64}}()
-            row_spc = Vector{Int}()
-            i = 1
-            for row in rows_with_col
-                push!(R_k, R[lold][row][col_idx])
-                push!(row_spc, size(R_k[i], 1))
 
-                i += 1
-            end
-            A_k = vcat(R_k...)
-            #@show size(A_k)
-            QRA = pqr(A_k; rtol=τ)
-            if !haskey(R_u, col_idx[1])
-                R_u[col_idx[1]] = Dict{Int,Matrix{ComplexF64}}()
-            end
-            if haskey(R_u[col_idx[1]], col_idx[2])
-                @show "col_idx already exists in R_u, this should not happen!"
-            end
-            R_u[col_idx[1]][col_idx[2]] = QRA[2][:, invperm(QRA[3])]
-            last = 0
-            j = 1
-            for row in rows_with_col
-                R[lold][row][col_idx] = QRA[1][(last + 1):(last + row_spc[j]), :]
-                last += row_spc[j]
-                j += 1
+        # Bulletproof: Flatten R_u to map the full col_idx tuple directly to its matrix
+        R_u = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
+
+        # 1. Map column skeletons to all associated row skeletons at this level
+        col_to_rows = Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}()
+        for row_skel in keys(R[lold])
+            for col_idx in keys(R[lold][row_skel])
+                if !haskey(col_to_rows, col_idx)
+                    col_to_rows[col_idx] = Vector{Tuple{Int,Int}}()
+                end
+                push!(col_to_rows[col_idx], row_skel)
             end
         end
+
+        # 2. Process each unique column space
+        for (col_idx, rows_with_col) in col_to_rows
+            parent_groups = group_by_parents(tree, rows_with_col)
+
+            for (parent_node, local_rows) in parent_groups
+                R_k = Vector{Matrix{ComplexF64}}()
+                row_spc = Vector{Int}()
+
+                for row_skel in local_rows
+                    block = R[lold][row_skel][col_idx]
+                    push!(R_k, block)
+                    push!(row_spc, size(block, 1))
+                end
+
+                A_k = vcat(R_k...)
+                QRA = pqr(A_k; rtol=τ)
+
+                # Store using the unique col_idx key — no overwrites possible
+                R_u[col_idx] = QRA[2][:, invperm(QRA[3])]
+
+                last_idx = 0
+                for (j, row_skel) in enumerate(local_rows)
+                    R[lold][row_skel][col_idx] = Matrix(
+                        QRA[1][(last_idx + 1):(last_idx + row_spc[j]), :]
+                    )
+                    last_idx += row_spc[j]
+                end
+            end
+        end
+
+        # 3. Propagate the accumulated R_u transformations
         if l < lr
             R[lold - 1] = update_next_level_R_right(R_u, R[lold - 1])
         else
@@ -94,24 +108,32 @@ function recompress_BF_right(Butterfly::AlgBF, τ)
     return AlgBF(Butterfly.dim, Q, R, P)
 end
 
+# Overload 1: Updating intermediate R factors (Clean 1:1 matching)
 @views function update_next_level_R_right(
-    R_u::Dict{Int,Dict{Int,Matrix{ComplexF64}}},
+    R_u::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
     rightfactor::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}},
 )
     for row in keys(rightfactor)
-        for col in keys(rightfactor[row])
-            rightfactor[row][col] = R_u[row[1]][row[2]] * rightfactor[row][col]
+        # Because the row key of rightfactor is exactly the col_idx of the previous level
+        if haskey(R_u, row)
+            T_mat = R_u[row]
+            for col in keys(rightfactor[row])
+                rightfactor[row][col] = T_mat * rightfactor[row][col]
+            end
         end
     end
     return rightfactor
 end
 
+# Overload 2: Updating the terminal Q factor
 @views function update_next_level_R_right(
-    R_u::Dict{Int,Dict{Int,Matrix{ComplexF64}}}, rightfactor::Dict{Int,Matrix{ComplexF64}}
+    R_u::Dict{Tuple{Int,Int},Matrix{ComplexF64}}, rightfactor::Dict{Int,Matrix{ComplexF64}}
 )
-    NO = collect(keys(R_u))[1]
-    for nodeS in keys(rightfactor)
-        rightfactor[nodeS] = R_u[NO][nodeS] * rightfactor[nodeS]
+    for col_idx in keys(R_u)
+        nodeS = col_idx[2] # Pull out the source leaf node ID directly
+        if haskey(rightfactor, nodeS)
+            rightfactor[nodeS] = R_u[col_idx] * rightfactor[nodeS]
+        end
     end
     return rightfactor
 end

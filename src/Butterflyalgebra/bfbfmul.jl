@@ -1,3 +1,4 @@
+import H2Trees: values, center, halfsize, children, isleaf, trialtree, testtree
 """
     mulBFs(BF_1::BF, BF_2::BF, τ::Float64)
 
@@ -16,7 +17,7 @@ matrix-vector products while preserving the overall accuracy within the specifie
 In terms of storage future work has to include more aggressive recompression strategies to
 prevent the intermediate factors from growing too large.
 """
-function mulBFs(BF_1::BF, BF_2::BF, τ::Float64)
+function mulBFs(BF_1::BF, BF_2::BF, τ::Float64, tree::H2Trees.BlockTree)
     @assert length(BF_1) == length(BF_2) "Both BFs must have the same number of levels"
     @assert BF_1.NS == BF_2.NO "Source and Observer dimensions must match"
     M_messenger = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
@@ -38,9 +39,9 @@ function mulBFs(BF_1::BF, BF_2::BF, τ::Float64)
     )
     for m in 1:(L - 1)
         for t in 1:m
-            result = swap_and_recompress(result, L + 2 - t, τ)
+            result = swap_and_recompress(result, L + 2 - t, τ, tree)
         end
-        result = recompress_BF(mul_factors(result, L + 1 - m), τ)
+        result = recompress_BF(mul_factors(result, L + 1 - m), τ, tree)
     end
 
     return BF(
@@ -69,6 +70,20 @@ function mul_factors(
         for inner in keys(leftfactor[row])
             for col in keys(rightfactor[inner])
                 if !haskey(product[row], col)
+                    # First time seeing this block, allocate and multiply
+                    product[row][col] = leftfactor[row][inner] * rightfactor[inner][col]
+                else
+                    # In-place accumulation: C = 1.0 * A * B + 1.0 * C
+                    mul!(
+                        product[row][col],
+                        leftfactor[row][inner],
+                        rightfactor[inner][col],
+                        1.0,
+                        1.0,
+                    )
+                end
+                #=
+                if !haskey(product[row], col)
                     product[row][col] = Matrix{ComplexF64}(
                         undef,
                         size(leftfactor[row][inner])[1],
@@ -85,7 +100,7 @@ function mul_factors(
                     )
                     @views mul!(temp, leftfactor[row][inner], rightfactor[inner][col])
                     product[row][col] += temp
-                end
+                end=#
             end
         end
     end
@@ -117,7 +132,7 @@ function mul_factors(BF::AlgBF, idx::Int)
     )
 end
 
-function swap_and_recompress(BF::AlgBF, idx::Int, τ)
+function swap_and_recompress(BF::AlgBF, idx::Int, τ, tree::H2Trees.BlockTree)
     L = length(BF.R)
     if idx > 1 && idx < (L + 1)
         leftfactor = BF.R[L + 1 - (idx - 1)]
@@ -131,7 +146,9 @@ function swap_and_recompress(BF::AlgBF, idx::Int, τ)
         leftfactor = BF.R[L + 1 - idx]
         rightfactor = BF.Q
     end
-    nlfactor, nrfactor = swap_and_recompress(leftfactor, rightfactor, τ)
+    nlfactor, nrfactor = swap_and_recompress(
+        leftfactor, rightfactor, τ, tree::H2Trees.BlockTree
+    )
 
     return AlgBF(
         (size(BF, 1), size(BF, 2)),
@@ -141,137 +158,107 @@ function swap_and_recompress(BF::AlgBF, idx::Int, τ)
     )
 end
 
-# A generic factor is just Dict{RowKey, Dict{ColKey, Matrix}}
-function swap_and_recompress(LeftFactor, RightFactor, τ)
+function swap_and_recompress(LeftFactor, RightFactor, τ, tree::H2Trees.BlockTree)
     NewLeftFactor = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
     NewRightFactor = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
-    #LeftFactor = reverse_dict_keys(LeftFactor)
-    #RightFactor = reverse_dict_keys(RightFactor)
-    NewLeftFactor = mul_factors(LeftFactor, RightFactor)
-    col = Vector{Tuple{Int,Int}}(undef, 0)
-    for row in keys(NewLeftFactor)
-        col = unique(append!(col, keys(NewLeftFactor[row])))
-    end
-    for col_idx in col
-        rows_with_col = [
-            row for (row, inner_dict) in NewLeftFactor if haskey(inner_dict, col_idx)
-        ]
-        R_k = Vector{Matrix{ComplexF64}}()
-        row_spc = Vector{Int}()
-        i = 1
-        for row in rows_with_col
-            push!(R_k, NewLeftFactor[row][col_idx])
-            push!(row_spc, size(R_k[i], 1))
 
-            i += 1
+    Intermediate = mul_factors(LeftFactor, RightFactor)
+    row_tree = testtree(tree)
+
+    # 1. Map target parent_skel to its constituent row and column components
+    # parent_skel => (Set(row_skeletons), Set(col_skeletons))
+    skel_groups = Dict{Tuple{Int,Int},Tuple{Set{Tuple{Int,Int}},Set{Tuple{Int,Int}}}}()
+
+    for row_skel in keys(Intermediate)
+        parent_node = H2Trees.parent(row_tree, row_skel[1])
+        for col_skel in keys(Intermediate[row_skel])
+            p_skel = (parent_node, col_skel[2])
+            if !haskey(skel_groups, p_skel)
+                skel_groups[p_skel] = (Set{Tuple{Int,Int}}(), Set{Tuple{Int,Int}}())
+            end
+            push!(skel_groups[p_skel][1], row_skel)
+            push!(skel_groups[p_skel][2], col_skel)
         end
-        A_k = vcat(R_k...)
-        #@show size(A_k)
-        QRA = pqr(A_k; rtol=τ)
-        if !haskey(NewRightFactor, col_idx)
-            NewRightFactor[col_idx] = Dict{Int,AbstractMatrix{ComplexF64}}()
+    end
+
+    # 2. Process each unique intermediate space via joint tiling
+    for (p_skel, (local_rows_set, local_cols_set)) in skel_groups
+        local_rows = collect(local_rows_set)
+        local_cols = collect(local_cols_set)
+
+        # Determine individual block row sizes
+        row_sizes = zeros(Int, length(local_rows))
+        for (i, r) in enumerate(local_rows)
+            for c in local_cols
+                if haskey(Intermediate[r], c)
+                    row_sizes[i] = size(Intermediate[r][c], 1)
+                    break
+                end
+            end
         end
-        #=
-        if haskey(R_u[col_idx], col_idx)
-            @show "Warning: Collision in R_u at column index $col_idx"
+
+        # Determine individual block column sizes
+        col_sizes = zeros(Int, length(local_cols))
+        for (j, c) in enumerate(local_cols)
+            for r in local_rows
+                if haskey(Intermediate[r], c)
+                    col_sizes[j] = size(Intermediate[r][c], 2)
+                    break
+                end
+            end
         end
-        =#
-        NewRightFactor[col_idx][col_idx] = QRA[2][:, invperm(QRA[3])]
-        last = 0
-        j = 1
-        for row in rows_with_col
-            NewLeftFactor[row][col_idx] = QRA[1][(last + 1):(last + row_spc[j]), :]
-            last += row_spc[j]
-            j += 1
+
+        # 3. Tile the active blocks into a single localized matrix grid
+        A_local = zeros(ComplexF64, sum(row_sizes), sum(col_sizes))
+
+        current_row = 0
+        for (i, r) in enumerate(local_rows)
+            current_col = 0
+            for (j, c) in enumerate(local_cols)
+                if haskey(Intermediate[r], c)
+                    block = Intermediate[r][c]
+                    A_local[
+                        (current_row + 1):(current_row + row_sizes[i]),
+                        (current_col + 1):(current_col + col_sizes[j]),
+                    ] .= block
+                end
+                current_col += col_sizes[j]
+            end
+            current_row += row_sizes[i]
+        end
+
+        # 4. Joint Rank-Revealing Compression
+        QRA = pqr(A_local; rtol=τ)
+        Q_mat = QRA[1]
+        R_mat = QRA[2][:, invperm(QRA[3])]
+
+        # 5. Distribute Q_mat vertically to NewLeftFactor
+        current_row = 0
+        for (i, r) in enumerate(local_rows)
+            if !haskey(NewLeftFactor, r)
+                NewLeftFactor[r] = Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}()
+            end
+            NewLeftFactor[r][p_skel] = Matrix(
+                Q_mat[(current_row + 1):(current_row + row_sizes[i]), :]
+            )
+            current_row += row_sizes[i]
+        end
+
+        # 6. Distribute R_mat horizontally to NewRightFactor
+        if !haskey(NewRightFactor, p_skel)
+            NewRightFactor[p_skel] = Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}()
+        end
+
+        current_col = 0
+        for (j, c) in enumerate(local_cols)
+            NewRightFactor[p_skel][c] = Matrix(
+                R_mat[:, (current_col + 1):(current_col + col_sizes[j])]
+            )
+            current_col += col_sizes[j]
         end
     end
 
     return NewLeftFactor, NewRightFactor
-end
-
-function swap_and_recompress2(LeftFactor, RightFactor, τ; kmax=100)
-
-    # store low-rank triples per (row,col)
-    Acc = Dict{
-        Tuple{Tuple{Int,Int},Tuple{Int,Int}},
-        Tuple{
-            Union{Matrix{ComplexF64},Nothing},
-            Union{Vector{Float64},Nothing},
-            Union{Matrix{ComplexF64},Nothing},
-        },
-    }()
-
-    for (row, innerL) in LeftFactor
-        for (k, Lblock) in innerL
-            if !haskey(RightFactor, k)
-                continue
-            end
-
-            for (col, Rblock) in RightFactor[k]
-                key = (row, col)
-
-                A_new = Lblock * Rblock  # small
-
-                if !haskey(Acc, key)
-                    Acc[key] = (nothing, nothing, nothing)
-                end
-
-                U, S, V = Acc[key]
-
-                U, S, V = lowrank_add!(U, S, V, A_new, τ, kmax)
-
-                Acc[key] = (U, S, V)
-            end
-        end
-    end
-
-    # split into Left/Right factors
-    NewLeft = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
-    NewRight = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
-
-    for ((row, col), (U, S, V)) in Acc
-        if U === nothing
-            continue
-        end
-
-        sqrtS = sqrt.(S)
-
-        UL = U * Diagonal(sqrtS)
-        VR = Diagonal(sqrtS) * V'
-
-        if !haskey(NewLeft, row)
-            NewLeft[row] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-        end
-        NewLeft[row][col] = UL
-
-        if !haskey(NewRight, col)
-            NewRight[col] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-        end
-        NewRight[col][col] = VR
-    end
-
-    return NewLeft, NewRight
-end
-
-function lowrank_add!(U, S, V, A_new, τ, kmax)
-    # current approx: U * Diagonal(S) * V'
-    # add: A_new
-
-    if U === nothing
-        # first contribution
-        F = svd(A_new; full=false)
-        r = min(sum(F.S .> τ), kmax)
-        return F.U[:, 1:r], F.S[1:r], F.V[:, 1:r]
-    end
-
-    # form small augmented matrix
-    A_old = U * Diagonal(S) * V'
-    A = A_old + A_new   # small (k-sized), safe
-
-    F = svd(A; full=false)
-    r = min(sum(F.S .> τ), kmax)
-
-    return F.U[:, 1:r], F.S[1:r], F.V[:, 1:r]
 end
 
 function LinearAlgebra.mul!(

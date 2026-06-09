@@ -1,3 +1,4 @@
+import H2Trees: values, center, halfsize, children, isleaf, trialtree, testtree
 """
     blockdiag(blocks::AbstractMatrix...)
 
@@ -379,4 +380,16 @@ function permutation(tree::H2Trees.H2ClusterTree)
         n += length(H2Trees.values(tree, leaf))
     end
     return perm
+end
+
+function group_by_parents(tree, rows)
+    parentedgrps = Dict{Int,Vector{Tuple{Int,Int}}}()
+    for row in rows
+        parentnode = H2Trees.parent(testtree(tree), row[1])
+        if !haskey(parentedgrps, parentnode)
+            parentedgrps[parentnode] = Vector{Tuple{Int,Int}}()
+        end
+        push!(parentedgrps[parentnode], row)
+    end
+    return parentedgrps
 end

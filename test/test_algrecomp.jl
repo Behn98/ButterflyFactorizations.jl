@@ -105,13 +105,13 @@
     Bfly4 = ButterflyFactorizations.subroutine_BF(farassembler4, tree4, 1, 1, k, 10^(-4))
     size4 = Base.summarysize(Bfly4)
 
-    RBfly1 = ButterflyFactorizations.recompress_BF(Bfly1, 10^(-2))
+    RBfly1 = ButterflyFactorizations.recompress_BF(Bfly1, 10^(-2), tree1)
     size1r = Base.summarysize(RBfly1)
-    RBfly2 = ButterflyFactorizations.recompress_BF(Bfly2, 10^(-2))
+    RBfly2 = ButterflyFactorizations.recompress_BF(Bfly2, 10^(-2), tree2)
     size2r = Base.summarysize(RBfly2)
-    RBfly3 = ButterflyFactorizations.recompress_BF(Bfly3, 10^(-2))
+    RBfly3 = ButterflyFactorizations.recompress_BF(Bfly3, 10^(-2), tree3)
     size3r = Base.summarysize(RBfly3)
-    RBfly4 = ButterflyFactorizations.recompress_BF(Bfly4, 10^(-2))
+    RBfly4 = ButterflyFactorizations.recompress_BF(Bfly4, 10^(-2), tree4)
     size4r = Base.summarysize(RBfly4)
 
     @test size1r < size1
