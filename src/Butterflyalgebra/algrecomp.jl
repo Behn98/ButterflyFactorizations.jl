@@ -54,7 +54,7 @@ end
         lold = lr - l + 1
 
         # Bulletproof: Flatten R_u to map the full col_idx tuple directly to its matrix
-        R_u = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
+        R_u = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()#Dict{Tuple{Int,Int},}
 
         # 1. Map column skeletons to all associated row skeletons at this level
         col_to_rows = Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}()
@@ -69,32 +69,41 @@ end
 
         # 2. Process each unique column space
         for (col_idx, rows_with_col) in col_to_rows
-            parent_groups = group_by_parents(tree, rows_with_col)
+            #parent_groups = group_by_parents(testtree(tree), rows_with_col, 1)
 
-            for (parent_node, local_rows) in parent_groups
-                R_k = Vector{Matrix{ComplexF64}}()
-                row_spc = Vector{Int}()
+            #for (parent_node, local_rows) in parent_groups
+            R_k = Vector{Matrix{ComplexF64}}()
+            row_spc = Vector{Int}()
 
-                for row_skel in local_rows
-                    block = R[lold][row_skel][col_idx]
-                    push!(R_k, block)
-                    push!(row_spc, size(block, 1))
-                end
-
-                A_k = vcat(R_k...)
-                QRA = pqr(A_k; rtol=τ)
-
-                # Store using the unique col_idx key — no overwrites possible
-                R_u[col_idx] = QRA[2][:, invperm(QRA[3])]
-
-                last_idx = 0
-                for (j, row_skel) in enumerate(local_rows)
-                    R[lold][row_skel][col_idx] = Matrix(
-                        QRA[1][(last_idx + 1):(last_idx + row_spc[j]), :]
-                    )
-                    last_idx += row_spc[j]
-                end
+            for row_skel in rows_with_col #local_rows
+                block = R[lold][row_skel][col_idx]
+                push!(R_k, block)
+                push!(row_spc, size(block, 1))
             end
+
+            A_k = vcat(R_k...)
+            QRA = pqr(A_k; rtol=τ)
+
+            # Extract the local transfer matrix
+            T_mat = QRA[2][:, invperm(QRA[3])]
+            R_u[col_idx] = T_mat
+            #=
+            # Bulletproof Stacking: Accumulate transformations across all parent groups
+            if haskey(R_u, col_idx) #(parent_node, col_idx[2])
+                R_u[(parent_node, col_idx[2])] = vcat(R_u[(parent_node, col_idx[2])], T_mat)
+            else
+                R_u[(parent_node, col_idx[2])] = T_mat
+            end
+            =#
+            last_idx = 0
+            for (j, row_skel) in enumerate(rows_with_col) #local_rows
+                delete!(R[lold][row_skel], col_idx) # Remove the old column entry
+                R[lold][row_skel][col_idx] = Matrix(    #(parent_node, col_idx[2])
+                    QRA[1][(last_idx + 1):(last_idx + row_spc[j]), :],
+                )
+                last_idx += row_spc[j]
+            end
+            #end
         end
 
         # 3. Propagate the accumulated R_u transformations

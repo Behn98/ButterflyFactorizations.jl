@@ -382,14 +382,14 @@ function permutation(tree::H2Trees.H2ClusterTree)
     return perm
 end
 
-function group_by_parents(tree, rows)
+function group_by_parents(tree, childkeys, s_o::Int) #s_o = 1 for observer, 2 for source
     parentedgrps = Dict{Int,Vector{Tuple{Int,Int}}}()
-    for row in rows
-        parentnode = H2Trees.parent(testtree(tree), row[1])
+    for childkey in childkeys
+        parentnode = H2Trees.parent(tree, childkey[s_o])
         if !haskey(parentedgrps, parentnode)
             parentedgrps[parentnode] = Vector{Tuple{Int,Int}}()
         end
-        push!(parentedgrps[parentnode], row)
+        push!(parentedgrps[parentnode], childkey)
     end
     return parentedgrps
 end

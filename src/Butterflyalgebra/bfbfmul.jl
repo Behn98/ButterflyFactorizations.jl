@@ -40,10 +40,11 @@ function mulBFs(BF_1::BF, BF_2::BF, τ::Float64, tree::H2Trees.BlockTree)
     for m in 1:(L - 1)
         for t in 1:m
             result = swap_and_recompress(result, L + 2 - t, τ, tree)
+            @show "swap done"
         end
-        result = recompress_BF(mul_factors(result, L + 1 - m), τ, tree)
+        result = mul_factors(result, L + 1 - m)
     end
-
+    @views result = recompress_BF(result, τ, tree)
     return BF(
         result.Q,         # Q_final = Q_2
         result.R,       # R_final[level][Snode][Onode]
@@ -82,25 +83,6 @@ function mul_factors(
                         1.0,
                     )
                 end
-                #=
-                if !haskey(product[row], col)
-                    product[row][col] = Matrix{ComplexF64}(
-                        undef,
-                        size(leftfactor[row][inner])[1],
-                        size(rightfactor[inner][col])[2],
-                    )
-                    @views mul!(
-                        product[row][col], leftfactor[row][inner], rightfactor[inner][col]
-                    )
-                else
-                    temp = Matrix{ComplexF64}(
-                        undef,
-                        size(leftfactor[row][inner])[1],
-                        size(rightfactor[inner][col])[2],
-                    )
-                    @views mul!(temp, leftfactor[row][inner], rightfactor[inner][col])
-                    product[row][col] += temp
-                end=#
             end
         end
     end
@@ -164,103 +146,107 @@ function swap_and_recompress(LeftFactor, RightFactor, τ, tree::H2Trees.BlockTre
 
     Intermediate = mul_factors(LeftFactor, RightFactor)
     row_tree = testtree(tree)
+    col_tree = trialtree(tree)
 
-    # 1. Map target parent_skel to its constituent row and column components
-    # parent_skel => (Set(row_skeletons), Set(col_skeletons))
-    skel_groups = Dict{Tuple{Int,Int},Tuple{Set{Tuple{Int,Int}},Set{Tuple{Int,Int}}}}()
-
-    for row_skel in keys(Intermediate)
-        parent_node = H2Trees.parent(row_tree, row_skel[1])
-        for col_skel in keys(Intermediate[row_skel])
-            p_skel = (parent_node, col_skel[2])
-            if !haskey(skel_groups, p_skel)
-                skel_groups[p_skel] = (Set{Tuple{Int,Int}}(), Set{Tuple{Int,Int}}())
+    for row in keys(Intermediate)
+        parentgrps = group_by_parents(col_tree, keys(Intermediate[row]), 2)
+        for (parentnode, localcols) in parentgrps
+            parentkey = (first(localcols)[1], parentnode) #H2Trees.parent(row_tree, row[1])
+            A_k = hcat([Intermediate[row][col] for col in localcols]...)
+            if !haskey(NewLeftFactor, row)
+                NewLeftFactor[row] = Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}()
             end
-            push!(skel_groups[p_skel][1], row_skel)
-            push!(skel_groups[p_skel][2], col_skel)
+            if haskey(NewLeftFactor[row], parentkey)
+                @show "Warning: Overwriting existing block in NewLeftFactor at row $row and parentkey $parentkey"
+            end
+            NewLeftFactor[row][parentkey] = A_k
+            if !haskey(NewRightFactor, parentkey)
+                NewRightFactor[parentkey] = Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}()
+            end
+            coltracker = 0
+            colsizeA_k = size(A_k, 2)
+            for col in localcols
+                colcurent = size(Intermediate[row][col], 2)
+                if haskey(NewRightFactor[parentkey], col)
+                    #@show "Warning: Overwriting existing block in NewRightFactor at parentkey $parentkey and col $col"
+                    er =
+                        NewRightFactor[parentkey][col] == vcat(
+                            zeros(ComplexF64, coltracker, colcurent),
+                            Matrix{ComplexF64}(I, colcurent, colcurent),
+                            zeros(
+                                ComplexF64, colsizeA_k - coltracker - colcurent, colcurent
+                            ),
+                        )
+                    @show er
+                end
+                NewRightFactor[parentkey][col] = vcat(
+                    zeros(ComplexF64, coltracker, colcurent),
+                    Matrix{ComplexF64}(I, colcurent, colcurent),
+                    zeros(ComplexF64, colsizeA_k - coltracker - colcurent, colcurent),
+                )
+                coltracker += colcurent
+            end
         end
     end
-
-    # 2. Process each unique intermediate space via joint tiling
-    for (p_skel, (local_rows_set, local_cols_set)) in skel_groups
-        local_rows = collect(local_rows_set)
-        local_cols = collect(local_cols_set)
-
-        # Determine individual block row sizes
-        row_sizes = zeros(Int, length(local_rows))
-        for (i, r) in enumerate(local_rows)
-            for c in local_cols
-                if haskey(Intermediate[r], c)
-                    row_sizes[i] = size(Intermediate[r][c], 1)
-                    break
-                end
-            end
-        end
-
-        # Determine individual block column sizes
-        col_sizes = zeros(Int, length(local_cols))
-        for (j, c) in enumerate(local_cols)
-            for r in local_rows
-                if haskey(Intermediate[r], c)
-                    col_sizes[j] = size(Intermediate[r][c], 2)
-                    break
-                end
-            end
-        end
-
-        # 3. Tile the active blocks into a single localized matrix grid
-        A_local = zeros(ComplexF64, sum(row_sizes), sum(col_sizes))
-
-        current_row = 0
-        for (i, r) in enumerate(local_rows)
-            current_col = 0
-            for (j, c) in enumerate(local_cols)
-                if haskey(Intermediate[r], c)
-                    block = Intermediate[r][c]
-                    A_local[
-                        (current_row + 1):(current_row + row_sizes[i]),
-                        (current_col + 1):(current_col + col_sizes[j]),
-                    ] .= block
-                end
-                current_col += col_sizes[j]
-            end
-            current_row += row_sizes[i]
-        end
-
-        # 4. Joint Rank-Revealing Compression
-        QRA = pqr(A_local; rtol=τ)
-        Q_mat = QRA[1]
-        R_mat = QRA[2][:, invperm(QRA[3])]
-
-        # 5. Distribute Q_mat vertically to NewLeftFactor
-        current_row = 0
-        for (i, r) in enumerate(local_rows)
-            if !haskey(NewLeftFactor, r)
-                NewLeftFactor[r] = Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}()
-            end
-            NewLeftFactor[r][p_skel] = Matrix(
-                Q_mat[(current_row + 1):(current_row + row_sizes[i]), :]
-            )
-            current_row += row_sizes[i]
-        end
-
-        # 6. Distribute R_mat horizontally to NewRightFactor
-        if !haskey(NewRightFactor, p_skel)
-            NewRightFactor[p_skel] = Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}()
-        end
-
-        current_col = 0
-        for (j, c) in enumerate(local_cols)
-            NewRightFactor[p_skel][c] = Matrix(
-                R_mat[:, (current_col + 1):(current_col + col_sizes[j])]
-            )
-            current_col += col_sizes[j]
-        end
-    end
-
+    mulfactor = mul_factors(NewLeftFactor, NewRightFactor)
     return NewLeftFactor, NewRightFactor
 end
 
+function swap_and_recompress2(LeftFactor, RightFactor, τ, tree::H2Trees.BlockTree)
+    NewLeftFactor = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
+    NewRightFactor = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
+
+    Intermediate = mul_factors(LeftFactor, RightFactor)
+    row_tree = testtree(tree)
+    col_tree = trialtree(tree)
+    parentgrps1 = group_by_parents(row_tree, keys(Intermediate), 1)
+    for (parentnodeo, localrows) in parentgrps1
+        for row in localrows
+            parentgrps2 = group_by_parents(col_tree, keys(Intermediate[row]), 2)
+            for (parentnodes, localcols) in parentgrps2
+                parentkey = (parentnodeo, parentnodes) #H2Trees.parent(row_tree, row[1])
+                A_k = hcat([Intermediate[row][col] for col in localcols]...)
+                if !haskey(NewLeftFactor, row)
+                    NewLeftFactor[row] = Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}()
+                end
+                if haskey(NewLeftFactor[row], parentkey)
+                    @show "Warning: Overwriting existing block in NewLeftFactor at row $row and parentkey $parentkey"
+                end
+                NewLeftFactor[row][parentkey] = A_k
+                if !haskey(NewRightFactor, parentkey)
+                    NewRightFactor[parentkey] = Dict{
+                        Tuple{Int,Int},AbstractMatrix{ComplexF64}
+                    }()
+                end
+                coltracker = 0
+                colsizeA_k = size(A_k, 2)
+                for col in localcols
+                    colcurent = size(Intermediate[row][col], 2)
+                    if haskey(NewRightFactor[parentkey], col)
+                        #@show "Warning: Overwriting existing block in NewRightFactor at parentkey $parentkey and col $col"
+                        @show NewRightFactor[parentkey][col] == vcat(
+                            zeros(ComplexF64, coltracker, colcurent),
+                            Matrix{ComplexF64}(I, colcurent, colcurent),
+                            zeros(
+                                ComplexF64, colsizeA_k - coltracker - colcurent, colcurent
+                            ),
+                        )
+                    end
+                    NewRightFactor[parentkey][col] = vcat(
+                        zeros(ComplexF64, coltracker, colcurent),
+                        Matrix{ComplexF64}(I, colcurent, colcurent),
+                        zeros(ComplexF64, colsizeA_k - coltracker - colcurent, colcurent),
+                    )
+                    coltracker += colcurent
+                end
+            end
+        end
+    end
+    mulfactor = mul_factors(NewLeftFactor, NewRightFactor)
+    return NewLeftFactor, NewRightFactor
+end
+
+#= add tree to the struct...
 function LinearAlgebra.mul!(
     C::ButterflyFactorizations.BF,
     A::ButterflyFactorizations.BF,
@@ -269,3 +255,4 @@ function LinearAlgebra.mul!(
     copyto!(C, mulBFs(A, B, max(A.τ, B.τ)))
     return C
 end
+=#
