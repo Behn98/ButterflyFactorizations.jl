@@ -140,7 +140,7 @@ function swap_and_recompress(BF::AlgBF, idx::Int, τ, tree::H2Trees.BlockTree)
     )
 end
 
-function swap_and_recompress(LeftFactor, RightFactor, τ, tree::H2Trees.BlockTree)
+function swap_and_recompress2(LeftFactor, RightFactor, τ, tree::H2Trees.BlockTree)
     NewLeftFactor = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
     NewRightFactor = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
 
@@ -192,19 +192,31 @@ function swap_and_recompress(LeftFactor, RightFactor, τ, tree::H2Trees.BlockTre
     return NewLeftFactor, NewRightFactor
 end
 
-function swap_and_recompress2(LeftFactor, RightFactor, τ, tree::H2Trees.BlockTree)
+function swap_and_recompress(LeftFactor, RightFactor, τ, tree::H2Trees.BlockTree)
     NewLeftFactor = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
     NewRightFactor = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
 
     Intermediate = mul_factors(LeftFactor, RightFactor)
     row_tree = testtree(tree)
     col_tree = trialtree(tree)
+    parentkeyscols = Dict{Tuple{Int,Int},Set{Tuple{Int,Int}}}()
+    parentkeysrows = Dict{Tuple{Int,Int},Set{Tuple{Int,Int}}}()
     parentgrps1 = group_by_parents(row_tree, keys(Intermediate), 1)
     for (parentnodeo, localrows) in parentgrps1
         for row in localrows
             parentgrps2 = group_by_parents(col_tree, keys(Intermediate[row]), 2)
             for (parentnodes, localcols) in parentgrps2
-                parentkey = (parentnodeo, parentnodes) #H2Trees.parent(row_tree, row[1])
+                parentkey = (first(localcols)[1], parentnodes) #H2Trees.parent(row_tree, row[1])parentnodeo
+                if !haskey(parentkeysrows, parentkey)
+                    parentkeysrows[parentkey] = Set{Tuple{Int,Int}}()
+                end
+                push!(parentkeysrows[parentkey], row)
+                if !haskey(parentkeyscols, parentkey)
+                    parentkeyscols[parentkey] = Set{Tuple{Int,Int}}()
+                end
+                for col in localcols
+                    push!(parentkeyscols[parentkey], col)
+                end
                 A_k = hcat([Intermediate[row][col] for col in localcols]...)
                 if !haskey(NewLeftFactor, row)
                     NewLeftFactor[row] = Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}()
@@ -213,36 +225,38 @@ function swap_and_recompress2(LeftFactor, RightFactor, τ, tree::H2Trees.BlockTr
                     @show "Warning: Overwriting existing block in NewLeftFactor at row $row and parentkey $parentkey"
                 end
                 NewLeftFactor[row][parentkey] = A_k
-                if !haskey(NewRightFactor, parentkey)
-                    NewRightFactor[parentkey] = Dict{
-                        Tuple{Int,Int},AbstractMatrix{ComplexF64}
-                    }()
-                end
-                coltracker = 0
-                colsizeA_k = size(A_k, 2)
-                for col in localcols
-                    colcurent = size(Intermediate[row][col], 2)
-                    if haskey(NewRightFactor[parentkey], col)
-                        #@show "Warning: Overwriting existing block in NewRightFactor at parentkey $parentkey and col $col"
-                        @show NewRightFactor[parentkey][col] == vcat(
-                            zeros(ComplexF64, coltracker, colcurent),
-                            Matrix{ComplexF64}(I, colcurent, colcurent),
-                            zeros(
-                                ComplexF64, colsizeA_k - coltracker - colcurent, colcurent
-                            ),
-                        )
-                    end
-                    NewRightFactor[parentkey][col] = vcat(
+            end
+        end
+    end
+    for parentkey in keys(parentkeyscols)
+        localrows = parentkeysrows[parentkey]
+        localcols = parentkeyscols[parentkey]
+        if !haskey(NewRightFactor, parentkey)
+            NewRightFactor[parentkey] = Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}()
+        end
+        coltracker = 0
+        colsizeA_k = size(NewLeftFactor[first(localrows)][parentkey], 2)
+        for col in localcols
+            colcurent = size(Intermediate[first(localrows)][col], 2)
+            if haskey(NewRightFactor[parentkey], col)
+                #@show "Warning: Overwriting existing block in NewRightFactor at parentkey $parentkey and col $col"
+                er =
+                    NewRightFactor[parentkey][col] == vcat(
                         zeros(ComplexF64, coltracker, colcurent),
                         Matrix{ComplexF64}(I, colcurent, colcurent),
                         zeros(ComplexF64, colsizeA_k - coltracker - colcurent, colcurent),
                     )
-                    coltracker += colcurent
-                end
+                @show er
             end
+            NewRightFactor[parentkey][col] = vcat(
+                zeros(ComplexF64, coltracker, colcurent),
+                Matrix{ComplexF64}(I, colcurent, colcurent),
+                zeros(ComplexF64, colsizeA_k - coltracker - colcurent, colcurent),
+            )
+            coltracker += colcurent
         end
     end
-    mulfactor = mul_factors(NewLeftFactor, NewRightFactor)
+    #mulfactor = mul_factors(NewLeftFactor, NewRightFactor)
     return NewLeftFactor, NewRightFactor
 end
 
