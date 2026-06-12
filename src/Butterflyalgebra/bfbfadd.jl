@@ -55,6 +55,7 @@ function add_eqbfs(BF1::BF, BF_2::BF, τ)
             BF1.NO,
             BF1.k,
             max(BF1.τ, BF_2.τ),
+            BF1.tree,
         ),
         τ,
     )

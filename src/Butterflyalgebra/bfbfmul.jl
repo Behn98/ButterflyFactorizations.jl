@@ -17,7 +17,8 @@ matrix-vector products while preserving the overall accuracy within the specifie
 In terms of storage future work has to include more aggressive recompression strategies to
 prevent the intermediate factors from growing too large.
 """
-function mulBFs(BF_1::BF, BF_2::BF, τ::Float64, tree::H2Trees.BlockTree)
+function mulBFs(BF_1::BF, BF_2::BF, τ::Float64)
+    tree = H2Trees.BlockTree(testtree(BF_1.tree), trialtree(BF_2.tree))
     @assert length(BF_1) == length(BF_2) "Both BFs must have the same number of levels"
     @assert BF_1.NS == BF_2.NO "Source and Observer dimensions must match"
     M_messenger = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
@@ -40,11 +41,11 @@ function mulBFs(BF_1::BF, BF_2::BF, τ::Float64, tree::H2Trees.BlockTree)
     for m in 1:(L - 1)
         for t in 1:m
             result = swap_and_recompress(result, L + 2 - t, τ, tree)
-            @show "swap done"
+            print("swap done \n")
         end
-        result = mul_factors(result, L + 1 - m)
+        result = recompress_BF(mul_factors(result, L + 1 - m), τ, tree)#
     end
-    @views result = recompress_BF(result, τ, tree)
+    #@views result = recompress_BF(result, τ, tree)
     return BF(
         result.Q,         # Q_final = Q_2
         result.R,       # R_final[level][Snode][Onode]
@@ -56,6 +57,7 @@ function mulBFs(BF_1::BF, BF_2::BF, τ::Float64, tree::H2Trees.BlockTree)
         BF_1.NO,
         BF_1.k,         # Or recalculated k
         τ,
+        H2Trees.BlockTree(testtree(BF_1.tree), trialtree(BF_2.tree)),
     )
 end
 
@@ -140,93 +142,37 @@ function swap_and_recompress(BF::AlgBF, idx::Int, τ, tree::H2Trees.BlockTree)
     )
 end
 
-function swap_and_recompress2(LeftFactor, RightFactor, τ, tree::H2Trees.BlockTree)
-    NewLeftFactor = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
-    NewRightFactor = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
-
-    Intermediate = mul_factors(LeftFactor, RightFactor)
-    row_tree = testtree(tree)
-    col_tree = trialtree(tree)
-
-    for row in keys(Intermediate)
-        parentgrps = group_by_parents(col_tree, keys(Intermediate[row]), 2)
-        for (parentnode, localcols) in parentgrps
-            parentkey = (first(localcols)[1], parentnode) #H2Trees.parent(row_tree, row[1])
-            A_k = hcat([Intermediate[row][col] for col in localcols]...)
-            if !haskey(NewLeftFactor, row)
-                NewLeftFactor[row] = Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}()
-            end
-            if haskey(NewLeftFactor[row], parentkey)
-                @show "Warning: Overwriting existing block in NewLeftFactor at row $row and parentkey $parentkey"
-            end
-            NewLeftFactor[row][parentkey] = A_k
-            if !haskey(NewRightFactor, parentkey)
-                NewRightFactor[parentkey] = Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}()
-            end
-            coltracker = 0
-            colsizeA_k = size(A_k, 2)
-            for col in localcols
-                colcurent = size(Intermediate[row][col], 2)
-                if haskey(NewRightFactor[parentkey], col)
-                    #@show "Warning: Overwriting existing block in NewRightFactor at parentkey $parentkey and col $col"
-                    er =
-                        NewRightFactor[parentkey][col] == vcat(
-                            zeros(ComplexF64, coltracker, colcurent),
-                            Matrix{ComplexF64}(I, colcurent, colcurent),
-                            zeros(
-                                ComplexF64, colsizeA_k - coltracker - colcurent, colcurent
-                            ),
-                        )
-                    @show er
-                end
-                NewRightFactor[parentkey][col] = vcat(
-                    zeros(ComplexF64, coltracker, colcurent),
-                    Matrix{ComplexF64}(I, colcurent, colcurent),
-                    zeros(ComplexF64, colsizeA_k - coltracker - colcurent, colcurent),
-                )
-                coltracker += colcurent
-            end
-        end
-    end
-    mulfactor = mul_factors(NewLeftFactor, NewRightFactor)
-    return NewLeftFactor, NewRightFactor
-end
-
 function swap_and_recompress(LeftFactor, RightFactor, τ, tree::H2Trees.BlockTree)
     NewLeftFactor = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
     NewRightFactor = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
 
     Intermediate = mul_factors(LeftFactor, RightFactor)
-    row_tree = testtree(tree)
     col_tree = trialtree(tree)
-    parentkeyscols = Dict{Tuple{Int,Int},Set{Tuple{Int,Int}}}()
-    parentkeysrows = Dict{Tuple{Int,Int},Set{Tuple{Int,Int}}}()
-    parentgrps1 = group_by_parents(row_tree, keys(Intermediate), 1)
-    for (parentnodeo, localrows) in parentgrps1
-        for row in localrows
-            parentgrps2 = group_by_parents(col_tree, keys(Intermediate[row]), 2)
-            for (parentnodes, localcols) in parentgrps2
-                parentkey = (first(localcols)[1], parentnodes) #H2Trees.parent(row_tree, row[1])parentnodeo
-                if !haskey(parentkeysrows, parentkey)
-                    parentkeysrows[parentkey] = Set{Tuple{Int,Int}}()
-                end
-                push!(parentkeysrows[parentkey], row)
-                if !haskey(parentkeyscols, parentkey)
-                    parentkeyscols[parentkey] = Set{Tuple{Int,Int}}()
-                end
-                for col in localcols
-                    push!(parentkeyscols[parentkey], col)
-                end
-                A_k = hcat([Intermediate[row][col] for col in localcols]...)
-                if !haskey(NewLeftFactor, row)
-                    NewLeftFactor[row] = Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}()
-                end
-                if haskey(NewLeftFactor[row], parentkey)
-                    @show "Warning: Overwriting existing block in NewLeftFactor at row $row and parentkey $parentkey"
-                end
-                NewLeftFactor[row][parentkey] = A_k
+    parentkeyscols = Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}()
+    parentkeysrows = Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}()
+    for row in keys(Intermediate)
+        parentgrps2 = group_by_parents(col_tree, keys(Intermediate[row]), 2)
+        for (parentnodes, localcols) in parentgrps2
+            parentkey = (first(keys(LeftFactor[row]))[1], parentnodes) #H2Trees.parent(row_tree, row[1])first(localcols)[1]parentnodeo
+            if !haskey(parentkeysrows, parentkey)
+                parentkeysrows[parentkey] = Vector{Tuple{Int,Int}}()
             end
+            unique!(push!(parentkeysrows[parentkey], row))
+            if !haskey(parentkeyscols, parentkey)
+                parentkeyscols[parentkey] = Vector{Tuple{Int,Int}}()
+            end
+            for col in localcols
+                unique!(push!(parentkeyscols[parentkey], col))
+            end
+            A_k = hcat([Intermediate[row][col] for col in localcols]...)
+            if !haskey(NewLeftFactor, row)
+                NewLeftFactor[row] = Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}()
+            end
+            NewLeftFactor[row][parentkey] = A_k
         end
+    end
+    for parentkey in keys(parentkeyscols)
+        sort!(parentkeyscols[parentkey])
     end
     for parentkey in keys(parentkeyscols)
         localrows = parentkeysrows[parentkey]
@@ -238,16 +184,6 @@ function swap_and_recompress(LeftFactor, RightFactor, τ, tree::H2Trees.BlockTre
         colsizeA_k = size(NewLeftFactor[first(localrows)][parentkey], 2)
         for col in localcols
             colcurent = size(Intermediate[first(localrows)][col], 2)
-            if haskey(NewRightFactor[parentkey], col)
-                #@show "Warning: Overwriting existing block in NewRightFactor at parentkey $parentkey and col $col"
-                er =
-                    NewRightFactor[parentkey][col] == vcat(
-                        zeros(ComplexF64, coltracker, colcurent),
-                        Matrix{ComplexF64}(I, colcurent, colcurent),
-                        zeros(ComplexF64, colsizeA_k - coltracker - colcurent, colcurent),
-                    )
-                @show er
-            end
             NewRightFactor[parentkey][col] = vcat(
                 zeros(ComplexF64, coltracker, colcurent),
                 Matrix{ComplexF64}(I, colcurent, colcurent),
@@ -256,11 +192,10 @@ function swap_and_recompress(LeftFactor, RightFactor, τ, tree::H2Trees.BlockTre
             coltracker += colcurent
         end
     end
-    #mulfactor = mul_factors(NewLeftFactor, NewRightFactor)
     return NewLeftFactor, NewRightFactor
 end
 
-#= add tree to the struct...
+# add tree to the struct...
 function LinearAlgebra.mul!(
     C::ButterflyFactorizations.BF,
     A::ButterflyFactorizations.BF,
@@ -269,4 +204,4 @@ function LinearAlgebra.mul!(
     copyto!(C, mulBFs(A, B, max(A.τ, B.τ)))
     return C
 end
-=#
+#

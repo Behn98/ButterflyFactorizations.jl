@@ -41,6 +41,7 @@ function recompress_BF(Butterfly::BF, τ, tree::H2Trees.BlockTree)
         Butterfly.NO,
         Butterfly.k,
         Butterfly.τ,
+        Butterfly.tree,
     )
 end
 
@@ -50,7 +51,7 @@ end
     P = Butterfly.P
     lr = length(R)
 
-    for l in eachindex(R)
+    for l in eachindex(R[1:(lr - 1)])
         lold = lr - l + 1
 
         # Bulletproof: Flatten R_u to map the full col_idx tuple directly to its matrix
@@ -107,11 +108,11 @@ end
         end
 
         # 3. Propagate the accumulated R_u transformations
-        if l < lr
-            R[lold - 1] = update_next_level_R_right(R_u, R[lold - 1])
-        else
-            Q = update_next_level_R_right(R_u, Q)
-        end
+        #if l < lr
+        R[lold - 1] = update_next_level_R_right(R_u, R[lold - 1])
+        #else
+        #    Q = update_next_level_R_right(R_u, Q)
+        #end
     end
 
     return AlgBF(Butterfly.dim, Q, R, P)

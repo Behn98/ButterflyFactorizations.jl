@@ -29,7 +29,17 @@ function Base.adjoint(B::ButterflyFactorizations.BF)
     end
 
     return BF(
-        P_adj, R_adj, Q_adj, B.PermP, B.PermQ, (B.dim[2], B.dim[1]), B.NO, B.NS, B.k, B.τ
+        P_adj,
+        R_adj,
+        Q_adj,
+        B.PermP,
+        B.PermQ,
+        (B.dim[2], B.dim[1]),
+        B.NO,
+        B.NS,
+        B.k,
+        B.τ,
+        H2Trees.BlockTree(B.tree.trialcluster, B.tree.testcluster),
     )
 end
 
@@ -64,7 +74,17 @@ function Base.transpose(B::ButterflyFactorizations.BF)
     end
 
     return BF(
-        P_tr, R_tr, Q_tr, B.PermP, B.PermQ, (B.dim[2], B.dim[1]), B.NO, B.NS, B.k, B.τ
+        P_tr,
+        R_tr,
+        Q_tr,
+        B.PermP,
+        B.PermQ,
+        (B.dim[2], B.dim[1]),
+        B.NO,
+        B.NS,
+        B.k,
+        B.τ,
+        H2Trees.BlockTree(B.tree.trialcluster, B.tree.testcluster),
     )
 end
 

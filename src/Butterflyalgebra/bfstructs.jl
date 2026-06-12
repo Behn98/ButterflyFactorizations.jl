@@ -16,8 +16,9 @@ struct BF
     NO::Int64
     k::Float64
     τ::Float64
-    BF(Q, R, P, PermQ, PermP, dim, NS, NO, k, τ) =
-        new(Q, R, P, PermQ, PermP, dim, NS, NO, k, τ)
+    tree::H2Trees.BlockTree
+    BF(Q, R, P, PermQ, PermP, dim, NS, NO, k, τ, tree) =
+        new(Q, R, P, PermQ, PermP, dim, NS, NO, k, τ, tree)
 end
 
 struct BF_Mats

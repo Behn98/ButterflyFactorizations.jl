@@ -205,6 +205,7 @@ function subroutine_BF(
         NO,
         k,
         τ,
+        H2Blocktree,
     )
 end
 
@@ -922,6 +923,7 @@ function subroutine_BF(
         NO,
         k,
         τ,
+        H2Blocktree,
     ),
     BFSTAT(Q_ratios, R_ratios)  #stat
 end

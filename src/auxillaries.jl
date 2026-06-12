@@ -391,5 +391,8 @@ function group_by_parents(tree, childkeys, s_o::Int) #s_o = 1 for observer, 2 fo
         end
         push!(parentedgrps[parentnode], childkey)
     end
+    for (parent, keys) in parentedgrps
+        sort!(keys)
+    end
     return parentedgrps
 end
