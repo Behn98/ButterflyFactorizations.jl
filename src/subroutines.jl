@@ -16,7 +16,7 @@ without permanently storing the tree.
   - `H2Blocktree`: The paired source-observer tree structure.
   - `NO`, `NS`: The root IDs of the observer (test) and source (trial) spaces.
   - `k`, `τ`: Wavenumber (crucial for rank estimation) and precision tolerance.
-  - `Compressor`: Compression scheme for low-rank blocks (default: `PartialQR`).
+  - `compressor`: Compression scheme for low-rank blocks (default: `PartialQR`).
 
 **Why Dictionary format?** It is extremely memory efficient because it avoids the overhead
 of saving nonzero entry indices required by sparse matrices. It is deeply intuitive, makes
@@ -34,7 +34,7 @@ function subroutine_BF(
     NS::Int,
     k::Float64,
     τ::Float64;
-    Compressor=ButterflyFactorizations.PartialQR(),
+    compressor=ButterflyFactorizations.PartialQR(),
     scheduler=OhMyThreads.SerialScheduler(),
 )
 
@@ -54,9 +54,7 @@ function subroutine_BF(
     LS = length(treeS)
     LO = length(treeO)
     L = max(LS, LO)
-    R = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}}(
-        undef, L - 1
-    )
+    R = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(undef, L - 1)
     # 1. Get all global indices for this block's source/observer trees
     global_src_indices = values(trialT, NS) # All sources for this block
     global_obs_indices = values(testT, NO)  # All observers for this block
@@ -73,7 +71,7 @@ function subroutine_BF(
         obsindex = values(testT, NO)
 
         n_otilde = estimate_rank_3d(k, trialT, testT, Sleaf, NO, τ;)
-        q_ks, k_l, r_l = Compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
+        q_ks, k_l, r_l = compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
 
         perm_q_val = [src_map[g] for g in srcindex]
         (Sleaf, perm_q_val, q_ks, k_l)
@@ -97,7 +95,7 @@ function subroutine_BF(
         if source_is_frozen && obs_is_frozen
             break
         else
-            R[l] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
+            R[l] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
         end
         # --------------------------------------------------------------
         # Build U (union of child skeletons)
@@ -124,7 +122,7 @@ function subroutine_BF(
                 trialT,
                 testT,
                 kernelmatrix,
-                Compressor,
+                compressor,
                 k,
                 τ,
                 LS;
@@ -144,7 +142,7 @@ function subroutine_BF(
                 trialT,
                 testT,
                 kernelmatrix,
-                Compressor,
+                compressor,
                 k,
                 τ;
                 scheduler,
@@ -164,7 +162,7 @@ function subroutine_BF(
                 trialT,
                 testT,
                 kernelmatrix,
-                Compressor,
+                compressor,
                 k,
                 τ,
                 LO,
@@ -205,7 +203,8 @@ function subroutine_BF(
         NO,
         k,
         τ,
-        H2Blocktree,
+        H2Blocktree.trialcluster,
+        H2Blocktree.testcluster,
     )
 end
 
@@ -248,7 +247,7 @@ function build_union_skeletons!(
 end
 
 function build_nonfrozen_R_blocks!(
-    R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}},
+    R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}},
     K::Dict{Int,Dict{Int,Vector{Int}}},
     K_new::Dict{Int,Dict{Int,Vector{Int}}},
     U::Dict{Int,Dict{Int,Vector{Int}}},
@@ -259,7 +258,7 @@ function build_nonfrozen_R_blocks!(
     trialT,
     testT,
     kernelmatrix,
-    Compressor,
+    compressor,
     k,
     τ,
     LS;
@@ -267,7 +266,7 @@ function build_nonfrozen_R_blocks!(
 )
     results = tmap(treeO[l]; scheduler=scheduler) do Overt
         # 1. Skapa lokala ordböcker
-        local_R = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
+        local_R = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
         local_K = Dict{Int,Dict{Int,Vector{Int}}}()
 
         if !isleaf(testT, Overt)
@@ -276,13 +275,11 @@ function build_nonfrozen_R_blocks!(
                 for Svert in treeS[LS - l]
                     srcindex = U[Svert][Overt]
                     n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Ochild, τ;)
-                    q_ks, k_l, r_l = Compressor(
+                    q_ks, k_l, r_l = compressor(
                         kernelmatrix, srcindex, obsindex, n_otilde, τ
                     )
                     if !haskey(local_R, (Ochild, Svert))
-                        local_R[(Ochild, Svert)] = Dict{
-                            Tuple{Int,Int},AbstractMatrix{ComplexF64}
-                        }()
+                        local_R[(Ochild, Svert)] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
                     end
                     if !haskey(local_K, Svert)
                         local_K[Svert] = Dict{Int,Vector{Int}}()
@@ -307,7 +304,7 @@ function build_nonfrozen_R_blocks!(
             obsindex = values(testT, Overt)
             for Svert in treeS[LS - l]
                 if !haskey(local_R, (Overt, Svert))
-                    local_R[(Overt, Svert)] = Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}()
+                    local_R[(Overt, Svert)] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
                 end
                 if !haskey(local_K, Svert)
                     local_K[Svert] = Dict{Int,Vector{Int}}()
@@ -315,7 +312,7 @@ function build_nonfrozen_R_blocks!(
                 if !isleaf(trialT, Svert)
                     srcindex = U[Svert][Overt]
                     n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Overt, τ;)
-                    q_ks, k_l, r_l = Compressor(
+                    q_ks, k_l, r_l = compressor(
                         kernelmatrix, srcindex, obsindex, n_otilde, τ
                     )
                     last = 0
@@ -381,7 +378,7 @@ function build_nonfrozen_R_blocks!(
 end
 
 function build_sourcefrozen_R_blocks!(
-    R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}},
+    R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}},
     K::Dict{Int,Dict{Int,Vector{Int}}},
     K_new::Dict{Int,Dict{Int,Vector{Int}}},
     Q::Dict{Int,Matrix{ComplexF64}},
@@ -391,13 +388,13 @@ function build_sourcefrozen_R_blocks!(
     trialT,
     testT,
     kernelmatrix,
-    Compressor,
+    compressor,
     k,
     τ;
     scheduler=OhMyThreads.SerialScheduler(),
 )
     results = tmap(treeO[l]; scheduler=scheduler) do Overt
-        local_R = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
+        local_R = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
         local_K = Dict{Int,Dict{Int,Vector{Int}}}()
         Svert = NS
         if !haskey(local_K, Svert)
@@ -408,18 +405,18 @@ function build_sourcefrozen_R_blocks!(
                 obsindex = values(testT, Ochild)
 
                 if !haskey(local_R, (Ochild, Svert))
-                    local_R[(Ochild, Svert)] = Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}()
+                    local_R[(Ochild, Svert)] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
                 end
 
                 srcindex = K[Svert][Overt]
                 n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Ochild, τ;)
-                q_ks, k_l, r_l = Compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
+                q_ks, k_l, r_l = compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
                 local_R[(Ochild, Svert)][(Overt, Svert)] = q_ks
                 local_K[Svert][Ochild] = k_l
             end
         else
             if !haskey(local_R, (Overt, Svert))
-                local_R[(Overt, Svert)] = Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}()
+                local_R[(Overt, Svert)] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
             end
             if l > 1
                 #=local_R[(Overt, Svert)][(Overt, Svert)] = I(
@@ -460,7 +457,7 @@ function build_sourcefrozen_R_blocks!(
 end
 
 function build_observerfrozen_R_blocks!(
-    R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}},
+    R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}},
     K::Dict{Int,Dict{Int,Vector{Int}}},
     K_new::Dict{Int,Dict{Int,Vector{Int}}},
     U::Dict{Int,Dict{Int,Vector{Int}}},
@@ -471,7 +468,7 @@ function build_observerfrozen_R_blocks!(
     trialT,
     testT,
     kernelmatrix,
-    Compressor,
+    compressor,
     k,
     τ,
     LO,
@@ -482,7 +479,7 @@ function build_observerfrozen_R_blocks!(
     LS = length(treeS)
 
     results = tmap(treeO[LO]; scheduler=scheduler) do Overt
-        local_R = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
+        local_R = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
         local_K = Dict{Int,Dict{Int,Vector{Int}}}()
         obsindex = values(testT, Overt)
         for Svert in treeS[LS - l]
@@ -490,12 +487,12 @@ function build_observerfrozen_R_blocks!(
                 local_K[Svert] = Dict{Int,Vector{Int}}()
             end
             if !haskey(local_R, (Overt, Svert))
-                local_R[(Overt, Svert)] = Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}()
+                local_R[(Overt, Svert)] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
             end
             if !isleaf(trialT, Svert)
                 srcindex = U[Svert][Overt]
                 n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Overt, τ;)
-                q_ks, k_l, r_l = Compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
+                q_ks, k_l, r_l = compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
 
                 last = 0
                 for Schild in children(trialT, Svert)
@@ -548,7 +545,7 @@ function build_observerfrozen_R_blocks!(
 end
 
 """
-    subroutine_BF_mats(kernelmatrix, H2Blocktree, NO, NS, k, τ; Compressor=PartialQR())
+    subroutine_BF_mats(kernelmatrix, H2Blocktree, NO, NS, k, τ; compressor=PartialQR())
 
 Constructs the Butterfly Factorization for a given block in a **sparse matrix format**.
 
@@ -570,7 +567,7 @@ function subroutine_BF_mats(
     NS::Int,
     k::Float64,
     τ::Float64;
-    Compressor=ButterflyFactorizations.PartialQR(),
+    compressor=ButterflyFactorizations.PartialQR(),
 )
 
     # --- containers ---
@@ -602,7 +599,7 @@ function subroutine_BF_mats(
         push!(PermQ, srcindex...)
         obsindex = values(testT, NO)
         n_otilde = estimate_rank_3d(k, trialT, testT, Sleaf, NO, τ;)
-        q_ks, k_l, r_l = Compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
+        q_ks, k_l, r_l = compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
         Q = sparse_blockdiag(Q, q_ks)               #SPARSITY: sparse_ or blocksparse_
         getsubdict!(K, Sleaf)[NO] = k_l
     end
@@ -651,7 +648,7 @@ function subroutine_BF_mats(
                         srcindex = U[Svert][Overt]
 
                         n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Ochild, τ;)
-                        q_ks, k_l, r_l = Compressor(
+                        q_ks, k_l, r_l = compressor(
                             kernelmatrix, srcindex, obsindex, n_otilde, τ
                         )
                         R_temp3 = sparse_blockdiag(R_temp3, q_ks)
@@ -676,7 +673,7 @@ function subroutine_BF_mats(
                     for Svert in treeS[1]
                         srcindex = K[Svert][Overt]
                         n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Ochild, τ;)
-                        q_ks, k_l, r_l = Compressor(
+                        q_ks, k_l, r_l = compressor(
                             kernelmatrix, srcindex, obsindex, n_otilde, τ
                         )
                         R_temp3 = sparse_blockdiag(R_temp3, q_ks)
@@ -700,7 +697,7 @@ function subroutine_BF_mats(
                     srcindex = U[Svert][Overt]
 
                     n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Overt, τ;)
-                    q_ks, k_l, r_l = Compressor(
+                    q_ks, k_l, r_l = compressor(
                         kernelmatrix, srcindex, obsindex, n_otilde, τ
                     )
                     R_temp2 = sparse_blockdiag(R_temp2, q_ks)
@@ -740,7 +737,7 @@ function subroutine_BF(
     k::Float64,
     τ::Float64,
     dostat::Bool;
-    Compressor=ButterflyFactorizations.PartialQR(),
+    compressor=ButterflyFactorizations.PartialQR(),
     scheduler=OhMyThreads.SerialScheduler(),
 )
 
@@ -761,9 +758,7 @@ function subroutine_BF(
     LS = length(treeS)
     LO = length(treeO)
     L = max(LS, LO)
-    R = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}}(
-        undef, L - 1
-    )
+    R = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(undef, L - 1)
 
     # --- Statistics ---
     Q_ratios = Vector{Tuple{Int,Float64}}(undef, length(treeS[LS])) #stat
@@ -785,7 +780,7 @@ function subroutine_BF(
         obsindex = values(testT, NO)
 
         n_otilde = estimate_rank_3d(k, trialT, testT, Sleaf, NO, τ;)
-        q_ks, k_l, r_l = Compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
+        q_ks, k_l, r_l = compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
 
         perm_q_val = [src_map[g] for g in srcindex]
         (Sleaf, perm_q_val, q_ks, k_l, (length(obsindex), r_l / n_otilde)) #stat
@@ -812,7 +807,7 @@ function subroutine_BF(
             break
         else
             R_ratios[l] = Vector{Tuple{Int64,Float64}}() #stat
-            R[l] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
+            R[l] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
         end
         # --------------------------------------------------------------
         # Build U (union of child skeletons)
@@ -839,7 +834,7 @@ function subroutine_BF(
                 trialT,
                 testT,
                 kernelmatrix,
-                Compressor,
+                compressor,
                 k,
                 τ,
                 LS,
@@ -860,7 +855,7 @@ function subroutine_BF(
                 trialT,
                 testT,
                 kernelmatrix,
-                Compressor,
+                compressor,
                 k,
                 τ,
                 R_ratios[l];
@@ -881,7 +876,7 @@ function subroutine_BF(
                 trialT,
                 testT,
                 kernelmatrix,
-                Compressor,
+                compressor,
                 k,
                 τ,
                 LO,
@@ -923,13 +918,14 @@ function subroutine_BF(
         NO,
         k,
         τ,
-        H2Blocktree,
+        H2Blocktree.trialcluster,
+        H2Blocktree.testcluster,
     ),
     BFSTAT(Q_ratios, R_ratios)  #stat
 end
 
 function build_nonfrozen_R_blocks!(
-    R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}},
+    R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}},
     K::Dict{Int,Dict{Int,Vector{Int}}},
     K_new::Dict{Int,Dict{Int,Vector{Int}}},
     U::Dict{Int,Dict{Int,Vector{Int}}},
@@ -940,7 +936,7 @@ function build_nonfrozen_R_blocks!(
     trialT,
     testT,
     kernelmatrix,
-    Compressor,
+    compressor,
     k,
     τ,
     LS,
@@ -949,7 +945,7 @@ function build_nonfrozen_R_blocks!(
 )
     results = tmap(treeO[l]; scheduler=scheduler) do Overt
         # 1. Skapa lokala ordböcker
-        local_R = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
+        local_R = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
         local_K = Dict{Int,Dict{Int,Vector{Int}}}()
         local_ratios = Vector{Tuple{Int,Float64}}() #stat
         if !isleaf(testT, Overt)
@@ -958,14 +954,12 @@ function build_nonfrozen_R_blocks!(
                 for Svert in treeS[LS - l]
                     srcindex = U[Svert][Overt]
                     n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Ochild, τ;)
-                    q_ks, k_l, r_l = Compressor(
+                    q_ks, k_l, r_l = compressor(
                         kernelmatrix, srcindex, obsindex, n_otilde, τ
                     )
                     push!(local_ratios, (length(obsindex), r_l / n_otilde)) #stat
                     if !haskey(local_R, (Ochild, Svert))
-                        local_R[(Ochild, Svert)] = Dict{
-                            Tuple{Int,Int},AbstractMatrix{ComplexF64}
-                        }()
+                        local_R[(Ochild, Svert)] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
                     end
                     if !haskey(local_K, Svert)
                         local_K[Svert] = Dict{Int,Vector{Int}}()
@@ -990,7 +984,7 @@ function build_nonfrozen_R_blocks!(
             obsindex = values(testT, Overt)
             for Svert in treeS[LS - l]
                 if !haskey(local_R, (Overt, Svert))
-                    local_R[(Overt, Svert)] = Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}()
+                    local_R[(Overt, Svert)] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
                 end
                 if !haskey(local_K, Svert)
                     local_K[Svert] = Dict{Int,Vector{Int}}()
@@ -998,7 +992,7 @@ function build_nonfrozen_R_blocks!(
                 if !isleaf(trialT, Svert)
                     srcindex = U[Svert][Overt]
                     n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Overt, τ;)
-                    q_ks, k_l, r_l = Compressor(
+                    q_ks, k_l, r_l = compressor(
                         kernelmatrix, srcindex, obsindex, n_otilde, τ
                     )
                     push!(local_ratios, (length(obsindex), r_l / n_otilde)) #stat
@@ -1051,7 +1045,7 @@ function build_nonfrozen_R_blocks!(
 end
 
 function build_sourcefrozen_R_blocks!(
-    R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}},
+    R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}},
     K::Dict{Int,Dict{Int,Vector{Int}}},
     K_new::Dict{Int,Dict{Int,Vector{Int}}},
     Q::Dict{Int,Matrix{ComplexF64}},
@@ -1061,14 +1055,14 @@ function build_sourcefrozen_R_blocks!(
     trialT,
     testT,
     kernelmatrix,
-    Compressor,
+    compressor,
     k,
     τ,
     R_ratios;    #stat
     scheduler=OhMyThreads.SerialScheduler(),
 )
     results = tmap(treeO[l]; scheduler=scheduler) do Overt
-        local_R = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
+        local_R = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
         local_K = Dict{Int,Dict{Int,Vector{Int}}}()
         local_ratios = Vector{Tuple{Int,Float64}}() #stat
         Svert = NS
@@ -1080,19 +1074,19 @@ function build_sourcefrozen_R_blocks!(
                 obsindex = values(testT, Ochild)
 
                 if !haskey(local_R, (Ochild, Svert))
-                    local_R[(Ochild, Svert)] = Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}()
+                    local_R[(Ochild, Svert)] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
                 end
 
                 srcindex = K[Svert][Overt]
                 n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Ochild, τ;)
-                q_ks, k_l, r_l = Compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
+                q_ks, k_l, r_l = compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
                 push!(local_ratios, (length(obsindex), r_l / n_otilde)) #stat
                 local_R[(Ochild, Svert)][(Overt, Svert)] = q_ks
                 local_K[Svert][Ochild] = k_l
             end
         else
             if !haskey(local_R, (Overt, Svert))
-                local_R[(Overt, Svert)] = Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}()
+                local_R[(Overt, Svert)] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
             end
             if l > 1
                 local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(I, 0, 0)
@@ -1125,7 +1119,7 @@ function build_sourcefrozen_R_blocks!(
 end
 
 function build_observerfrozen_R_blocks!(
-    R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}},
+    R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}},
     K::Dict{Int,Dict{Int,Vector{Int}}},
     K_new::Dict{Int,Dict{Int,Vector{Int}}},
     U::Dict{Int,Dict{Int,Vector{Int}}},
@@ -1136,7 +1130,7 @@ function build_observerfrozen_R_blocks!(
     trialT,
     testT,
     kernelmatrix,
-    Compressor,
+    compressor,
     k,
     τ,
     LO,
@@ -1148,7 +1142,7 @@ function build_observerfrozen_R_blocks!(
     LS = length(treeS)
 
     results = tmap(treeO[LO]; scheduler=scheduler) do Overt
-        local_R = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
+        local_R = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
         local_K = Dict{Int,Dict{Int,Vector{Int}}}()
         local_ratios = Vector{Tuple{Int,Float64}}() #stat
         obsindex = values(testT, Overt)
@@ -1157,12 +1151,12 @@ function build_observerfrozen_R_blocks!(
                 local_K[Svert] = Dict{Int,Vector{Int}}()
             end
             if !haskey(local_R, (Overt, Svert))
-                local_R[(Overt, Svert)] = Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}()
+                local_R[(Overt, Svert)] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
             end
             if !isleaf(trialT, Svert)
                 srcindex = U[Svert][Overt]
                 n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Overt, τ;)
-                q_ks, k_l, r_l = Compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
+                q_ks, k_l, r_l = compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
                 push!(local_ratios, (length(obsindex), r_l / n_otilde)) #stat
                 last = 0
                 for Schild in children(trialT, Svert)

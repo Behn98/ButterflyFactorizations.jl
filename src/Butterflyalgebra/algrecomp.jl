@@ -1,16 +1,14 @@
 import H2Trees: values, center, halfsize, children, isleaf, trialtree, testtree
-function recompress_BF_left(Butterfly::AlgBF, τ, tree::H2Trees.BlockTree)
-    return recompress_BF_right(
-        Butterfly', τ, H2Trees.BlockTree(trialtree(tree), testtree(tree))
-    )'
+function recompress_BF_left(Butterfly::AlgBF, τ)
+    return recompress_BF_right(Butterfly', τ)'
 end
 
-function recompress_BF(Butterfly::AlgBF, τ, tree::H2Trees.BlockTree)
-    return recompress_BF_left(recompress_BF_right(Butterfly, τ, tree), τ, tree)
+function recompress_BF(Butterfly::AlgBF, τ)
+    return recompress_BF_left(recompress_BF_right(Butterfly, τ), τ)
 end
 
 """
-    recompress_BF(Butterfly::BF, τ, tree::H2Trees.BlockTree)
+    recompress_BF(Butterfly::BF, τ)
 
 Recompresses a structural Butterfly Factorization (`BF`) by extracting its algebraic
 factors, recompressing them with tolerance `τ`, and restructuring the output back into a
@@ -24,31 +22,29 @@ operations is only supported for the Dictionary versions of the Butterflies, as 
 matrix-based format is not designed for algebraic manipulations and would require a complete
 restructuring of the underlying data representation to support such operations effectively.
 """
-function recompress_BF(Butterfly::BF, τ, tree::H2Trees.BlockTree)
+function recompress_BF(Butterfly::BF, τ)
     Q = Butterfly.Q
     R = Butterfly.R
     P = Butterfly.P
-    BFalg = AlgBF(Butterfly.dim, Q, R, P)
-    BFalg = recompress_BF(BFalg, τ, tree)
+    BFalg = AlgBF(Butterfly)
+    BFalg = recompress_BF(BFalg, τ)
     return BF(
-        BFalg.Q,
-        BFalg.R,
-        BFalg.P,
+        BFalg,
         Butterfly.PermQ,
         Butterfly.PermP,
-        Butterfly.dim,
         Butterfly.NS,
         Butterfly.NO,
         Butterfly.k,
         Butterfly.τ,
-        Butterfly.tree,
+        Butterfly.stree,
+        Butterfly.otree,
     )
 end
 
-@views function recompress_BF_right(Butterfly::AlgBF, τ, tree::H2Trees.BlockTree)
-    Q = Butterfly.Q
-    R = Butterfly.R
-    P = Butterfly.P
+@views function recompress_BF_right(Butterfly::AlgBF, τ)
+    Q = Butterfly.Q.Dict
+    R = [Butterfly.R[r].Dict for r in eachindex(Butterfly.R)]
+    P = Butterfly.P.Dict
     lr = length(R)
 
     for l in eachindex(R[1:(lr - 1)])
@@ -88,17 +84,9 @@ end
             # Extract the local transfer matrix
             T_mat = QRA[2][:, invperm(QRA[3])]
             R_u[col_idx] = T_mat
-            #=
-            # Bulletproof Stacking: Accumulate transformations across all parent groups
-            if haskey(R_u, col_idx) #(parent_node, col_idx[2])
-                R_u[(parent_node, col_idx[2])] = vcat(R_u[(parent_node, col_idx[2])], T_mat)
-            else
-                R_u[(parent_node, col_idx[2])] = T_mat
-            end
-            =#
             last_idx = 0
             for (j, row_skel) in enumerate(rows_with_col) #local_rows
-                delete!(R[lold][row_skel], col_idx) # Remove the old column entry
+                #delete!(R[lold][row_skel], col_idx) # Remove the old column entry
                 R[lold][row_skel][col_idx] = Matrix(    #(parent_node, col_idx[2])
                     QRA[1][(last_idx + 1):(last_idx + row_spc[j]), :],
                 )
@@ -115,13 +103,13 @@ end
         #end
     end
 
-    return AlgBF(Butterfly.dim, Q, R, P)
+    return AlgBF(Butterfly, Q, R, P)
 end
 
 # Overload 1: Updating intermediate R factors (Clean 1:1 matching)
 @views function update_next_level_R_right(
     R_u::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
-    rightfactor::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}},
+    rightfactor::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}},
 )
     for row in keys(rightfactor)
         # Because the row key of rightfactor is exactly the col_idx of the previous level

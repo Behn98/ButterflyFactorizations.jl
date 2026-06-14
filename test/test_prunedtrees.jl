@@ -46,7 +46,7 @@
         1,
         k,
         10^(-4);
-        Compressor=ButterflyFactorizations.PartialQR(),
+        compressor=ButterflyFactorizations.PartialQR(),
     )
 
     Bfmat2 = ButterflyFactorizations.subroutine_BF(
@@ -56,7 +56,7 @@
         1,
         k,
         10^(-4);
-        Compressor=ButterflyFactorizations.PartialQR(),
+        compressor=ButterflyFactorizations.PartialQR(),
     )
 
     A = assemble(op, X1, X2)

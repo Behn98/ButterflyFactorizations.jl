@@ -396,3 +396,23 @@ function group_by_parents(tree, childkeys, s_o::Int) #s_o = 1 for observer, 2 fo
     end
     return parentedgrps
 end
+
+function checkequality(trees, treeo)
+    trialt = ButterflyFactorizations.h2treelevels(trees, 1)
+    tstt = ButterflyFactorizations.h2treelevels(treeo, 1)
+    if trialt != tstt
+        return false
+    end
+    commont = trialt
+    for lvl in commont
+        for node in lvl
+            trialcluster = H2Trees.values(trees, node)
+            tstcluster = H2Trees.values(treeo, node)
+            if trialcluster != tstcluster
+                return false
+            end
+        end
+    end
+
+    return true
+end

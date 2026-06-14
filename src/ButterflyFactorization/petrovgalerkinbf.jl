@@ -21,7 +21,7 @@ balanced trees in the sense that all leaves need to be on leaf level.
 
 **Keyword Arguments:**
 
-  - `Compressor`: The low-rank approximation strategy (default: `PartialQR()`).
+  - `compressor`: The low-rank approximation strategy (default: `PartialQR()`).
   - `tol`: The relative precision tolerance for compression (default: `1e-3`).
   - `ntasks`: Number of threads to use for parallel near-field assembly.
   - `α`: The geometric admissibility parameter (default: `2.0`).
@@ -37,7 +37,7 @@ function PetrovGalerkinBF(
     trialspace,
     tree::BlockTree,
     k::Float64;
-    Compressor=ButterflyFactorizations.PartialQR(),
+    compressor=ButterflyFactorizations.PartialQR(),
     tol=1e-3,
     α=2,
     scheduler=OhMyThreads.DynamicScheduler(),
@@ -97,7 +97,7 @@ function PetrovGalerkinBF(
         @tasks for i in eachindex(far_tasks)
             @set scheduler = scheduler
             (NO, NS) = far_tasks[i]
-            fly[i] = subroutine_BF(nearmatrix, tree, NO, NS, k, tol; Compressor=Compressor)
+            fly[i] = subroutine_BF(nearmatrix, tree, NO, NS, k, tol; compressor=compressor)
         end
     end
     #end
@@ -138,7 +138,7 @@ multiplication.
 
 **Keyword Arguments:**
 
-  - `Compressor`: The low-rank approximation strategy (default: `PartialQR()`).
+  - `compressor`: The low-rank approximation strategy (default: `PartialQR()`).
   - `tol`: The relative precision tolerance for compression (default: `1e-3`).
   - `ntasks`: Number of threads to use for parallel near-field assembly.
   - `α`: The geometric admissibility parameter (default: `2.0`).
@@ -154,7 +154,7 @@ function PetrovGalerkinBF_mats(
     trialspace,
     tree::BlockTree,
     k::Float64;
-    Compressor=ButterflyFactorizations.PartialQR(),
+    compressor=ButterflyFactorizations.PartialQR(),
     tol=1e-3,
     ntasks=Threads.nthreads(),
     α=2,
@@ -185,7 +185,7 @@ function PetrovGalerkinBF_mats(
     @tasks for i in eachindex(far_tasks)
         @set scheduler = DynamicScheduler()
         (NO, NS) = far_tasks[i]
-        fly[i] = subroutine_BF_mats(nearmatrix, tree, NO, NS, k, tol; Compressor=Compressor)
+        fly[i] = subroutine_BF_mats(nearmatrix, tree, NO, NS, k, tol; compressor=compressor)
     end
 
     return PetrovGalerkinBF_mats{acctype}(  #BEAST.scalartype(operator)
@@ -206,7 +206,7 @@ function PetrovGalerkinBF(
     tree::BlockTree,
     k::Float64,
     dostat::Bool;
-    Compressor=ButterflyFactorizations.PartialQR(),
+    compressor=ButterflyFactorizations.PartialQR(),
     tol=1e-3,
     α=2,
     scheduler=OhMyThreads.DynamicScheduler(),
@@ -268,7 +268,7 @@ function PetrovGalerkinBF(
             @set scheduler = scheduler
             (NO, NS) = far_tasks[i]
             fly[i], stat[i] = subroutine_BF(
-                nearmatrix, tree, NO, NS, k, tol, true; Compressor=Compressor
+                nearmatrix, tree, NO, NS, k, tol, true; compressor=compressor
             )
         end
     end

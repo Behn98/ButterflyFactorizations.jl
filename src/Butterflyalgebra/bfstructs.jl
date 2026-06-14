@@ -1,14 +1,27 @@
-struct AlgBF
-    dim::Tuple{Int,Int}
-    Q::Dict{Int,Matrix{ComplexF64}}
-    R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}}
-    P::Dict{Int,Matrix{ComplexF64}}
+struct R_factor{T}
+    Dict::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}
+    slvl::Tuple{Int,Int}
+    olvl::Tuple{Int,Int}
+    rowstree::T
+    rowotree::T
+    colstree::T
+    colotree::T
 end
 
-struct BF
-    Q::Dict{Int,AbstractMatrix{ComplexF64}}
-    R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}}
-    P::Dict{Int,AbstractMatrix{ComplexF64}}
+struct Q_factor{T}
+    Dict::Dict{Int,Matrix{ComplexF64}}
+    stree::T
+end
+
+struct P_factor{T}
+    Dict::Dict{Int,Matrix{ComplexF64}}
+    otree::T
+end
+
+struct BF{T}
+    Q::Dict{Int,Matrix{ComplexF64}}
+    R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}
+    P::Dict{Int,Matrix{ComplexF64}}
     PermQ::Dict{Int,Vector{Int}}
     PermP::Dict{Int,Vector{Int}}
     dim::Tuple{Int,Int}
@@ -16,9 +29,87 @@ struct BF
     NO::Int64
     k::Float64
     τ::Float64
-    tree::H2Trees.BlockTree
-    BF(Q, R, P, PermQ, PermP, dim, NS, NO, k, τ, tree) =
-        new(Q, R, P, PermQ, PermP, dim, NS, NO, k, τ, tree)
+    stree::T
+    otree::T
+    BF{T}(Q, R, P, PermQ, PermP, dim, NS, NO, k, τ, stree::T, otree::T) where {T} =
+        new{T}(Q, R, P, PermQ, PermP, dim, NS, NO, k, τ, stree, otree)
+end
+
+# Helper outer constructor to automatically infer T
+function BF(Q, R, P, PermQ, PermP, dim, NS, NO, k, τ, stree::T, otree::T) where {T}
+    return BF{T}(Q, R, P, PermQ, PermP, dim, NS, NO, k, τ, stree, otree)
+end
+
+struct AlgBF{T}
+    dim::Tuple{Int,Int}
+    Q::Q_factor{T}
+    R::Vector{R_factor{T}}
+    P::P_factor{T}
+    AlgBF{T}(dim, Q, R, P) where {T} = new{T}(dim, Q, R, P)
+    # Constructor converting BF to AlgBF
+    function AlgBF(Butterfly::BF{T}) where {T}
+        Q = Q_factor(Butterfly.Q, Butterfly.stree)
+        lr = length(Butterfly.R)
+        R = Vector{R_factor{T}}(undef, lr)
+        for l in eachindex(Butterfly.R)
+            R[l] = R_factor(
+                Butterfly.R[l],
+                (lr - (l - 2), lr - (l - 1)),
+                (l, l + 1),
+                Butterfly.stree,
+                Butterfly.otree,
+                Butterfly.stree,
+                Butterfly.otree,
+            )
+        end
+        P = P_factor(Butterfly.P, Butterfly.otree)
+        return new{T}(Butterfly.dim, Q, R, P)
+    end
+
+    # Constructor copying/modifying an existing AlgBF
+    function AlgBF(
+        BFalg::AlgBF{T},
+        Q::Dict{Int,Matrix{ComplexF64}},
+        R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}},
+        P::Dict{Int,Matrix{ComplexF64}},
+    ) where {T}
+        Q_f = Q_factor(Q, BFalg.Q.stree)
+        R_factors = Vector{R_factor{T}}(undef, length(R))
+        for l in eachindex(R)
+            R_factors[l] = R_factor(
+                R[l],
+                BFalg.R[l].slvl,
+                BFalg.R[l].olvl,
+                BFalg.R[l].rowstree,
+                BFalg.R[l].rowotree,
+                BFalg.R[l].colstree,
+                BFalg.R[l].colotree,
+            )
+        end
+        P_f = P_factor(P, BFalg.P.otree)
+        return new{T}(BFalg.dim, Q_f, R_factors, P_f)
+    end
+end
+
+function AlgBF(dim, Q::Q_factor{T}, R::AbstractVector, P::P_factor{T}) where {T}
+    return AlgBF{T}(dim, Q, R, P)
+end
+
+function BF(algBF::AlgBF{T}, PermQ, PermP, NS, NO, k, τ, stree::T, otree::T) where {T}
+    return BF{T}(
+        algBF.Q.Dict,
+        [r.Dict for r in algBF.R],
+        algBF.P.Dict,
+        PermQ,
+        PermP,
+        algBF.dim,
+        NS,
+        NO,
+        k,
+        τ,
+        stree,
+        otree,
+    )
 end
 
 struct BF_Mats

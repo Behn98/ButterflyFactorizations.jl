@@ -17,15 +17,15 @@ interpretation, similar to adding the two dense matrices directly.
 function add_eqbfs(BF1::BF, BF_2::BF, τ)
     @assert BF1.NS == BF_2.NS && BF1.NO == BF_2.NO "rootids must match for addition."
     # --- Case 1: Same source and observer clusters ---
-    R_new = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}}(
+    R_new = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(
         undef, length(BF1.R)
     )
     for l in eachindex(BF1.R)
-        R_new[l] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}}()
+        R_new[l] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
         for nodeS in keys(BF1.R[l])
             for nodeO in keys(BF1.R[l][nodeS])
                 if !haskey(R_new[l], nodeS)
-                    R_new[l][nodeS] = Dict{Tuple{Int,Int},AbstractMatrix{ComplexF64}}()
+                    R_new[l][nodeS] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
                 end
                 R_new[l][nodeS][nodeO] = sparse_blockdiag(
                     BF1.R[l][nodeS][nodeO], BF_2.R[l][nodeS][nodeO]
@@ -33,12 +33,12 @@ function add_eqbfs(BF1::BF, BF_2::BF, τ)
             end
         end
     end
-    Q_new = Dict{Int,AbstractMatrix{ComplexF64}}()
+    Q_new = Dict{Int,Matrix{ComplexF64}}()
     for k in keys(BF1.Q)
         Q_new[k] = vcat(BF1.Q[k], BF_2.Q[k])
     end
 
-    P_new = Dict{Int,AbstractMatrix{ComplexF64}}()
+    P_new = Dict{Int,Matrix{ComplexF64}}()
     for k in keys(BF1.P)
         P_new[k] = hcat(BF1.P[k], BF_2.P[k])
     end
@@ -55,7 +55,8 @@ function add_eqbfs(BF1::BF, BF_2::BF, τ)
             BF1.NO,
             BF1.k,
             max(BF1.τ, BF_2.τ),
-            BF1.tree,
+            BF1.stree,
+            BF1.otree,
         ),
         τ,
     )
