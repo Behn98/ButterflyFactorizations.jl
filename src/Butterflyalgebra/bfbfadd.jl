@@ -27,7 +27,7 @@ function add_eqbfs(BF1::BF, BF_2::BF, τ)
                 if !haskey(R_new[l], nodeS)
                     R_new[l][nodeS] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
                 end
-                R_new[l][nodeS][nodeO] = sparse_blockdiag(
+                R_new[l][nodeS][nodeO] = blockdiag(
                     BF1.R[l][nodeS][nodeO], BF_2.R[l][nodeS][nodeO]
                 )
             end

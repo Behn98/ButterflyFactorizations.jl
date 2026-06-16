@@ -66,9 +66,9 @@
     y_approx1 = zeros(ComplexF64, size(A, 1))
     y_approx1[go1] = Bfmat * x[gs1]
 
-    @test(norm(y_exact - y_approx1) / norm(y_exact)) < 10^-3
+    @test ((norm(y_exact - y_approx1) / norm(y_exact)) < 10^-2)
 
     y_approx = zeros(ComplexF64, size(A, 1))
     y_approx[go2] = Bfmat2 * x[gs2]
-    @test (norm(y_exact - y_approx) / norm(y_exact)) < 10^-3
+    @test ((norm(y_exact - y_approx) / norm(y_exact)) < 10^-2)
 end

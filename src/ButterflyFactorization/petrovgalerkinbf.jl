@@ -154,7 +154,7 @@ function PetrovGalerkinBF_mats(
     k::Float64;
     compressor=ButterflyFactorizations.PartialQR(),
     tol=1e-3,
-    ntasks=Threads.nthreads(),
+    scheduler=OhMyThreads.DynamicScheduler(),
     α=2,
     acctype=ComplexF64,
 )
@@ -179,10 +179,14 @@ function PetrovGalerkinBF_mats(
     )
     nearmatrix = AbstractKernelMatrix(operator, testspace, trialspace; type=:far)
     fly = Vector{BF_Mats}(undef, length(farints))
-    @tasks for i in eachindex(farints)
-        @set scheduler = DynamicScheduler()
-        (NO, NS) = farints[i]
-        fly[i] = subroutine_BF_mats(nearmatrix, tree, NO, NS, k, tol; compressor=compressor)
+    let nearmatrix = nearmatrix
+        @tasks for i in eachindex(farints)
+            @set scheduler = DynamicScheduler()
+            (NO, NS) = farints[i]
+            fly[i] = subroutine_BF_mats(
+                nearmatrix, tree, NO, NS, k, tol; compressor=compressor
+            )
+        end
     end
 
     return PetrovGalerkinBF_mats{acctype}(nears, farints, fly, size(nearmatrix))

@@ -66,6 +66,7 @@ include("Butterflyalgebra/bfmatrix.jl")
 include("Butterflyalgebra/algrecomp.jl")
 include("Butterflyalgebra/bfbfadd.jl")
 include("Butterflyalgebra/bfbfmul.jl")
+include("Butterflyalgebra/bfsplit.jl")
 
 #Tree traversale and Butterfly construction
 include("intlists.jl")
@@ -78,6 +79,7 @@ include("ButterflyFactorization/petrovgalerkinbf.jl")
 
 include("matrixalgebra/dims.jl")
 include("matrixalgebra/csrmatrix.jl")
+include("matrixalgebra/indexing.jl")
 include("matrixalgebra/matrixvector.jl")
 include("matrixalgebra/matrixmatrix.jl")
 

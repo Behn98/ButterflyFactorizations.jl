@@ -62,12 +62,14 @@ abstract type AbstractBlockView{T} <: LinearMaps.LinearMap{T} end
 struct NearBlockView{T,M<:AbstractMatrix{T}} <: AbstractBlockView{T}
     obs_id::Int
     src_id::Int
+    dim::Tuple{Int,Int}
     matrix::M
 end
 
 struct FarBlockView{T,BFType} <: AbstractBlockView{T}
     obs_id::Int
     src_id::Int
+    dim::Tuple{Int,Int}
     bf::BFType
 end
 
@@ -80,9 +82,11 @@ struct CompositeBlockView{
     BFs::Vector{BF}
     near_lookup::LType
     far_lookup::LType
-end
-
-struct ZeroBlockView{T} <: AbstractBlockView{T}
-    obs_id::Int
-    src_id::Int
+    function CompositeBlockView{T}(
+        nearinteractions, dim, BFs, near_lookup, far_lookup
+    ) where {T}
+        return new{T,typeof(nearinteractions),typeof(near_lookup)}(
+            nearinteractions, dim, BFs, near_lookup, far_lookup
+        )
+    end
 end
