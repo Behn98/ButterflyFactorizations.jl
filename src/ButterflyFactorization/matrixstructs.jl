@@ -1,18 +1,18 @@
-struct PetrovGalerkinBF{T,NearInteractionsType} <: LinearMaps.LinearMap{T}
+struct PetrovGalerkinBF{
+    T,NearInteractionsType,LType<:SparseArrays.SparseMatrixCSC{Int,Int}
+} <: LinearMaps.LinearMap{T}
     nearinteractions::NearInteractionsType
     dim::Tuple{Int,Int}
     tree::H2Trees.BlockTree
-    farinteractions::Dict{Int64,Vector{Int64}}           #observernodeid --> sourcenodeid
     BFs::Vector{BF}
+    near_lookup::LType
+    far_lookup::LType
+
     function PetrovGalerkinBF{T}(
-        nearinteractions, tree, farinteractions, BFs, dim
+        nearinteractions, tree, BFs, dim, near_lookup, far_lookup
     ) where {T}
-        return new{T,typeof(nearinteractions)}(
-            nearinteractions,
-            dim,
-            tree,#::H2Trees.BlockTree
-            farinteractions,           #observernodeid --> sourcenodeid
-            BFs,#::Vector{BF}
+        return new{T,typeof(nearinteractions),typeof(near_lookup)}(
+            nearinteractions, dim, tree, BFs, near_lookup, far_lookup
         )
     end
 end
@@ -21,14 +21,12 @@ struct FlatPGBF{T,NearInteractionsType} <: LinearMaps.LinearMap{T}
     nearinteractions::NearInteractionsType
     dim::Tuple{Int,Int}
     tree::H2Trees.BlockTree
-    farinteractions::Dict{Int64,Vector{Int64}}           #observernodeid --> sourcenodeid
     BFs::Vector{FlatBF}
-    function FlatPGBF{T}(nearinteractions, dim, tree, farinteractions, BFs) where {T}
+    function FlatPGBF{T}(nearinteractions, dim, tree, BFs) where {T}
         return new{T,typeof(nearinteractions)}(
             nearinteractions,
             dim,
             tree,#::H2Trees.BlockTree
-            farinteractions,           #observernodeid --> sourcenodeid
             BFs,#::Vector{FlatBF}
         )
     end
@@ -56,4 +54,35 @@ struct PetrovGalerkinBF_mats{T,NearInteractionsType} <: LinearMaps.LinearMap{T}
             BFs,#::Vector{BF}
         )
     end
+end
+
+abstract type AbstractBlockView{T} <: LinearMaps.LinearMap{T} end
+
+# Fixed the syntax typo here (<: instead of < ref)
+struct NearBlockView{T,M<:AbstractMatrix{T}} <: AbstractBlockView{T}
+    obs_id::Int
+    src_id::Int
+    matrix::M
+end
+
+struct FarBlockView{T,BFType} <: AbstractBlockView{T}
+    obs_id::Int
+    src_id::Int
+    bf::BFType
+end
+
+# For parent/composite nodes that aren't leaves or direct BFs
+struct CompositeBlockView{
+    T,NearInteractionsType,LType<:SparseArrays.SparseMatrixCSC{Int,Int}
+} <: AbstractBlockView{T}
+    nearinteractions::NearInteractionsType
+    dim::Tuple{Int,Int}
+    BFs::Vector{BF}
+    near_lookup::LType
+    far_lookup::LType
+end
+
+struct ZeroBlockView{T} <: AbstractBlockView{T}
+    obs_id::Int
+    src_id::Int
 end

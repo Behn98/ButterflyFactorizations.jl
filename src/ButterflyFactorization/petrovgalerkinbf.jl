@@ -43,25 +43,31 @@ function PetrovGalerkinBF(
     scheduler=OhMyThreads.DynamicScheduler(),
     acctype=ComplexF64,
 )
-    # 0. Spara gammal BLAS-inställning och sätt till 1 för att undvika överbelastning
-    #old_blas_threads = BLAS.get_num_threads()
-    #BLAS.set_num_threads(1)
-
-    #println("\n--- Profiling PetrovGalerkinBF ---")
-    # 1. Mät tid för uppsättning och träd-sökning
-    #t_nearfar = @elapsed begin
+    # --- NEAR INTERACTIONS ---
     nearmatrix = AbstractKernelMatrix(operator, testspace, trialspace; type=:near)
-    #quadstrat=nearquadstrat
-    values, nearvalues, farints = nearandfar(tree, α)
-    #end
-    #println("1. nearandfar & initial setup : ", round(t_nearfar; digits=4), " s")
+    farints, nearints = nearandfar(tree, α)
 
-    # 2. Mät tid för Near-field assembly (Tät matrisuträkning)
-    #t_near = @elapsed begin
-    blocks = Vector{Matrix{acctype}}(undef, length(values))
+    blocks = Vector{Matrix{acctype}}(undef, length(nearints))
+    values = Vector{Vector{Int64}}(undef, length(nearints))
+    nearvalues = Vector{Vector{Int64}}(undef, length(nearints))
+
+    # Vectors to harvest coordinates for the near lookup matrix
+    near_rows = Vector{Int}(undef, length(nearints))
+    near_cols = Vector{Int}(undef, length(nearints))
+    near_vals = Vector{Int}(undef, length(nearints))
+
     let nearmatrix = nearmatrix
-        @tasks for i in eachindex(values)
-            @set scheduler = scheduler #DynamicScheduler() #SerialScheduler
+        @tasks for i in eachindex(nearints)
+            (node_o, node_s) = nearints[i]
+            @set scheduler = scheduler
+
+            # Capture coordinates and map to loop index 'i'
+            near_rows[i] = node_o
+            near_cols[i] = node_s
+            near_vals[i] = i
+
+            values[i] = H2Trees.values(tree.testcluster, node_o)
+            nearvalues[i] = H2Trees.values(tree.trialcluster, node_s)
             blk = zeros(acctype, length(values[i]), length(nearvalues[i]))
             nearmatrix(blk, values[i], nearvalues[i])
             blocks[i] = blk
@@ -70,49 +76,41 @@ function PetrovGalerkinBF(
     nears = BlockSparseMatrix(
         blocks, values, nearvalues, size(nearmatrix); scheduler=scheduler
     )
-    #end
-    #println("2. Near-field matrix assembly : ", round(t_near; digits=4), " s")
 
-    # 3. Mät tid för list-allokering (detta borde vara nära 0 sekunder)
-    #t_list = @elapsed begin
-    far_tasks = Tuple{Int,Int}[]
-    for (NO, source_nodes) in farints
-        for NS in source_nodes
-            push!(far_tasks, (NO, NS))
-        end
-    end
-    #end
-    #println(
-    #    "3. Far-field task generation  : ",
-    #    round(t_list; digits=4),
-    #    " s (Antal block: ",
-    #   length(far_tasks),
-    #    ")",
-    #)
+    # --- FAR INTERACTIONS (BUTTERFLIES) ---
     nearmatrix = AbstractKernelMatrix(operator, testspace, trialspace; type=:far)
-    # 4. Mät tid för uppbyggnad av Butterfly Factorizations
-    #t_far = @elapsed begin
-    fly = Vector{BF}(undef, length(far_tasks))
+    fly = Vector{BF}(undef, length(farints))
+
+    # Vectors to harvest coordinates for the far lookup matrix
+    far_rows = Vector{Int}(undef, length(farints))
+    far_cols = Vector{Int}(undef, length(farints))
+    far_vals = Vector{Int}(undef, length(farints))
+
     let nearmatrix = nearmatrix
-        @tasks for i in eachindex(far_tasks)
+        @tasks for i in eachindex(farints)
             @set scheduler = scheduler
-            (NO, NS) = far_tasks[i]
+            (NO, NS) = farints[i]
+
+            # Capture coordinates and map to loop index 'i'
+            far_rows[i] = NO
+            far_cols[i] = NS
+            far_vals[i] = i
+
             fly[i] = subroutine_BF(nearmatrix, tree, NO, NS, k, tol; compressor=compressor)
         end
     end
-    #end
-    #println("4. Far-field Butterfly Factor.: ", round(t_far; digits=4), " s")
-    #println("----------------------------------\n")
 
-    # Återställ BLAS-trådarna innan vi returnerar
-    #BLAS.set_num_threads(old_blas_threads)
+    # --- BUILD CSC LOOKUP MATRICES ---
+    # The total number of nodes can be found from the number of clusters in your trees
+    num_test_nodes  = sum(length(lvl) for lvl in h2treelevels(tree.testcluster, 1))
+    num_trial_nodes = sum(length(lvl) for lvl in h2treelevels(tree.trialcluster, 1))
 
-    return PetrovGalerkinBF{acctype}(  #BEAST.scalartype(operator)
-        nears,
-        tree,
-        farints,
-        fly,        # Here come all other fields needed for the ButterflyFactorizations
-        size(nearmatrix),
+    # sparse(rows, cols, vals, m, n) compiles them into clean SparseMatrixCSC layout
+    near_lookup = sparse(near_rows, near_cols, near_vals, num_test_nodes, num_trial_nodes)
+    far_lookup  = sparse(far_rows, far_cols, far_vals, num_test_nodes, num_trial_nodes)
+
+    return PetrovGalerkinBF{acctype}(
+        nears, tree, fly, size(nearmatrix), near_lookup, far_lookup
     )
 end
 
@@ -161,40 +159,33 @@ function PetrovGalerkinBF_mats(
     acctype=ComplexF64,
 )
     nearmatrix = AbstractKernelMatrix(operator, testspace, trialspace;)
-    #quadstrat=nearquadstrat
-    #values, nearvalues = nearinteractions(tree; isnear=isnear)
-    values, nearvalues, farints = nearandfar(tree, α)
-
-    blocks = Vector{Matrix{acctype}}(undef, length(values))
-    @tasks for i in eachindex(values)
-        @set scheduler = DynamicScheduler() #SerialScheduler()
-        blk = zeros(acctype, length(values[i]), length(nearvalues[i]))
-        nearmatrix(blk, values[i], nearvalues[i])
-        blocks[i] = blk
-    end
-    nears = BlockSparseMatrix(blocks, values, nearvalues, size(nearmatrix))
-    far_tasks = Tuple{Int,Int}[]
-    for (NO, source_nodes) in farints
-        for NS in source_nodes
-            push!(far_tasks, (NO, NS))
+    farints, nearints = nearandfar(tree, α)
+    blocks = Vector{Matrix{acctype}}(undef, length(nearints))
+    values = Vector{Vector{Int64}}(undef, length(nearints))
+    nearvalues = Vector{Vector{Int64}}(undef, length(nearints))
+    let nearmatrix = nearmatrix
+        @tasks for i in eachindex(nearints)
+            (node_o, node_s) = nearints[i]
+            @set scheduler = scheduler #DynamicScheduler() #SerialScheduler
+            values[i] = H2Trees.values(tree.testcluster, node_o)
+            nearvalues[i] = H2Trees.values(tree.trialcluster, node_s)
+            blk = zeros(acctype, length(values[i]), length(nearvalues[i]))
+            nearmatrix(blk, values[i], nearvalues[i])
+            blocks[i] = blk
         end
     end
-
-    # 2. Använd tmap för att bygga alla Butterfly-matrisblocken parallellt
-    fly = Vector{BF_Mats}(undef, length(far_tasks))
-    @tasks for i in eachindex(far_tasks)
+    nears = BlockSparseMatrix(
+        blocks, values, nearvalues, size(nearmatrix); scheduler=scheduler
+    )
+    nearmatrix = AbstractKernelMatrix(operator, testspace, trialspace; type=:far)
+    fly = Vector{BF_Mats}(undef, length(farints))
+    @tasks for i in eachindex(farints)
         @set scheduler = DynamicScheduler()
-        (NO, NS) = far_tasks[i]
+        (NO, NS) = farints[i]
         fly[i] = subroutine_BF_mats(nearmatrix, tree, NO, NS, k, tol; compressor=compressor)
     end
 
-    return PetrovGalerkinBF_mats{acctype}(  #BEAST.scalartype(operator)
-        nears,
-        #tree,
-        farints,
-        fly,        # Here come all other fields needed for the ButterflyFactorizations
-        size(nearmatrix),
-    )
+    return PetrovGalerkinBF_mats{acctype}(nears, farints, fly, size(nearmatrix))
 end
 
 #--------------------------STATISTICS--------------------------
@@ -212,25 +203,31 @@ function PetrovGalerkinBF(
     scheduler=OhMyThreads.DynamicScheduler(),
     acctype=ComplexF64,
 )
-    # 0. Spara gammal BLAS-inställning och sätt till 1 för att undvika överbelastning
-    #old_blas_threads = BLAS.get_num_threads()
-    #BLAS.set_num_threads(1)
-
-    #println("\n--- Profiling PetrovGalerkinBF ---")
-    # 1. Mät tid för uppsättning och träd-sökning
-    #t_nearfar = @elapsed begin
+    # --- NEAR INTERACTIONS ---
     nearmatrix = AbstractKernelMatrix(operator, testspace, trialspace; type=:near)
-    #quadstrat=nearquadstrat
-    values, nearvalues, farints = nearandfar(tree, α)
-    #end
-    #println("1. nearandfar & initial setup : ", round(t_nearfar; digits=4), " s")
+    farints, nearints = nearandfar(tree, α)
 
-    # 2. Mät tid för Near-field assembly (Tät matrisuträkning)
-    #t_near = @elapsed begin
-    blocks = Vector{Matrix{acctype}}(undef, length(values))
+    blocks = Vector{Matrix{acctype}}(undef, length(nearints))
+    values = Vector{Vector{Int64}}(undef, length(nearints))
+    nearvalues = Vector{Vector{Int64}}(undef, length(nearints))
+
+    # Vectors to harvest coordinates for the near lookup matrix
+    near_rows = Vector{Int}(undef, length(nearints))
+    near_cols = Vector{Int}(undef, length(nearints))
+    near_vals = Vector{Int}(undef, length(nearints))
+
     let nearmatrix = nearmatrix
-        @tasks for i in eachindex(values)
-            @set scheduler = scheduler #DynamicScheduler() #SerialScheduler
+        @tasks for i in eachindex(nearints)
+            (node_o, node_s) = nearints[i]
+            @set scheduler = scheduler
+
+            # Capture coordinates and map to loop index 'i'
+            near_rows[i] = node_o
+            near_cols[i] = node_s
+            near_vals[i] = i
+
+            values[i] = H2Trees.values(tree.testcluster, node_o)
+            nearvalues[i] = H2Trees.values(tree.trialcluster, node_s)
             blk = zeros(acctype, length(values[i]), length(nearvalues[i]))
             nearmatrix(blk, values[i], nearvalues[i])
             blocks[i] = blk
@@ -239,51 +236,42 @@ function PetrovGalerkinBF(
     nears = BlockSparseMatrix(
         blocks, values, nearvalues, size(nearmatrix); scheduler=scheduler
     )
-    #end
-    #println("2. Near-field matrix assembly : ", round(t_near; digits=4), " s")
 
-    # 3. Mät tid för list-allokering (detta borde vara nära 0 sekunder)
-    #t_list = @elapsed begin
-    far_tasks = Tuple{Int,Int}[]
-    for (NO, source_nodes) in farints
-        for NS in source_nodes
-            push!(far_tasks, (NO, NS))
-        end
-    end
-    #end
-    #println(
-    #    "3. Far-field task generation  : ",
-    #    round(t_list; digits=4),
-    #    " s (Antal block: ",
-    #   length(far_tasks),
-    #    ")",
-    #)
+    # --- FAR INTERACTIONS (BUTTERFLIES) ---
     nearmatrix = AbstractKernelMatrix(operator, testspace, trialspace; type=:far)
-    # 4. Mät tid för uppbyggnad av Butterfly Factorizations
-    #t_far = @elapsed begin
-    fly = Vector{BF}(undef, length(far_tasks))
-    stat = Vector{BFSTAT}(undef, length(far_tasks))
+    fly = Vector{BF}(undef, length(farints))
+
+    # Vectors to harvest coordinates for the far lookup matrix
+    far_rows = Vector{Int}(undef, length(farints))
+    far_cols = Vector{Int}(undef, length(farints))
+    far_vals = Vector{Int}(undef, length(farints))
+
     let nearmatrix = nearmatrix
-        @tasks for i in eachindex(far_tasks)
+        @tasks for i in eachindex(farints)
             @set scheduler = scheduler
-            (NO, NS) = far_tasks[i]
-            fly[i], stat[i] = subroutine_BF(
+            (NO, NS) = farints[i]
+
+            # Capture coordinates and map to loop index 'i'
+            far_rows[i] = NO
+            far_cols[i] = NS
+            far_vals[i] = i
+
+            fly[i] = subroutine_BF(
                 nearmatrix, tree, NO, NS, k, tol, true; compressor=compressor
             )
         end
     end
-    #end
-    #println("4. Far-field Butterfly Factor.: ", round(t_far; digits=4), " s")
-    #println("----------------------------------\n")
 
-    # Återställ BLAS-trådarna innan vi returnerar
-    #BLAS.set_num_threads(old_blas_threads)
+    # --- BUILD CSC LOOKUP MATRICES ---
+    # The total number of nodes can be found from the number of clusters in your trees
+    num_test_nodes  = length(tree.testcluster)
+    num_trial_nodes = length(tree.trialcluster)
 
-    return PetrovGalerkinBF{acctype}(  #BEAST.scalartype(operator)
-        nears,
-        tree,
-        farints,
-        fly,        # Here come all other fields needed for the ButterflyFactorizations
-        size(nearmatrix),
-    ), stat
+    # sparse(rows, cols, vals, m, n) compiles them into clean SparseMatrixCSC layout
+    near_lookup = sparse(near_rows, near_cols, near_vals, num_test_nodes, num_trial_nodes)
+    far_lookup  = sparse(far_rows, far_cols, far_vals, num_test_nodes, num_trial_nodes)
+
+    return PetrovGalerkinBF{acctype}(
+        nears, tree, fly, size(nearmatrix), near_lookup, far_lookup
+    )
 end

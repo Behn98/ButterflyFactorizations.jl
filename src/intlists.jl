@@ -127,14 +127,12 @@ function nearandfar(tree::H2Trees.BlockTree, α)
     tsttree = testtree(tree)
     node_o = root(tsttree)
     node_s = root(srctree)
-    nearsv = Vector{Int}[]
-    nearov = Vector{Int}[]
-    #nearinteractions = Dict{Int64,Vector{Int64}}()          #observernodeid --> sourcenodeid
-    farinteractions = Dict{Int64,Vector{Int64}}()           #observernodeid --> sourcenodeid
+    nearinteractions = Vector{Tuple{Int64,Int64}}()         #observernodeid --> sourcenodeid
+    farinteractions = Vector{Tuple{Int64,Int64}}()          #observernodeid --> sourcenodeid
     process_nodes!(
-        srctree, tsttree, node_o, node_s, admissible, farinteractions, nearsv, nearov
+        srctree, tsttree, node_o, node_s, admissible, farinteractions, nearinteractions
     )
-    return nearov, nearsv, farinteractions
+    return farinteractions, nearinteractions
 end
 
 """
@@ -163,24 +161,64 @@ function process_nodes!(
     node_s,
     admissible::isFarFunctor,
     farinteractions,
-    nearsv,
-    nearov,
+    nearinteractions,
 )
     if admissible(srctree, tsttree, node_s, node_o) #&&
         #!(isleaf(tsttree, node_o) && isleaf(srctree, node_s))
-        push!(get!(farinteractions, node_o, Int64[]), node_s)
+        push!(farinteractions, (node_o, node_s))
         return nothing
     elseif isleaf(tsttree, node_o) && isleaf(srctree, node_s)
-        push!(nearsv, H2Trees.values(srctree, node_s))
-        push!(nearov, H2Trees.values(tsttree, node_o))
+        #push!(nearsv, H2Trees.values(srctree, node_s))
+        #push!(nearov, H2Trees.values(tsttree, node_o))
+        push!(nearinteractions, (node_o, node_s))
         return nothing
     end
     # split the larger node
-
-    if (
-        H2Trees.halfsize(tsttree, node_o) >= H2Trees.halfsize(srctree, node_s) &&
-        !isleaf(tsttree, node_o)
-    ) || isleaf(srctree, node_s)
+    #=
+        if (
+            H2Trees.halfsize(tsttree, node_o) >= H2Trees.halfsize(srctree, node_s) &&
+            !isleaf(tsttree, node_o)
+        ) || isleaf(srctree, node_s)
+            for child_o in collect(children(tsttree, node_o))
+                process_nodes!(
+                    srctree,
+                    tsttree,
+                    child_o,
+                    node_s,
+                    admissible,
+                    farinteractions,
+                    nearinteractions,
+                )
+            end
+        else
+            for child_s in collect(children(srctree, node_s))
+                process_nodes!(
+                    srctree,
+                    tsttree,
+                    node_o,
+                    child_s,
+                    admissible,
+                    farinteractions,
+                    nearinteractions,
+                )
+            end
+        end
+    =#
+    if !isleaf(tsttree, node_o) && !isleaf(srctree, node_s)
+        for child_o in collect(children(tsttree, node_o))
+            for child_s in collect(children(srctree, node_s))
+                process_nodes!(
+                    srctree,
+                    tsttree,
+                    child_o,
+                    child_s,
+                    admissible,
+                    farinteractions,
+                    nearinteractions,
+                )
+            end
+        end
+    elseif !isleaf(tsttree, node_o)
         for child_o in collect(children(tsttree, node_o))
             process_nodes!(
                 srctree,
@@ -189,8 +227,7 @@ function process_nodes!(
                 node_s,
                 admissible,
                 farinteractions,
-                nearsv,
-                nearov,
+                nearinteractions,
             )
         end
     else
@@ -202,27 +239,10 @@ function process_nodes!(
                 child_s,
                 admissible,
                 farinteractions,
-                nearsv,
-                nearov,
+                nearinteractions,
             )
         end
     end
-    #=
-    for child_o in collect(children(tsttree, node_o))
-        for child_s in collect(children(srctree, node_s))
-            process_nodes!(
-                srctree,
-                tsttree,
-                child_o,
-                child_s,
-                admissible,
-                farinteractions,
-                nearsv,
-                nearov,
-            )
-        end
-    end
-    =#
 end
 
 function process_nodes!(
@@ -232,20 +252,18 @@ function process_nodes!(
     node_s,
     admissible::isFarFunctor,
     farinteractions,
-    nearsv,
-    nearov,
+    nearinteractions,
 )
     if admissible(srctree, tsttree, node_s, node_o) #&&
         #!(isleaf(tsttree, node_o) && isleaf(srctree, node_s))
-        push!(get!(farinteractions, node_o, Int64[]), node_s)
+        push!(farinteractions, (node_o, node_s))
         return nothing
     elseif isleaf(tsttree, node_o) && isleaf(srctree, node_s)
-        push!(nearsv, H2Trees.values(srctree, node_s))
-        push!(nearov, H2Trees.values(tsttree, node_o))
+        push!(nearinteractions, (node_o, node_s))
         return nothing
     end
     # split the larger node
-
+    #=
     if (
         H2Trees.radius(tsttree, node_o) >= H2Trees.radius(srctree, node_s) &&
         !isleaf(tsttree, node_o)
@@ -258,8 +276,7 @@ function process_nodes!(
                 node_s,
                 admissible,
                 farinteractions,
-                nearsv,
-                nearov,
+                nearinteractions,
             )
         end
     else
@@ -271,25 +288,48 @@ function process_nodes!(
                 child_s,
                 admissible,
                 farinteractions,
-                nearsv,
-                nearov,
-            )
-        end
-    end
-    #=
-    for child_o in collect(children(tsttree, node_o))
-        for child_s in collect(children(srctree, node_s))
-            process_nodes!(
-                srctree,
-                tsttree,
-                child_o,
-                child_s,
-                admissible,
-                farinteractions,
-                nearsv,
-                nearov,
+                nearinteractions,
             )
         end
     end
     =#
+    if !isleaf(tsttree, node_o) && !isleaf(srctree, node_s)
+        for child_o in collect(children(tsttree, node_o))
+            for child_s in collect(children(srctree, node_s))
+                process_nodes!(
+                    srctree,
+                    tsttree,
+                    child_o,
+                    child_s,
+                    admissible,
+                    farinteractions,
+                    nearinteractions,
+                )
+            end
+        end
+    elseif !isleaf(tsttree, node_o)
+        for child_o in collect(children(tsttree, node_o))
+            process_nodes!(
+                srctree,
+                tsttree,
+                child_o,
+                node_s,
+                admissible,
+                farinteractions,
+                nearinteractions,
+            )
+        end
+    else
+        for child_s in collect(children(srctree, node_s))
+            process_nodes!(
+                srctree,
+                tsttree,
+                node_o,
+                child_s,
+                admissible,
+                farinteractions,
+                nearinteractions,
+            )
+        end
+    end
 end

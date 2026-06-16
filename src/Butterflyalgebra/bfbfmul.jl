@@ -265,7 +265,7 @@ function LinearAlgebra.mul!(
     return C
 end
 
-function trivialmul(BF_1::BF, BF_2::BF, τ)
+function trivialmul(BF_1::BF, BF_2::BF)
     @assert length(BF_1) == length(BF_2) "Both BFs must have the same number of levels"
     @assert BF_1.NS == BF_2.NO "Source and Observer dimensions must match"
     M_messenger = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
