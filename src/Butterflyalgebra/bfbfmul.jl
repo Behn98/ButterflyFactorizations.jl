@@ -17,9 +17,13 @@ matrix-vector products while preserving the overall accuracy within the specifie
 In terms of storage future work has to include more aggressive recompression strategies to
 prevent the intermediate factors from growing too large.
 """
-function mulBFs(BF_1::BF, BF_2::BF, τ::Float64)
-    @assert length(BF_1) == length(BF_2) "Both BFs must have the same number of levels"
-    @assert BF_1.NS == BF_2.NO "Source and Observer dimensions must match"
+function mulBFs(BF_1_init::BF, BF_2_init::BF, τ::Float64)
+    @assert length(BF_1_init) == length(BF_2_init) "Both BFs must have the same number of levels"
+    @assert BF_1_init.NS == BF_2_init.NO "Source and Observer dimensions must match"
+
+    BF_1 = deepcopy(BF_1_init)
+    BF_2 = deepcopy(BF_2_init)
+
     M_messenger = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
     for leaf in keys(BF_1.Q)
         M_messenger[BF_1.NO, leaf] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
@@ -316,6 +320,35 @@ function trivialmul(BF_1::BF, BF_2::BF)
     )
 end
 
+function deep_accumulate_R!(
+    dest::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}},
+    src::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}},
+)
+    for (node_key, inner_dict_src) in src
+        if !haskey(dest, node_key)
+            # Safe to copy reference if src won't be mutated later,
+            # otherwise use deepcopy(inner_dict_src)
+            dest[node_key] = deepcopy(inner_dict_src)
+        else
+            # Node key exists, merge the inner mapping level
+            inner_dict_dest = dest[node_key]
+            for (sub_key, mat_src) in inner_dict_src
+                if !haskey(inner_dict_dest, sub_key)
+                    inner_dict_dest[sub_key] = copy(mat_src)
+                else
+                    @show "Overlapping block detected at node_key: $node_key, sub_key: $sub_key"
+                    # CRITICAL: Mathematically combine the overlapping matrices.
+                    # Usually, overlapping blocks in a cluster tree addition require
+                    # matrix addition, or checking if they stack.
+                    # If they are overlapping blocks of the same size:
+                    inner_dict_dest[sub_key] += mat_src
+                end
+            end
+        end
+    end
+    return dest
+end
+
 #When multiplying two Blocks in a BF, one possible case is that one of the factors turns out
 #to be a hirachically divided block of Butterflies of some lvl k and the other factor is a
 #single BF block of lvl k+1. In that case Heldring suggests a special algorithm, however he
@@ -328,17 +361,19 @@ end
 #implicitely realted to the Data architecture employed in the Dictionary architecture the
 #main challenge is to find the right way to arrange the keys of the large Butterfly to
 #perform the multiplications separately.
-function splitmulbf(butterflycluster::Matrix{BF}, higherkBF::BF)
+function splitmulbf(butterflycluster_init::Matrix{BF}, higherkBF_init::BF, τ::Float64)
+    butterflycluster = deepcopy(butterflycluster_init)
+    higherkBF = deepcopy(higherkBF_init)
     #recall that for multiplication the source tree of the left factor and the observer tree
     #of the right factor must match.
-    children = collect(children(higherkBF.testcluster, higherkBF.NO))
+    children = [bf.NS for bf in butterflycluster[1, :]]
     numchildren = length(children)
     l = length(higherkBF.R) # Number of R-levels in the higher k BF
     #Step 1: subdividing the higher k BF into numchildren BFs of lvl k-1
     lowerkBFs = Vector{BF}(undef, numchildren)
-    ssubtree = h2treelevels(higherkBF.trialcluster, higherkBF.NS)
+    ssubtree = h2treelevels(higherkBF.stree, higherkBF.NS)
     for i in 1:numchildren
-        osubtree = h2treelevels(higherkBF.testcluster, children[i])
+        osubtree = h2treelevels(higherkBF.otree, children[i])
         new_P = Dict{Int,Matrix{ComplexF64}}()
         for leaf in osubtree[end]
             new_P[leaf] = higherkBF.P[leaf]
@@ -350,26 +385,26 @@ function splitmulbf(butterflycluster::Matrix{BF}, higherkBF::BF)
             new_R[j] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
             for onode in osubtree[j + 1]
                 for snode in ssubtree[end - j - 1]
-                    if haskey(higherkBF.R[j], (onode, snode))
-                        new_R[j][(onode, snode)] = higherkBF.R[j][(onode, snode)]
-                    end
+                    #if haskey(higherkBF.R[j], (onode, snode))
+                    new_R[j][(onode, snode)] = higherkBF.R[j + 1][(onode, snode)]
+                    #end
                 end
             end
         end
         new_Q = Dict{Int,Matrix{ComplexF64}}()
         lowerkBFs[i] = BF(
-            newQ,
-            newR,
-            newP,
+            new_Q,
+            new_R,
+            new_P,
             higherkBF.PermQ,
             higherkBF.PermP,
             (size(higherkBF, 1), size(higherkBF, 2)),
-            children[i],
             higherkBF.NS,
+            children[i],
             higherkBF.k,
             higherkBF.τ,
-            higherkBF.testcluster,
-            higherkBF.trialcluster,
+            higherkBF.stree,
+            higherkBF.otree,
         )
     end
     #The new Butterflies will not have any Q factors, those are preserved together with the
@@ -381,7 +416,7 @@ function splitmulbf(butterflycluster::Matrix{BF}, higherkBF::BF)
             intermediate[i, j] = mulBFs(
                 butterflycluster[i, j],
                 lowerkBFs[j],
-                max(butterflycluster[i, j].τ, lowerkBFs[j].τ),
+                τ,#max(butterflycluster[i, j].τ, lowerkBFs[j].τ),
             )
         end
     end
@@ -396,40 +431,43 @@ function splitmulbf(butterflycluster::Matrix{BF}, higherkBF::BF)
         for i in eachindex(new_R)
             new_R[i] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
         end
-        for j in 1:size(intermediate, 2)
+        for j in 1:colsize
             new_P = merge(new_P, intermediate[(i + j) % rowsize + 1, j].P)
             for k in 1:(l - 1)
-                new_R[k + 1] = merge(new_R[k], intermediate[(i + j) % rowsize + 1, j].R[k])
+                src_R = intermediate[(i + j) % rowsize + 1, j].R[k]
+                deep_accumulate_R!(new_R[k + 1], src_R)
             end
         end
         new_R[1] = higherkBF.R[1]
         new_Q = higherkBF.Q
         tobeadditioned[i] = BF(
-            newQ,
-            newR,
-            newP,
+            new_Q,
+            new_R,
+            new_P,
             higherkBF.PermQ,
             higherkBF.PermP,#needs to be formed anew....
             (
-                H2Trees.values(
-                    butterflycluster[1, 1].testcluster,
-                    H2Trees.parent(
-                        butterflycluster[1, 1].testcluster, butterflycluster[1, 1].NO
+                length(
+                    H2Trees.values(
+                        butterflycluster[1, 1].otree,
+                        H2Trees.parent(
+                            butterflycluster[1, 1].otree, butterflycluster[1, 1].NO
+                        ),
                     ),
                 ),
                 size(higherkBF, 2),
             ),
-            H2Trees.parent(butterflycluster[1, 1].testcluster, butterflycluster[1, 1].NO),
             higherkBF.NS,
+            H2Trees.parent(butterflycluster[1, 1].otree, butterflycluster[1, 1].NO),
             higherkBF.k,
             higherkBF.τ,
-            higherkBF.testcluster,
-            higherkBF.trialcluster,
+            higherkBF.stree,
+            higherkBF.otree,
         )
     end
-    result = tobeadditioned[1]
-    for i in eachindex(tobeadditioned[2:end])
-        result = addBFs(result, tobeadditioned[2:end][i])
+    result = add_eqbfs(tobeadditioned[1], tobeadditioned[2], τ)
+    for i in eachindex(tobeadditioned[3:end])
+        result = add_eqbfs(result, tobeadditioned[3:end][i], τ)
     end
     return result
 end

@@ -41,7 +41,8 @@ function recompress_BF(Butterfly::BF, τ)
     )
 end
 
-@views function recompress_BF_right(Butterfly::AlgBF, τ)
+@views function recompress_BF_right(Butterfly_init::AlgBF, τ)
+    Butterfly = deepcopy(Butterfly_init)
     Q = Butterfly.Q.Dict
     R = [Butterfly.R[r].Dict for r in eachindex(Butterfly.R)]
     P = Butterfly.P.Dict

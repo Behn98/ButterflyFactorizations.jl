@@ -14,13 +14,16 @@ concatenation cannot occur, so the BFs are simply joined into a new structure.
 Note that this resulting structure is purely algebraic and loses its direct physical
 interpretation, similar to adding the two dense matrices directly.
 """
-function add_eqbfs(BF1::BF, BF_2::BF, τ)
-    @assert BF1.NS == BF_2.NS && BF1.NO == BF_2.NO "rootids must match for addition."
-    # --- Case 1: Same source and observer clusters ---
+function add_eqbfs(BF1_init::BF, BF_2_init::BF, τ)
+    @assert BF1_init.NS == BF_2_init.NS && BF1_init.NO == BF_2_init.NO "rootids must match for addition."
+    BF1 = deepcopy(BF1_init)
+    BF_2 = deepcopy(BF_2_init)
     R_new = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(
         undef, length(BF1.R)
     )
+    @show length(BF1.R)
     for l in eachindex(BF1.R)
+        @show l
         R_new[l] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
         for nodeS in keys(BF1.R[l])
             for nodeO in keys(BF1.R[l][nodeS])
