@@ -73,9 +73,13 @@ function PetrovGalerkinBF(
             blocks[i] = blk
         end
     end
-    nears = BlockSparseMatrix(
-        blocks, values, nearvalues, size(nearmatrix); scheduler=scheduler
-    )
+    if !isempty(nearints)
+        nears = BlockSparseMatrix(
+            blocks, values, nearvalues, size(nearmatrix); scheduler=scheduler
+        )
+    else
+        nears = sparse(zeros(acctype, size(nearmatrix)...))
+    end
 
     # --- FAR INTERACTIONS (BUTTERFLIES) ---
     nearmatrix = AbstractKernelMatrix(operator, testspace, trialspace; type=:far)
@@ -96,7 +100,9 @@ function PetrovGalerkinBF(
             far_cols[i] = NS
             far_vals[i] = i
 
-            fly[i] = subroutine_BF(nearmatrix, tree, NO, NS, k, tol; compressor=compressor)
+            fly[i] = subroutine_BF(
+                nearmatrix, tree, NO, NS, k, tol; compressor=compressor, scheduler=scheduler
+            )
         end
     end
 
@@ -237,14 +243,18 @@ function PetrovGalerkinBF(
             blocks[i] = blk
         end
     end
-    nears = BlockSparseMatrix(
-        blocks, values, nearvalues, size(nearmatrix); scheduler=scheduler
-    )
+    if !(isempty(nearints))
+        nears = BlockSparseMatrix(
+            blocks, values, nearvalues, size(nearmatrix); scheduler=scheduler
+        )
+    else
+        nears = sparse(zeros(acctype, size(nearmatrix)...))
+    end
 
     # --- FAR INTERACTIONS (BUTTERFLIES) ---
     nearmatrix = AbstractKernelMatrix(operator, testspace, trialspace; type=:far)
     fly = Vector{BF}(undef, length(farints))
-
+    flystat = Vector{BFSTAT}(undef, length(farints)) # Vector to hold statistics for each far block
     # Vectors to harvest coordinates for the far lookup matrix
     far_rows = Vector{Int}(undef, length(farints))
     far_cols = Vector{Int}(undef, length(farints))
@@ -260,7 +270,7 @@ function PetrovGalerkinBF(
             far_cols[i] = NS
             far_vals[i] = i
 
-            fly[i] = subroutine_BF(
+            fly[i], flystat[i] = subroutine_BF(
                 nearmatrix, tree, NO, NS, k, tol, true; compressor=compressor
             )
         end
@@ -268,8 +278,8 @@ function PetrovGalerkinBF(
 
     # --- BUILD CSC LOOKUP MATRICES ---
     # The total number of nodes can be found from the number of clusters in your trees
-    num_test_nodes  = length(tree.testcluster)
-    num_trial_nodes = length(tree.trialcluster)
+    num_test_nodes  = sum(length(lvl) for lvl in h2treelevels(tree.testcluster, 1))
+    num_trial_nodes = sum(length(lvl) for lvl in h2treelevels(tree.trialcluster, 1))
 
     # sparse(rows, cols, vals, m, n) compiles them into clean SparseMatrixCSC layout
     near_lookup = sparse(near_rows, near_cols, near_vals, num_test_nodes, num_trial_nodes)
@@ -277,5 +287,6 @@ function PetrovGalerkinBF(
 
     return PetrovGalerkinBF{acctype}(
         nears, tree, fly, size(nearmatrix), near_lookup, far_lookup
-    )
+    ),
+    flystat
 end

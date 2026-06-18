@@ -74,7 +74,7 @@ function subroutine_BF(
         q_ks, k_l, r_l = compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
 
         perm_q_val = [src_map[g] for g in srcindex]
-        (Sleaf, perm_q_val, q_ks, k_l)
+        return (Sleaf, perm_q_val, q_ks, k_l)
     end
 
     for (Sleaf, perm_q_val, q_ks, k_l) in leaf_results
@@ -185,7 +185,7 @@ function subroutine_BF(
             Z = zeros(ComplexF64, length(row), length(col))
             kernelmatrix(Z, row, col)
             perm_p_val = [obs_map[g] for g in row]
-            (Oleaf, perm_p_val, Z)
+            return (Oleaf, perm_p_val, Z)
         end
     end
     for (Oleaf, perm_p_val, Z) in leaf_results
@@ -224,7 +224,9 @@ function build_union_skeletons!(
 
         for Overt in treeO[min(l, LO)]
             if !isleaf(trialT, Svert)
-                temp_size = sum(length(K[Schild][Overt]) for Schild in children(trialT, Svert))
+                temp_size = sum(
+                    length(K[Schild][Overt]) for Schild in children(trialT, Svert)
+                )
                 temp = sizehint!(Int[], temp_size)
                 for Schild in children(trialT, Svert)
                     append!(temp, K[Schild][Overt])
@@ -236,7 +238,7 @@ function build_union_skeletons!(
             local_U_S[Overt] = temp
         end
 
-        (Svert, local_U_S)
+        return (Svert, local_U_S)
     end
 
     for (Svert, local_U_S) in results
@@ -339,12 +341,15 @@ function build_nonfrozen_R_blocks!(
                             R[l - 1][(Overt, Svert)][first(keys(R[l - 1][(Overt, Svert)]))],
                             1,
                         )=#
-                        local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(I, 0, 0)
+                        local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(
+                            I, 0, 0
+                        )
                     else
                         #local_R[(Overt, Svert)][(Overt, Svert)] = I(size(Q[Svert], 1))
 
-                        #=n = size(Q[Svert], 1)=#
-                        local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(I, 0, 0)
+                        local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(
+                            I, 0, 0
+                        )
                     end
                     local_K[Svert][Overt] = K[Svert][Overt]
                 end
@@ -352,7 +357,7 @@ function build_nonfrozen_R_blocks!(
         end
 
         # 2. Returnera båda de lokala strukturerna
-        (local_R, local_K)
+        return (local_R, local_K)
     end
 
     # 3. Slå ihop all tråddata sekventiellt och säkert i huvudstrukturerna
@@ -434,7 +439,7 @@ function build_sourcefrozen_R_blocks!(
             end
             local_K[Svert][Overt] = K[Svert][Overt]
         end
-        (local_R, local_K)
+        return (local_R, local_K)
     end
 
     # Slå ihop datan säkert
@@ -522,7 +527,7 @@ function build_observerfrozen_R_blocks!(
                 local_K[Svert][Overt] = K[Svert][Overt]
             end
         end
-        (local_R, local_K)
+        return (local_R, local_K)
     end
 
     # Slå ihop datan säkert
@@ -754,7 +759,6 @@ function subroutine_BF(
     testT = testtree(H2Blocktree)
     treeS = traverseandpad(trialT, NS)
     treeO = traverseandpad(testT, NO)
-
     LS = length(treeS)
     LO = length(treeO)
     L = max(LS, LO)
@@ -783,7 +787,7 @@ function subroutine_BF(
         q_ks, k_l, r_l = compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
 
         perm_q_val = [src_map[g] for g in srcindex]
-        (Sleaf, perm_q_val, q_ks, k_l, (length(obsindex), r_l / n_otilde)) #stat
+        return (Sleaf, perm_q_val, q_ks, k_l, (length(obsindex), r_l / n_otilde)) #stat
     end
     i = 1    #stat
     for (Sleaf, perm_q_val, q_ks, k_l, ratio) in leaf_results   #stat
@@ -900,7 +904,7 @@ function subroutine_BF(
             Z = zeros(ComplexF64, length(row), length(col))
             kernelmatrix(Z, row, col)
             perm_p_val = [obs_map[g] for g in row]
-            (Oleaf, perm_p_val, Z)
+            return (Oleaf, perm_p_val, Z)
         end
     end
     for (Oleaf, perm_p_val, Z) in leaf_results
@@ -1008,9 +1012,13 @@ function build_nonfrozen_R_blocks!(
                     local_K[Svert][Overt] = k_l
                 else
                     if l > 1
-                        local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(I, 0, 0)
+                        local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(
+                            I, 0, 0
+                        )
                     else
-                        local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(I, 0, 0)
+                        local_R[(Overt, Svert)][(Overt, Svert)] = Matrix{ComplexF64}(
+                            I, 0, 0
+                        )
                     end
                     local_K[Svert][Overt] = K[Svert][Overt]
                 end
@@ -1018,7 +1026,7 @@ function build_nonfrozen_R_blocks!(
         end
 
         # 2. Returnera båda de lokala strukturerna
-        (local_R, local_K, local_ratios) #stat
+        return (local_R, local_K, local_ratios) #stat
     end
 
     # 3. Slå ihop all tråddata sekventiellt och säkert i huvudstrukturerna
@@ -1095,7 +1103,7 @@ function build_sourcefrozen_R_blocks!(
             end
             local_K[Svert][Overt] = K[Svert][Overt]
         end
-        (local_R, local_K, local_ratios) #stat
+        return (local_R, local_K, local_ratios) #stat
     end
 
     # Slå ihop datan säkert
@@ -1186,7 +1194,7 @@ function build_observerfrozen_R_blocks!(
                 local_K[Svert][Overt] = K[Svert][Overt]
             end
         end
-        (local_R, local_K, local_ratios) #stat
+        return (local_R, local_K, local_ratios) #stat
     end
 
     # Slå ihop datan säkert

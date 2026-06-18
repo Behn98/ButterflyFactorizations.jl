@@ -316,12 +316,6 @@ function trivialmul(BF_1::BF, BF_2::BF)
     )
 end
 
-function splitmulbf(butterflycluster::CompositeBlockView, higherkBF::BF)
-    #forms matrix of BFs included in the CompositeBlockView
-    Matrixr = Matrix{BF}(undef, 0, 0)   #to be changed to the right size
-    return Matrixr
-end
-
 #When multiplying two Blocks in a BF, one possible case is that one of the factors turns out
 #to be a hirachically divided block of Butterflies of some lvl k and the other factor is a
 #single BF block of lvl k+1. In that case Heldring suggests a special algorithm, however he

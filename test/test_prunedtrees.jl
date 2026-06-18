@@ -39,24 +39,28 @@
     gs2 = H2Trees.values(blktree2.trialcluster, H2Trees.root(blktree2.trialcluster))
     kernelmatrix = ButterflyFactorizations.AbstractKernelMatrix(op, X1, X2)
 
-    Bfmat = ButterflyFactorizations.subroutine_BF(
-        kernelmatrix,
+    Bfmat = ButterflyFactorizations.PetrovGalerkinBF(
+        op,
+        X1,
+        X2,
         blktree1,
-        1,
-        1,
-        k,
-        10^(-4);
+        k;
         compressor=ButterflyFactorizations.PartialQR(),
+        tol=1e-4,
+        α=1.5,
+        scheduler=OhMyThreads.DynamicScheduler(),
     )
 
-    Bfmat2 = ButterflyFactorizations.subroutine_BF(
-        kernelmatrix,
+    Bfmat2 = ButterflyFactorizations.PetrovGalerkinBF(
+        op,
+        X1,
+        X2,
         blktree2,
-        1,
-        1,
-        k,
-        10^(-4);
+        k;
         compressor=ButterflyFactorizations.PartialQR(),
+        tol=1e-4,
+        α=1.5,
+        scheduler=OhMyThreads.DynamicScheduler(),
     )
 
     A = assemble(op, X1, X2)
@@ -64,11 +68,13 @@
     y_exact = A * x
 
     y_approx1 = zeros(ComplexF64, size(A, 1))
-    y_approx1[go1] = Bfmat * x[gs1]
+    y_approx1 = Bfmat * x#[go1][gs1]
+    (norm(y_exact - y_approx1) / norm(y_exact))
 
-    @test ((norm(y_exact - y_approx1) / norm(y_exact)) < 10^-2)
+    @test ((norm(y_exact - y_approx1) / norm(y_exact)) < 10^-3)
 
     y_approx = zeros(ComplexF64, size(A, 1))
-    y_approx[go2] = Bfmat2 * x[gs2]
-    @test ((norm(y_exact - y_approx) / norm(y_exact)) < 10^-2)
+    y_approx = Bfmat2 * x
+    (norm(y_exact - y_approx) / norm(y_exact))
+    @test ((norm(y_exact - y_approx) / norm(y_exact)) < 10^-3)
 end
