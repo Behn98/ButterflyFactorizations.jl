@@ -422,22 +422,27 @@ function splitmulbf(butterflycluster_init::Matrix{BF}, higherkBF_init::BF, τ::F
     end
     rowsize = size(intermediate, 1)
     colsize = size(intermediate, 2)
-    tobeadditioned = Vector{BF}(undef, rowsize)
+    #tobeadditioned = Vector{BF}(undef, rowsize)
+    new_P = Dict{Int,Matrix{ComplexF64}}()
+    new_R = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(undef, l)
     for i in 1:rowsize
+        #=
         new_P = Dict{Int,Matrix{ComplexF64}}()
         new_R = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(
             undef, l
         )
-        for i in eachindex(new_R)
-            new_R[i] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
+        =#
+        for s in eachindex(new_R)
+            new_R[s] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
         end
         for j in 1:colsize
-            new_P = merge(new_P, intermediate[(i + j) % rowsize + 1, j].P)
+            new_P = merge(new_P, intermediate[i, j].P)#((i + j) % rowsize) + 1
             for k in 1:(l - 1)
-                src_R = intermediate[(i + j) % rowsize + 1, j].R[k]
+                src_R = intermediate[i, j].R[k]#((i + j) % rowsize) + 1
                 deep_accumulate_R!(new_R[k + 1], src_R)
             end
         end
+        #=
         new_R[1] = higherkBF.R[1]
         new_Q = higherkBF.Q
         tobeadditioned[i] = BF(
@@ -464,10 +469,42 @@ function splitmulbf(butterflycluster_init::Matrix{BF}, higherkBF_init::BF, τ::F
             higherkBF.stree,
             higherkBF.otree,
         )
+        =#
     end
+    #=
     result = add_eqbfs(tobeadditioned[1], tobeadditioned[2], τ)
     for i in eachindex(tobeadditioned[3:end])
         result = add_eqbfs(result, tobeadditioned[3:end][i], τ)
     end
+    =#
+    new_R[1] = higherkBF.R[1]
+    new_Q = higherkBF.Q
+    result = recompress_BF(
+        BF(
+            new_Q,
+            new_R,
+            new_P,
+            higherkBF.PermQ,
+            higherkBF.PermP,#needs to be formed anew....
+            (
+                length(
+                    H2Trees.values(
+                        butterflycluster[1, 1].otree,
+                        H2Trees.parent(
+                            butterflycluster[1, 1].otree, butterflycluster[1, 1].NO
+                        ),
+                    ),
+                ),
+                size(higherkBF, 2),
+            ),
+            higherkBF.NS,
+            H2Trees.parent(butterflycluster[1, 1].otree, butterflycluster[1, 1].NO),
+            higherkBF.k,
+            higherkBF.τ,
+            higherkBF.stree,
+            higherkBF.otree,
+        ),
+        τ,
+    )
     return result
 end

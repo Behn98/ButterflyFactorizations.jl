@@ -14,36 +14,78 @@ concatenation cannot occur, so the BFs are simply joined into a new structure.
 Note that this resulting structure is purely algebraic and loses its direct physical
 interpretation, similar to adding the two dense matrices directly.
 """
-function add_eqbfs(BF1_init::BF, BF_2_init::BF, τ)
-    @assert BF1_init.NS == BF_2_init.NS && BF1_init.NO == BF_2_init.NO "rootids must match for addition."
-    BF1 = deepcopy(BF1_init)
+function add_eqbfs(BF_1_init::BF, BF_2_init::BF, τ)
+    @assert BF_1_init.NS == BF_2_init.NS && BF_1_init.NO == BF_2_init.NO "rootids must match for addition."
+    BF_1 = deepcopy(BF_1_init)
     BF_2 = deepcopy(BF_2_init)
     R_new = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(
-        undef, length(BF1.R)
+        undef, length(BF_1.R)
     )
-    @show length(BF1.R)
-    for l in eachindex(BF1.R)
-        @show l
-        R_new[l] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
-        for nodeS in keys(BF1.R[l])
-            for nodeO in keys(BF1.R[l][nodeS])
-                if !haskey(R_new[l], nodeS)
-                    R_new[l][nodeS] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
+    for l in eachindex(BF_1.R)
+        R_new[l] = BF_1.R[l]
+        for row in keys(BF_2.R[l])
+            if !haskey(R_new[l], row)
+                R_new[l][row] = BF_2.R[l][row]
+                continue
+            end
+            for col in keys(BF_2.R[l][row])
+                if haskey(R_new[l][row], col)
+                    R_new[l][row][col] = blockdiag(BF_1.R[l][row][col], BF_2.R[l][row][col])
+                else
+                    R_new[l][row][col] = vcat(
+                        zeros(
+                            ComplexF64,
+                            size(BF_1_init.R[l][row][first(keys(BF_1_init.R[l][row]))], 1),
+                            size(BF_2_init.R[l][row][col], 2),
+                        ),
+                        BF_2.R[l][row][col],
+                    )
                 end
-                R_new[l][nodeS][nodeO] = blockdiag(
-                    BF1.R[l][nodeS][nodeO], BF_2.R[l][nodeS][nodeO]
-                )
+            end
+            for col in keys(BF_1.R[l][row])
+                if haskey(BF_2.R[l][row], col)
+                    continue
+                else
+                    R_new[l][row][col] = vcat(
+                        BF_1.R[l][row][col],
+                        zeros(
+                            ComplexF64,
+                            size(BF_2_init.R[l][row][first(keys(BF_2_init.R[l][row]))], 1),
+                            size(BF_1_init.R[l][row][col], 2),
+                        ),
+                    )
+                end
             end
         end
     end
     Q_new = Dict{Int,Matrix{ComplexF64}}()
-    for k in keys(BF1.Q)
-        Q_new[k] = vcat(BF1.Q[k], BF_2.Q[k])
+    for k in keys(BF_1.Q)
+        if haskey(BF_2.Q, k)
+            Q_new[k] = vcat(BF_1.Q[k], BF_2.Q[k])
+        else
+            Q_new[k] = BF_1.Q[k]
+        end
+    end
+
+    for k in keys(BF_2.Q)
+        if !haskey(BF_1.Q, k)
+            Q_new[k] = BF_2.Q[k]
+        end
     end
 
     P_new = Dict{Int,Matrix{ComplexF64}}()
-    for k in keys(BF1.P)
-        P_new[k] = hcat(BF1.P[k], BF_2.P[k])
+    for k in keys(BF_1.P)
+        if haskey(BF_2.P, k)
+            P_new[k] = hcat(BF_1.P[k], BF_2.P[k])
+        else
+            P_new[k] = BF_1.P[k]
+        end
+    end
+
+    for k in keys(BF_2.P)
+        if !haskey(BF_1.P, k)
+            P_new[k] = BF_2.P[k]
+        end
     end
 
     return recompress_BF(
@@ -51,20 +93,20 @@ function add_eqbfs(BF1_init::BF, BF_2_init::BF, τ)
             Q_new,
             R_new,
             P_new,
-            BF1.PermQ,
-            BF1.PermP,
-            BF1.dim,
-            BF1.NS,
-            BF1.NO,
-            BF1.k,
-            max(BF1.τ, BF_2.τ),
-            BF1.stree,
-            BF1.otree,
+            BF_1.PermQ,
+            BF_1.PermP,
+            BF_1.dim,
+            BF_1.NS,
+            BF_1.NO,
+            BF_1.k,
+            max(BF_1.τ, BF_2.τ),
+            BF_1.stree,
+            BF_1.otree,
         ),
         τ,
     )
 end
 
-function add_neqbfs(BF1::BF, BF_2::BF)
-    return (BF1, BF_2)   #insert struct here if needed
+function add_neqbfs(BF_1::BF, BF_2::BF)
+    return (BF_1, BF_2)   #insert struct here if needed
 end
