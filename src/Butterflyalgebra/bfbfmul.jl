@@ -25,10 +25,10 @@ function mulBFs(BF_1_init::BF, BF_2_init::BF, τ::Float64)
     BF_2 = deepcopy(BF_2_init)
 
     M_messenger = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
-    for leaf in keys(BF_1.Q)
-        M_messenger[BF_1.NO, leaf] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-        # Initialize as a nested dict to work with swap_and_recompress
-        M_messenger[BF_1.NO, leaf][leaf, BF_2.NS] = BF_1.Q[leaf] * BF_2.P[leaf]
+    for (NO, leaf) in keys(BF_1.Q)
+        M_messenger[NO, leaf] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
+        # Initialize as a nested dict to work with browswap
+        M_messenger[BF_1.NO, leaf][leaf, BF_2.NS] = BF_1.Q[NO, leaf] * BF_2.P[leaf, BF_2.NS]
     end
 
     L = length(BF_1.R) # Number of R-levels
@@ -54,7 +54,7 @@ function mulBFs(BF_1_init::BF, BF_2_init::BF, τ::Float64)
     )
     for m in 1:(L - 1)
         for t in 1:m
-            result = swap_and_recompress(result, L + 2 - t, τ)
+            result = browswap(result, L + 2 - t, τ)
             print("swap done \n")
         end
         result = recompress_BF(mul_factors(result, L + 1 - m), τ)#
@@ -64,8 +64,8 @@ function mulBFs(BF_1_init::BF, BF_2_init::BF, τ::Float64)
         result.Q.Dict,         # Q_final = Q_2
         [r.Dict for r in result.R],       # R_final[level][Snode][Onode]
         result.P.Dict,          # Updated P
-        BF_2.PermQ,       # Q Permutations remain the same as BF_2
-        BF_1.PermP,     # P Permutations remain the same as BF_1
+        BF_2.PermQ,
+        BF_1.PermP,         # Permutations from the original BFs
         (size(BF_1, 1), size(BF_2, 2)),
         BF_2.NS,
         BF_1.NO,
@@ -100,6 +100,58 @@ function mul_factors(
                         1.0,
                     )
                 end
+            end
+        end
+    end
+
+    return product
+end
+
+function mul_factors(
+    leftfactor::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
+    rightfactor::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}},
+)
+    product = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
+    for row in keys(leftfactor)
+        if !haskey(product, row)
+            product[row] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
+        end
+        for col in keys(rightfactor[inner])
+            if !haskey(product[row], col)
+                # First time seeing this block, allocate and multiply
+                product[row][col] = leftfactor[row] * rightfactor[row][col]
+            else
+                # In-place accumulation: C = 1.0 * A * B + 1.0 * C
+                mul!(product[row][col], leftfactor[row], rightfactor[row][col], 1.0, 1.0)
+            end
+        end
+    end
+
+    return product
+end
+
+function mul_factors(
+    leftfactor::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}},
+    rightfactor::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
+)
+    product = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
+    for row in keys(leftfactor)
+        if !haskey(product, row)
+            product[row] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
+        end
+        for inner in keys(leftfactor[row])
+            if !haskey(product[row], inner)
+                # First time seeing this block, allocate and multiply
+                product[row][inner] = leftfactor[row][inner] * rightfactor[inner]
+            else
+                # In-place accumulation: C = 1.0 * A * B + 1.0 * C
+                mul!(
+                    product[row][inner],
+                    leftfactor[row][inner],
+                    rightfactor[inner],
+                    1.0,
+                    1.0,
+                )
             end
         end
     end
@@ -159,7 +211,7 @@ function mul_factors(BF::AlgBF, idx::Int)
     )
 end
 
-function swap_and_recompress(BF::AlgBF, idx::Int, τ)
+function browswap(BF::AlgBF, idx::Int, τ)
     L = length(BF.R)
     if idx > 1 && idx < (L + 1)
         leftfactor = BF.R[L + 1 - (idx - 1)]
@@ -175,7 +227,7 @@ function swap_and_recompress(BF::AlgBF, idx::Int, τ)
         rightfactor = BF.Q
         #should not happen!
     end
-    nlfactor, nrfactor = swap_and_recompress(leftfactor, rightfactor, τ)
+    nlfactor, nrfactor = browswap(leftfactor, rightfactor, τ)
 
     return AlgBF(
         (size(BF, 1), size(BF, 2)),
@@ -185,7 +237,7 @@ function swap_and_recompress(BF::AlgBF, idx::Int, τ)
     )
 end
 
-function swap_and_recompress(LeftFactor, RightFactor, τ)
+function browswap(LeftFactor::R_factor, RightFactor::R_factor, τ)
     NewLeftFactor = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
     NewRightFactor = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
 
@@ -269,13 +321,14 @@ function LinearAlgebra.mul!(
     return C
 end
 
-function trivialmul(BF_1::BF, BF_2::BF)
-    @assert length(BF_1) == length(BF_2) "Both BFs must have the same number of levels"
-    @assert BF_1.NS == BF_2.NO "Source and Observer dimensions must match"
+function trivialmul(BF_1_init::BF, BF_2_init::BF)
+    @assert length(BF_1_init) == length(BF_2_init) "Both BFs must have the same number of levels"
+    @assert BF_1_init.NS == BF_2_init.NO "Source and Observer dimensions must match"
+    BF_1 = deepcopy(BF_1_init)
+    BF_2 = deepcopy(BF_2_init)
     M_messenger = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
     for leaf in keys(BF_1.Q)
         M_messenger[BF_1.NO, leaf] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-        # Initialize as a nested dict to work with swap_and_recompress
         M_messenger[BF_1.NO, leaf][leaf, BF_2.NS] = BF_1.Q[leaf] * BF_2.P[leaf]
     end
 
@@ -308,8 +361,8 @@ function trivialmul(BF_1::BF, BF_2::BF)
         result.Q.Dict,         # Q_final = Q_2
         [r.Dict for r in result.R],       # R_final[level][Snode][Onode]
         result.P.Dict,          # Updated P
-        BF_2.PermQ,       # Q Permutations remain the same as BF_2
-        BF_1.PermP,     # P Permutations remain the same as BF_1
+        BF_1.PermP,         # Permutations from the original BFs
+        BF_2.PermQ,
         (size(BF_1, 1), size(BF_2, 2)),
         BF_2.NS,
         BF_1.NO,
@@ -318,35 +371,6 @@ function trivialmul(BF_1::BF, BF_2::BF)
         BF_2.stree,
         BF_1.otree,
     )
-end
-
-function deep_accumulate_R!(
-    dest::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}},
-    src::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}},
-)
-    for (node_key, inner_dict_src) in src
-        if !haskey(dest, node_key)
-            # Safe to copy reference if src won't be mutated later,
-            # otherwise use deepcopy(inner_dict_src)
-            dest[node_key] = deepcopy(inner_dict_src)
-        else
-            # Node key exists, merge the inner mapping level
-            inner_dict_dest = dest[node_key]
-            for (sub_key, mat_src) in inner_dict_src
-                if !haskey(inner_dict_dest, sub_key)
-                    inner_dict_dest[sub_key] = copy(mat_src)
-                else
-                    @show "Overlapping block detected at node_key: $node_key, sub_key: $sub_key"
-                    # CRITICAL: Mathematically combine the overlapping matrices.
-                    # Usually, overlapping blocks in a cluster tree addition require
-                    # matrix addition, or checking if they stack.
-                    # If they are overlapping blocks of the same size:
-                    inner_dict_dest[sub_key] += mat_src
-                end
-            end
-        end
-    end
-    return dest
 end
 
 #When multiplying two Blocks in a BF, one possible case is that one of the factors turns out
@@ -374,9 +398,9 @@ function splitmulbf(butterflycluster_init::Matrix{BF}, higherkBF_init::BF, τ::F
     ssubtree = h2treelevels(higherkBF.stree, higherkBF.NS)
     for i in 1:numchildren
         osubtree = h2treelevels(higherkBF.otree, children[i])
-        new_P = Dict{Int,Matrix{ComplexF64}}()
+        new_P = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
         for leaf in osubtree[end]
-            new_P[leaf] = higherkBF.P[leaf]
+            new_P[leaf, higherkBF.NS] = higherkBF.P[leaf, higherkBF.NS]
         end
         new_R = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(
             undef, l - 1
@@ -391,7 +415,7 @@ function splitmulbf(butterflycluster_init::Matrix{BF}, higherkBF_init::BF, τ::F
                 end
             end
         end
-        new_Q = Dict{Int,Matrix{ComplexF64}}()
+        new_Q = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
         lowerkBFs[i] = BF(
             new_Q,
             new_R,
@@ -423,11 +447,12 @@ function splitmulbf(butterflycluster_init::Matrix{BF}, higherkBF_init::BF, τ::F
     rowsize = size(intermediate, 1)
     colsize = size(intermediate, 2)
     #tobeadditioned = Vector{BF}(undef, rowsize)
-    new_P = Dict{Int,Matrix{ComplexF64}}()
+    new_P = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
+    new_PermP = Dict{Tuple{Int,Int},Vector{Int}}()
     new_R = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(undef, l)
     for i in 1:rowsize
         #=
-        new_P = Dict{Int,Matrix{ComplexF64}}()
+        new_P = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
         new_R = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(
             undef, l
         )
@@ -436,7 +461,8 @@ function splitmulbf(butterflycluster_init::Matrix{BF}, higherkBF_init::BF, τ::F
             new_R[s] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
         end
         for j in 1:colsize
-            new_P = merge(new_P, intermediate[i, j].P)#((i + j) % rowsize) + 1
+            new_P = merge(new_P, butterflycluster[i, j].P)#((i + j) % rowsize) + 1
+            new_PermP = merge(new_PermP, butterflycluster[i, j].PermP)
             for k in 1:(l - 1)
                 src_R = intermediate[i, j].R[k]#((i + j) % rowsize) + 1
                 deep_accumulate_R!(new_R[k + 1], src_R)
@@ -485,7 +511,7 @@ function splitmulbf(butterflycluster_init::Matrix{BF}, higherkBF_init::BF, τ::F
             new_R,
             new_P,
             higherkBF.PermQ,
-            higherkBF.PermP,#needs to be formed anew....
+            new_PermP,
             (
                 length(
                     H2Trees.values(

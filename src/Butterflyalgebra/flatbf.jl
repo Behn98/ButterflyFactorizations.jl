@@ -9,9 +9,9 @@ function flatten_bf(bf::BF)
         q_col_offsets = Int[]
         q_perms = Vector{Int}[]
         curr_offset_q = 1
-        for (Sleaf, block) in bf.Q
+        for (qkey, block) in bf.Q
             push!(q_blocks, block)
-            push!(q_perms, bf.PermQ[Sleaf])
+            push!(q_perms, bf.PermQ[qkey])
             push!(q_col_offsets, curr_offset_q)
             curr_offset_q += size(block, 2) # Ut-dimension för Q
         end
@@ -21,9 +21,9 @@ function flatten_bf(bf::BF)
         p_row_offsets = Int[]
         p_perms = Vector{Int}[]
         curr_offset_p = 1
-        for (Oleaf, block) in bf.P
+        for (pkey, block) in bf.P
             push!(p_blocks, block)
-            push!(p_perms, bf.PermP[Oleaf])
+            push!(p_perms, bf.PermP[pkey])
             push!(p_row_offsets, curr_offset_p)
             curr_offset_p += size(block, 2) # In-dimension för P
         end

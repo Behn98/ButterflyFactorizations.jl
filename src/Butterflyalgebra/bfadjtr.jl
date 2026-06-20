@@ -16,22 +16,26 @@ function Base.adjoint(B::ButterflyFactorizations.BF)
         end
     end
 
-    Q_adj = Dict{Int,Matrix{ComplexF64}}()
+    Q_adj = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
+    PermQ_adj = Dict{Tuple{Int,Int},Vector{Int}}()
     for k in keys(B.Q)
-        Q_adj[k] = adjoint(B.Q[k])
+        Q_adj[reverse(k)] = adjoint(B.Q[k])
+        PermQ_adj[reverse(k)] = B.PermQ[k] # Permutations swap roles
     end
 
-    P_adj = Dict{Int,Matrix{ComplexF64}}()
+    P_adj = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
+    PermP_adj = Dict{Tuple{Int,Int},Vector{Int}}()
     for k in keys(B.P)
-        P_adj[k] = adjoint(B.P[k])
+        P_adj[reverse(k)] = adjoint(B.P[k])
+        PermP_adj[reverse(k)] = B.PermP[k] # Permutations swap roles
     end
 
     return BF(
         P_adj,
         R_adj,
         Q_adj,
-        B.PermP,
-        B.PermQ,
+        PermP_adj,
+        PermQ_adj,
         (B.dim[2], B.dim[1]),
         B.NO,
         B.NS,
@@ -60,22 +64,26 @@ function Base.transpose(B::ButterflyFactorizations.BF)
         end
     end
 
-    Q_tr = Dict{Int,Matrix{ComplexF64}}()
+    Q_tr = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
+    PermQ_tr = Dict{Tuple{Int,Int},Vector{Int}}()
     for k in keys(B.Q)
-        Q_tr[k] = transpose(B.Q[k])
+        Q_tr[reverse(k)] = transpose(B.Q[k])
+        PermQ_tr[reverse(k)] = B.PermQ[k]
     end
 
-    P_tr = Dict{Int,Matrix{ComplexF64}}()
+    P_tr = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
+    PermP_tr = Dict{Tuple{Int,Int},Vector{Int}}()
     for k in keys(B.P)
-        P_tr[k] = transpose(B.P[k])
+        P_tr[reverse(k)] = transpose(B.P[k])
+        PermP_tr[reverse(k)] = B.PermP[k]
     end
 
     return BF(
         P_tr,
         R_tr,
         Q_tr,
-        B.PermP,
-        B.PermQ,
+        PermP_tr,
+        PermQ_tr,
         (B.dim[2], B.dim[1]),
         B.NO,
         B.NS,
@@ -136,7 +144,7 @@ function Base.adjoint(B::ButterflyFactorizations.AlgBF{T}) where {T} # 1. Added 
         end
 
         # 3. Explicitly construct R_factor with {T}
-        Rf_adj[newl] = R_factor{T}(
+        Rf_adj[newl] = R_factor(
             R_adj[newl],
             reverse(B.R[l].olvl),
             reverse(B.R[l].slvl),
@@ -147,19 +155,19 @@ function Base.adjoint(B::ButterflyFactorizations.AlgBF{T}) where {T} # 1. Added 
         )
     end
 
-    Q_adj = Dict{Int,Matrix{ComplexF64}}()
+    Q_adj = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
     for k in keys(B.Q.Dict)
-        Q_adj[k] = adjoint(B.Q.Dict[k])
+        Q_adj[reverse(k)] = adjoint(B.Q.Dict[k])
     end
     # 4. Explicitly construct P_factor with {T}
-    Qf_adj = P_factor{T}(Q_adj, B.Q.stree)
+    Qf_adj = P_factor(Q_adj, B.Q.stree)
 
-    P_adj = Dict{Int,Matrix{ComplexF64}}()
+    P_adj = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
     for k in keys(B.P.Dict)
-        P_adj[k] = adjoint(B.P.Dict[k])
+        P_adj[reverse(k)] = adjoint(B.P.Dict[k])
     end
     # 5. Explicitly construct Q_factor with {T}
-    Pf_adj = Q_factor{T}(P_adj, B.P.otree)
+    Pf_adj = Q_factor(P_adj, B.P.otree)
 
     return AlgBF(reverse(B.dim), Pf_adj, Rf_adj, Qf_adj)
 end
@@ -181,7 +189,7 @@ function Base.transpose(B::ButterflyFactorizations.AlgBF{T}) where {T}
                 )
             end
         end
-        Rf_adj[newl] = R_factor{T}(
+        Rf_adj[newl] = R_factor(
             R_adj[newl],
             reverse(B.R[l].olvl),
             reverse(B.R[l].slvl),
@@ -192,17 +200,17 @@ function Base.transpose(B::ButterflyFactorizations.AlgBF{T}) where {T}
         )
     end
 
-    Q_adj = Dict{Int,Matrix{ComplexF64}}()
+    Q_adj = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
     for k in keys(B.Q.Dict)
-        Q_adj[k] = transpose(B.Q.Dict[k])
+        Q_adj[reverse(k)] = transpose(B.Q.Dict[k])
     end
-    Qf_adj = P_factor{T}(Q_adj, B.Q.stree)
+    Qf_adj = P_factor(Q_adj, B.Q.stree)
 
-    P_adj = Dict{Int,Matrix{ComplexF64}}()
+    P_adj = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
     for k in keys(B.P.Dict)
-        P_adj[k] = transpose(B.P.Dict[k])
+        P_adj[reverse(k)] = transpose(B.P.Dict[k])
     end
-    Pf_adj = Q_factor{T}(P_adj, B.P.otree)
+    Pf_adj = Q_factor(P_adj, B.P.otree)
     return AlgBF(reverse(B.dim), Pf_adj, Rf_adj, Qf_adj)
 end
 

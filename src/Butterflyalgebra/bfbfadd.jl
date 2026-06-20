@@ -58,7 +58,7 @@ function add_eqbfs(BF_1_init::BF, BF_2_init::BF, τ)
             end
         end
     end
-    Q_new = Dict{Int,Matrix{ComplexF64}}()
+    Q_new = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
     for k in keys(BF_1.Q)
         if haskey(BF_2.Q, k)
             Q_new[k] = vcat(BF_1.Q[k], BF_2.Q[k])
@@ -73,7 +73,7 @@ function add_eqbfs(BF_1_init::BF, BF_2_init::BF, τ)
         end
     end
 
-    P_new = Dict{Int,Matrix{ComplexF64}}()
+    P_new = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
     for k in keys(BF_1.P)
         if haskey(BF_2.P, k)
             P_new[k] = hcat(BF_1.P[k], BF_2.P[k])
@@ -93,8 +93,8 @@ function add_eqbfs(BF_1_init::BF, BF_2_init::BF, τ)
             Q_new,
             R_new,
             P_new,
-            BF_1.PermQ,
-            BF_1.PermP,
+            merge(BF_1.PermQ, BF_2.PermQ),
+            merge(BF_1.PermP, BF_2.PermP),
             BF_1.dim,
             BF_1.NS,
             BF_1.NO,

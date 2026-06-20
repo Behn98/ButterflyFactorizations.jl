@@ -126,7 +126,8 @@ end
 
 # Overload 2: Updating the terminal Q factor
 @views function update_next_level_R_right(
-    R_u::Dict{Tuple{Int,Int},Matrix{ComplexF64}}, rightfactor::Dict{Int,Matrix{ComplexF64}}
+    R_u::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
+    rightfactor::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
 )
     for col_idx in keys(R_u)
         nodeS = col_idx[2] # Pull out the source leaf node ID directly

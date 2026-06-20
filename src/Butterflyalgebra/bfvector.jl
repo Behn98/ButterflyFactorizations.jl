@@ -62,11 +62,11 @@ function apply_BF(
     # Leaf initialization (Q)
     # ------------------------------------------------------------
     q_keys = collect(keys(Q))
-    q_results = tmap(q_keys; scheduler=scheduler) do Sleaf
-        srcvals = PermQ[Sleaf]
-        out = Vector{ComplexF64}(undef, size(Q[Sleaf], 1))
-        @views mul!(out, Q[Sleaf], v[srcvals])
-        ((NO, Sleaf), out)
+    q_results = tmap(q_keys; scheduler=scheduler) do qkey
+        srcvals = PermQ[qkey]
+        out = Vector{ComplexF64}(undef, size(Q[qkey], 1))
+        @views mul!(out, Q[qkey], v[srcvals])
+        return (qkey, out)
     end
 
     coeffs_current = Dict{Tuple{Int,Int},Vector{ComplexF64}}(q_results)
@@ -100,7 +100,7 @@ function apply_BF(
                     end
                 end
 
-                (row, out)
+                return (row, out)
             end
         end
 
@@ -112,14 +112,28 @@ function apply_BF(
     # ------------------------------------------------------------
     # Final assembly
     # ------------------------------------------------------------
-    p_keys = collect(keys(P))
+    p_keys = collect(keys(R[end]))
     p_results = let coeffs_current = coeffs_current
-        tmap(p_keys; scheduler=scheduler) do Oleaf
-            inds = PermP[Oleaf]
-            out = Vector{ComplexF64}(undef, size(P[Oleaf], 1))
+        tmap(p_keys; scheduler=scheduler) do pkey
+            if !haskey(coeffs_current, pkey)
+                println(
+                    "Warning: No coefficients found for P key ",
+                    pkey,
+                    ". This may indicate a mismatch in the factorization structure.",
+                )
+            end
+            if !haskey(PermP, pkey)
+                println(
+                    "Warning: No permutation found for P key ",
+                    pkey,
+                    ". This may indicate a mismatch in the factorization structure.",
+                )
+            end
+            inds = PermP[pkey]
+            out = Vector{ComplexF64}(undef, size(P[pkey], 1))
             # Kör Mat-vekt mult på den lokala out
-            mul!(out, P[Oleaf], coeffs_current[(Oleaf, NS)])
-            (inds, out)
+            mul!(out, P[pkey], coeffs_current[pkey])
+            return (inds, out)
         end
     end
 

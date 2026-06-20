@@ -39,12 +39,12 @@ function subroutine_BF(
 )
 
     # --- containers ---
-    Q = Dict{Int,Matrix{ComplexF64}}()
+    Q = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
     K = Dict{Int,Dict{Int,Vector{Int}}}()
-    P = Dict{Int,Matrix{ComplexF64}}()
+    P = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
 
-    PermQ = Dict{Int,Vector{Int}}()
-    PermP = Dict{Int,Vector{Int}}()
+    PermQ = Dict{Tuple{Int,Int},Vector{Int}}()
+    PermP = Dict{Tuple{Int,Int},Vector{Int}}()
     # --- trees & helpers ---
     trialT = trialtree(H2Blocktree)
     testT = testtree(H2Blocktree)
@@ -78,8 +78,8 @@ function subroutine_BF(
     end
 
     for (Sleaf, perm_q_val, q_ks, k_l) in leaf_results
-        PermQ[Sleaf] = perm_q_val
-        Q[Sleaf] = q_ks
+        PermQ[NO, Sleaf] = perm_q_val
+        Q[NO, Sleaf] = q_ks
         getsubdict!(K, Sleaf)[NO] = k_l
     end
 
@@ -189,8 +189,8 @@ function subroutine_BF(
         end
     end
     for (Oleaf, perm_p_val, Z) in leaf_results
-        PermP[Oleaf] = perm_p_val
-        P[Oleaf] = Z
+        PermP[Oleaf, NS] = perm_p_val
+        P[Oleaf, NS] = Z
     end
     return BF(
         Q,
@@ -253,7 +253,7 @@ function build_nonfrozen_R_blocks!(
     K::Dict{Int,Dict{Int,Vector{Int}}},
     K_new::Dict{Int,Dict{Int,Vector{Int}}},
     U::Dict{Int,Dict{Int,Vector{Int}}},
-    Q::Dict{Int,Matrix{ComplexF64}},
+    Q::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
     treeS,
     treeO,
     l,
@@ -386,7 +386,7 @@ function build_sourcefrozen_R_blocks!(
     R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}},
     K::Dict{Int,Dict{Int,Vector{Int}}},
     K_new::Dict{Int,Dict{Int,Vector{Int}}},
-    Q::Dict{Int,Matrix{ComplexF64}},
+    Q::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
     NS,
     treeO,
     l,
@@ -466,7 +466,7 @@ function build_observerfrozen_R_blocks!(
     K::Dict{Int,Dict{Int,Vector{Int}}},
     K_new::Dict{Int,Dict{Int,Vector{Int}}},
     U::Dict{Int,Dict{Int,Vector{Int}}},
-    Q::Dict{Int,Matrix{ComplexF64}},
+    Q::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
     treeS,
     treeO,
     l,
@@ -747,12 +747,12 @@ function subroutine_BF(
 )
 
     # --- containers ---
-    Q = Dict{Int,Matrix{ComplexF64}}()
+    Q = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
     K = Dict{Int,Dict{Int,Vector{Int}}}()
-    P = Dict{Int,Matrix{ComplexF64}}()
+    P = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
 
-    PermQ = Dict{Int,Vector{Int}}()
-    PermP = Dict{Int,Vector{Int}}()
+    PermQ = Dict{Tuple{Int,Int},Vector{Int}}()
+    PermP = Dict{Tuple{Int,Int},Vector{Int}}()
 
     # --- trees & helpers ---
     trialT = trialtree(H2Blocktree)
@@ -791,8 +791,8 @@ function subroutine_BF(
     end
     i = 1    #stat
     for (Sleaf, perm_q_val, q_ks, k_l, ratio) in leaf_results   #stat
-        PermQ[Sleaf] = perm_q_val
-        Q[Sleaf] = q_ks
+        PermQ[NO, Sleaf] = perm_q_val
+        Q[NO, Sleaf] = q_ks
         getsubdict!(K, Sleaf)[NO] = k_l
         Q_ratios[i] = ratio #stat
         i += 1  #stat
@@ -933,7 +933,7 @@ function build_nonfrozen_R_blocks!(
     K::Dict{Int,Dict{Int,Vector{Int}}},
     K_new::Dict{Int,Dict{Int,Vector{Int}}},
     U::Dict{Int,Dict{Int,Vector{Int}}},
-    Q::Dict{Int,Matrix{ComplexF64}},
+    Q::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
     treeS,
     treeO,
     l,
@@ -1056,7 +1056,7 @@ function build_sourcefrozen_R_blocks!(
     R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}},
     K::Dict{Int,Dict{Int,Vector{Int}}},
     K_new::Dict{Int,Dict{Int,Vector{Int}}},
-    Q::Dict{Int,Matrix{ComplexF64}},
+    Q::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
     NS,
     treeO,
     l,
@@ -1131,7 +1131,7 @@ function build_observerfrozen_R_blocks!(
     K::Dict{Int,Dict{Int,Vector{Int}}},
     K_new::Dict{Int,Dict{Int,Vector{Int}}},
     U::Dict{Int,Dict{Int,Vector{Int}}},
-    Q::Dict{Int,Matrix{ComplexF64}},
+    Q::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
     treeS,
     treeO,
     l,
