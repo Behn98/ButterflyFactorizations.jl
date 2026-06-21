@@ -41,16 +41,6 @@
     tree42 = TwoNTree(T2.pos, lambda / 2.5)
     tree4 = BlockTree(tree41, tree42)
 
-    go1 = H2Trees.values(tree1.testcluster, H2Trees.root(tree1.testcluster))
-    go2 = H2Trees.values(tree2.testcluster, H2Trees.root(tree2.testcluster))
-    go3 = H2Trees.values(tree3.testcluster, H2Trees.root(tree3.testcluster))
-    go4 = H2Trees.values(tree4.testcluster, H2Trees.root(tree4.testcluster))
-
-    gs1 = H2Trees.values(tree1.trialcluster, H2Trees.root(tree1.trialcluster))
-    gs2 = H2Trees.values(tree2.trialcluster, H2Trees.root(tree2.trialcluster))
-    gs3 = H2Trees.values(tree3.trialcluster, H2Trees.root(tree3.trialcluster))
-    gs4 = H2Trees.values(tree4.trialcluster, H2Trees.root(tree4.trialcluster))
-
     farassembler1 = ButterflyFactorizations.AbstractKernelMatrix(op, T, U)
     #=
     @views function farassembler1(Z, tdata, sdata)
@@ -137,10 +127,10 @@
     x_test3 = zeros(ComplexF64, size(A3, 1))
     x_test4 = zeros(ComplexF64, size(A4, 1))
 
-    @views mul!(x_test1[go1], Bfly1, x_t[gs1])
-    @views mul!(x_test2[go2], Bfly2, x_t[gs2])
-    @views mul!(x_test3[go3], Bfly3, x_t[gs3])
-    @views mul!(x_test4[go4], Bfly4, x_t2[gs4])
+    @views mul!(x_test1, Bfly1, x_t)
+    @views mul!(x_test2, Bfly2, x_t)
+    @views mul!(x_test3, Bfly3, x_t)
+    @views mul!(x_test4, Bfly4, x_t2)
 
     @test norm(x_test1 - x_s1) / norm(x_s1) < 10^(-2)
     @test norm(x_test2 - x_s2) / norm(x_s2) < 10^(-2)

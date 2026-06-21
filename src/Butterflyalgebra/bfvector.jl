@@ -52,8 +52,8 @@ function apply_BF(
     P = Butterfly.P
     NO = Butterfly.NO
     NS = Butterfly.NS
-    PermQ = Butterfly.PermQ
-    PermP = Butterfly.PermP
+    otree = Butterfly.otree
+    stree = Butterfly.stree
 
     #old_blas = BLAS.get_num_threads()
     #BLAS.set_num_threads(1)
@@ -63,7 +63,7 @@ function apply_BF(
     # ------------------------------------------------------------
     q_keys = collect(keys(Q))
     q_results = tmap(q_keys; scheduler=scheduler) do qkey
-        srcvals = PermQ[qkey]
+        srcvals = H2Trees.values(stree, qkey[2])
         out = Vector{ComplexF64}(undef, size(Q[qkey], 1))
         @views mul!(out, Q[qkey], v[srcvals])
         return (qkey, out)
@@ -122,14 +122,7 @@ function apply_BF(
                     ". This may indicate a mismatch in the factorization structure.",
                 )
             end
-            if !haskey(PermP, pkey)
-                println(
-                    "Warning: No permutation found for P key ",
-                    pkey,
-                    ". This may indicate a mismatch in the factorization structure.",
-                )
-            end
-            inds = PermP[pkey]
+            inds = H2Trees.values(otree, pkey[1])
             out = Vector{ComplexF64}(undef, size(P[pkey], 1))
             # Kör Mat-vekt mult på den lokala out
             mul!(out, P[pkey], coeffs_current[pkey])
@@ -138,11 +131,10 @@ function apply_BF(
     end
 
     # Säker ihopslagnig på slutet i Main tråden!
-    result = zeros(ComplexF64, Butterfly.dim[1])
+    result = zeros(ComplexF64, length(H2Trees.values(Butterfly.otree, 1)))
     for (inds, out) in p_results
         result[inds] .+= out
     end
-    #BLAS.set_num_threads(old_blas)
     return result
 end
 
@@ -167,7 +159,6 @@ function mul_flat_bf(
         end
     end
     y = zeros(ComplexF64, bf.dim[1])
-
     # --- STEG 1: Applicera Q ---
     r1_in = layer_vectors[1]
     tforeach(1:length(bf.Q.blocks); scheduler=scheduler) do i

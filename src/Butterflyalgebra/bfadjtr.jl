@@ -17,32 +17,17 @@ function Base.adjoint(B::ButterflyFactorizations.BF)
     end
 
     Q_adj = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-    PermQ_adj = Dict{Tuple{Int,Int},Vector{Int}}()
     for k in keys(B.Q)
         Q_adj[reverse(k)] = adjoint(B.Q[k])
-        PermQ_adj[reverse(k)] = B.PermQ[k] # Permutations swap roles
     end
 
     P_adj = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-    PermP_adj = Dict{Tuple{Int,Int},Vector{Int}}()
     for k in keys(B.P)
         P_adj[reverse(k)] = adjoint(B.P[k])
-        PermP_adj[reverse(k)] = B.PermP[k] # Permutations swap roles
     end
 
     return BF(
-        P_adj,
-        R_adj,
-        Q_adj,
-        PermP_adj,
-        PermQ_adj,
-        (B.dim[2], B.dim[1]),
-        B.NO,
-        B.NS,
-        B.k,
-        B.τ,
-        B.otree,
-        B.stree,
+        P_adj, R_adj, Q_adj, (B.dim[2], B.dim[1]), B.NO, B.NS, B.k, B.τ, B.otree, B.stree
     )
 end
 
@@ -65,32 +50,17 @@ function Base.transpose(B::ButterflyFactorizations.BF)
     end
 
     Q_tr = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-    PermQ_tr = Dict{Tuple{Int,Int},Vector{Int}}()
     for k in keys(B.Q)
         Q_tr[reverse(k)] = transpose(B.Q[k])
-        PermQ_tr[reverse(k)] = B.PermQ[k]
     end
 
     P_tr = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-    PermP_tr = Dict{Tuple{Int,Int},Vector{Int}}()
     for k in keys(B.P)
         P_tr[reverse(k)] = transpose(B.P[k])
-        PermP_tr[reverse(k)] = B.PermP[k]
     end
 
     return BF(
-        P_tr,
-        R_tr,
-        Q_tr,
-        PermP_tr,
-        PermQ_tr,
-        (B.dim[2], B.dim[1]),
-        B.NO,
-        B.NS,
-        B.k,
-        B.τ,
-        B.otree,
-        B.stree,
+        P_tr, R_tr, Q_tr, (B.dim[2], B.dim[1]), B.NO, B.NS, B.k, B.τ, B.otree, B.stree
     )
 end
 

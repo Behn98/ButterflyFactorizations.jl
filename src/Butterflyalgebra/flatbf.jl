@@ -11,7 +11,7 @@ function flatten_bf(bf::BF)
         curr_offset_q = 1
         for (qkey, block) in bf.Q
             push!(q_blocks, block)
-            push!(q_perms, bf.PermQ[qkey])
+            push!(q_perms, H2Trees.values(bf.stree, qkey[2]))
             push!(q_col_offsets, curr_offset_q)
             curr_offset_q += size(block, 2) # Ut-dimension för Q
         end
@@ -23,14 +23,21 @@ function flatten_bf(bf::BF)
         curr_offset_p = 1
         for (pkey, block) in bf.P
             push!(p_blocks, block)
-            push!(p_perms, bf.PermP[pkey])
+            push!(p_perms, H2Trees.values(bf.otree, pkey[1]))
             push!(p_row_offsets, curr_offset_p)
             curr_offset_p += size(block, 2) # In-dimension för P
         end
         flat_P = FlatPLayer(p_blocks, p_row_offsets, p_perms)
 
         # Returnera direkt med en tom array av FlatLinearLayer
-        return FlatBF(flat_Q, FlatLinearLayer[], flat_P, bf.dim, NS, NO)
+        return FlatBF(
+            flat_Q,
+            FlatLinearLayer[],
+            flat_P,
+            (length(H2Trees.values(bf.otree, 1)), length(H2Trees.values(bf.stree, 1))),
+            NS,
+            NO,
+        )
     end
     # -------------------------------------------------------
 
@@ -72,7 +79,7 @@ function flatten_bf(bf::BF)
                 #if isempty(block)
                 if l == 1
                     # För nivå 1, där blocken kommer direkt från Q, kan vi använda Q-blockets storlek
-                    q_block = bf.Q[c_key[2]]
+                    q_block = bf.Q[c_key]
                     col_sizes[col_map[c_key]] = size(q_block, 1)
                 else
                     # För högre nivåer, där blocken kommer från R, kan vi använda det första blockets storlek
@@ -134,11 +141,11 @@ function flatten_bf(bf::BF)
     q_blocks = Matrix{ComplexF64}[]
     q_col_offsets = Int[]
     q_perms = Vector{Int}[]
-    for (Sleaf, block) in bf.Q
+    for (qkey, block) in bf.Q
         push!(q_blocks, block)
-        push!(q_perms, bf.PermQ[Sleaf])
+        push!(q_perms, H2Trees.values(bf.stree, qkey[2]))
         # Q-blocket matar direkt in i R[1] på rätt par-nyckel
-        r1_c_id = R_col_maps[1][(NO, Sleaf)]
+        r1_c_id = R_col_maps[1][qkey]
         push!(q_col_offsets, flat_R[1].col_offsets[r1_c_id])
     end
     flat_Q = FlatQLayer(q_blocks, q_col_offsets, q_perms)
@@ -147,16 +154,23 @@ function flatten_bf(bf::BF)
     p_blocks = Matrix{ComplexF64}[]
     p_row_offsets = Int[]
     p_perms = Vector{Int}[]
-    for (Oleaf, block) in bf.P
+    for (pkey, block) in bf.P
         push!(p_blocks, block)
-        push!(p_perms, bf.PermP[Oleaf])
+        push!(p_perms, H2Trees.values(bf.otree, pkey[1]))
         # P-blocket läser direkt från R[end] baserat på par-nyckeln
-        rend_r_id = R_row_maps[end][(Oleaf, NS)]
+        rend_r_id = R_row_maps[end][pkey]
         push!(p_row_offsets, flat_R[end].row_offsets[rend_r_id])
     end
     flat_P = FlatPLayer(p_blocks, p_row_offsets, p_perms)
-
-    return FlatBF(flat_Q, flat_R, flat_P, bf.dim, NS, NO)
+    return FlatBF(
+        flat_Q,
+        flat_R,
+        flat_P,
+        (length(H2Trees.values(bf.otree, 1)), length(H2Trees.values(bf.stree, 1))),
+        #because we lose access to the tree, we need to store global matrix dimensions here ...
+        NS,
+        NO,
+    )
 end
 
 # Intern hjälpfunktion som vänder på strukturen och transponerar blocken

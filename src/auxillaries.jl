@@ -417,6 +417,44 @@ function checkequality(trees, treeo)
     return true
 end
 
+function deep_accumulate_P!(
+    dest::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
+    src::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
+)
+    for (key, mat_src) in src
+        if !haskey(dest, key)
+            dest[key] = copy(mat_src)
+        else
+            println("Overlapping block detected at key: $key")
+            # CRITICAL: Mathematically combine the overlapping matrices.
+            # Usually, overlapping blocks in a cluster tree addition require
+            # matrix addition, or checking if they stack.
+            # If they are overlapping blocks of the same size:
+            dest[key] = hcat(dest[key], mat_src)
+        end
+    end
+    return dest
+end
+
+function deep_accumulate_Q!(
+    dest::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
+    src::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
+)
+    for (key, mat_src) in src
+        if !haskey(dest, key)
+            dest[key] = copy(mat_src)
+        else
+            println("Overlapping block detected at key: $key")
+            # CRITICAL: Mathematically combine the overlapping matrices.
+            # Usually, overlapping blocks in a cluster tree addition require
+            # matrix addition, or checking if they stack.
+            # If they are overlapping blocks of the same size:
+            dest[key] = vcat(dest[key], mat_src)
+        end
+    end
+    return dest
+end
+
 function deep_accumulate_R!(
     dest::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}},
     src::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}},
@@ -433,12 +471,14 @@ function deep_accumulate_R!(
                 if !haskey(inner_dict_dest, sub_key)
                     inner_dict_dest[sub_key] = copy(mat_src)
                 else
-                    @show "Overlapping block detected at node_key: $node_key, sub_key: $sub_key"
+                    println(
+                        "Overlapping block detected at node_key: $node_key, sub_key: $sub_key",
+                    )
                     # CRITICAL: Mathematically combine the overlapping matrices.
                     # Usually, overlapping blocks in a cluster tree addition require
                     # matrix addition, or checking if they stack.
                     # If they are overlapping blocks of the same size:
-                    inner_dict_dest[sub_key] += mat_src
+                    blockdiag(inner_dict_dest[sub_key], mat_src)
                 end
             end
         end

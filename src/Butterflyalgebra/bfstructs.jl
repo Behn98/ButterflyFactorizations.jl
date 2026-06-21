@@ -53,8 +53,6 @@ struct BF{T,M<:AbstractMatrix}
     Q::Dict{Tuple{Int,Int},M}
     R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},M}}}
     P::Dict{Tuple{Int,Int},M}
-    PermQ::Dict{Tuple{Int,Int},Vector{Int}}
-    PermP::Dict{Tuple{Int,Int},Vector{Int}}
     dim::Tuple{Int,Int}
     NS::Int64
     NO::Int64
@@ -64,15 +62,15 @@ struct BF{T,M<:AbstractMatrix}
     otree::T
 
     # Inner constructor updated with both parameters
-    BF{T,M}(Q, R, P, PermQ, PermP, dim, NS, NO, k, τ, stree::T, otree::T) where {T,M} =
-        new{T,M}(Q, R, P, PermQ, PermP, dim, NS, NO, k, τ, stree, otree)
+    BF{T,M}(Q, R, P, dim, NS, NO, k, τ, stree::T, otree::T) where {T,M} =
+        new{T,M}(Q, R, P, dim, NS, NO, k, τ, stree, otree)
 end
 
 # An outer constructor helper so you don't always have to pass T and M explicitly
 function BF(
-    Q::Dict{Tuple{Int,Int},M}, R, P, PermQ, PermP, dim, NS, NO, k, τ, stree::T, otree::T
+    Q::Dict{Tuple{Int,Int},M}, R, P, dim, NS, NO, k, τ, stree::T, otree::T
 ) where {T,M}
-    return BF{T,M}(Q, R, P, PermQ, PermP, dim, NS, NO, k, τ, stree, otree)
+    return BF{T,M}(Q, R, P, dim, NS, NO, k, τ, stree, otree)
 end
 
 struct AlgBF{T,M<:AbstractMatrix}
@@ -138,13 +136,11 @@ function AlgBF(dim, Q::Q_factor{T}, R::AbstractVector, P::P_factor{T}) where {T}
 end
 
 # Conversion back from AlgBF to BF
-function BF(algBF::AlgBF{T,M}, PermQ, PermP, NS, NO, k, τ, stree::T, otree::T) where {T,M}
+function BF(algBF::AlgBF{T,M}, NS, NO, k, τ, stree::T, otree::T) where {T,M}
     return BF{T,M}(
         algBF.Q.Dict,
         [r.Dict for r in algBF.R],
         algBF.P.Dict,
-        PermQ,
-        PermP,
         algBF.dim,
         NS,
         NO,

@@ -25,7 +25,7 @@ function add_eqbfs(BF_1_init::BF, BF_2_init::BF, τ)
         R_new[l] = BF_1.R[l]
         for row in keys(BF_2.R[l])
             if !haskey(R_new[l], row)
-                R_new[l][row] = BF_2.R[l][row]
+                R_new[l][row] = copy(BF_2.R[l][row])
                 continue
             end
             for col in keys(BF_2.R[l][row])
@@ -93,8 +93,6 @@ function add_eqbfs(BF_1_init::BF, BF_2_init::BF, τ)
             Q_new,
             R_new,
             P_new,
-            merge(BF_1.PermQ, BF_2.PermQ),
-            merge(BF_1.PermP, BF_2.PermP),
             BF_1.dim,
             BF_1.NS,
             BF_1.NO,

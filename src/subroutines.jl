@@ -43,8 +43,6 @@ function subroutine_BF(
     K = Dict{Int,Dict{Int,Vector{Int}}}()
     P = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
 
-    PermQ = Dict{Tuple{Int,Int},Vector{Int}}()
-    PermP = Dict{Tuple{Int,Int},Vector{Int}}()
     # --- trees & helpers ---
     trialT = trialtree(H2Blocktree)
     testT = testtree(H2Blocktree)
@@ -55,13 +53,6 @@ function subroutine_BF(
     LO = length(treeO)
     L = max(LS, LO)
     R = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(undef, L - 1)
-    # 1. Get all global indices for this block's source/observer trees
-    global_src_indices = values(trialT, NS) # All sources for this block
-    global_obs_indices = values(testT, NO)  # All observers for this block
-
-    # 2. Create a mapping from global to local (1 to N)
-    src_map = Dict(g => l for (l, g) in enumerate(global_src_indices))
-    obs_map = Dict(g => l for (l, g) in enumerate(global_obs_indices))
 
     # ------------------------------------------------------------------
     # Leaf-level Q
@@ -73,12 +64,10 @@ function subroutine_BF(
         n_otilde = estimate_rank_3d(k, trialT, testT, Sleaf, NO, τ;)
         q_ks, k_l, r_l = compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
 
-        perm_q_val = [src_map[g] for g in srcindex]
-        return (Sleaf, perm_q_val, q_ks, k_l)
+        return (Sleaf, q_ks, k_l)
     end
 
-    for (Sleaf, perm_q_val, q_ks, k_l) in leaf_results
-        PermQ[NO, Sleaf] = perm_q_val
+    for (Sleaf, q_ks, k_l) in leaf_results
         Q[NO, Sleaf] = q_ks
         getsubdict!(K, Sleaf)[NO] = k_l
     end
@@ -184,21 +173,20 @@ function subroutine_BF(
 
             Z = zeros(ComplexF64, length(row), length(col))
             kernelmatrix(Z, row, col)
-            perm_p_val = [obs_map[g] for g in row]
-            return (Oleaf, perm_p_val, Z)
+            return (Oleaf, Z)
         end
     end
-    for (Oleaf, perm_p_val, Z) in leaf_results
-        PermP[Oleaf, NS] = perm_p_val
+    for (Oleaf, Z) in leaf_results
         P[Oleaf, NS] = Z
     end
     return BF(
         Q,
         R,
         P,
-        PermQ,
-        PermP,
-        (length(global_obs_indices), length(global_src_indices)),
+        (
+            length(H2Trees.values(H2Blocktree.testcluster, NO)),
+            length(H2Trees.values(H2Blocktree.trialcluster, NS)),
+        ),
         NS,
         NO,
         k,
@@ -751,9 +739,6 @@ function subroutine_BF(
     K = Dict{Int,Dict{Int,Vector{Int}}}()
     P = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
 
-    PermQ = Dict{Tuple{Int,Int},Vector{Int}}()
-    PermP = Dict{Tuple{Int,Int},Vector{Int}}()
-
     # --- trees & helpers ---
     trialT = trialtree(H2Blocktree)
     testT = testtree(H2Blocktree)
@@ -768,14 +753,6 @@ function subroutine_BF(
     Q_ratios = Vector{Tuple{Int,Float64}}(undef, length(treeS[LS])) #stat
     R_ratios = Vector{Vector{Tuple{Int,Float64}}}(undef, L - 1) #stat
 
-    # 1. Get all global indices for this block's source/observer trees
-    global_src_indices = values(trialT, NS) # All sources for this block
-    global_obs_indices = values(testT, NO)  # All observers for this block
-
-    # 2. Create a mapping from global to local (1 to N)
-    src_map = Dict(g => l for (l, g) in enumerate(global_src_indices))
-    obs_map = Dict(g => l for (l, g) in enumerate(global_obs_indices))
-
     # ------------------------------------------------------------------
     # Leaf-level Q
     # ------------------------------------------------------------------
@@ -786,12 +763,10 @@ function subroutine_BF(
         n_otilde = estimate_rank_3d(k, trialT, testT, Sleaf, NO, τ;)
         q_ks, k_l, r_l = compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
 
-        perm_q_val = [src_map[g] for g in srcindex]
-        return (Sleaf, perm_q_val, q_ks, k_l, (length(obsindex), r_l / n_otilde)) #stat
+        return (Sleaf, q_ks, k_l, (length(obsindex), r_l / n_otilde)) #stat
     end
     i = 1    #stat
-    for (Sleaf, perm_q_val, q_ks, k_l, ratio) in leaf_results   #stat
-        PermQ[NO, Sleaf] = perm_q_val
+    for (Sleaf, q_ks, k_l, ratio) in leaf_results   #stat
         Q[NO, Sleaf] = q_ks
         getsubdict!(K, Sleaf)[NO] = k_l
         Q_ratios[i] = ratio #stat
@@ -903,21 +878,20 @@ function subroutine_BF(
 
             Z = zeros(ComplexF64, length(row), length(col))
             kernelmatrix(Z, row, col)
-            perm_p_val = [obs_map[g] for g in row]
-            return (Oleaf, perm_p_val, Z)
+            return (Oleaf, Z)
         end
     end
-    for (Oleaf, perm_p_val, Z) in leaf_results
-        PermP[Oleaf] = perm_p_val
+    for (Oleaf, Z) in leaf_results
         P[Oleaf] = Z
     end
     return BF(
         Q,
         R,
         P,
-        PermQ,
-        PermP,
-        (length(global_obs_indices), length(global_src_indices)),
+        (
+            length(H2Trees.values(H2Blocktree.testcluster, NO)),
+            length(H2Trees.values(H2Blocktree.trialcluster, NS)),
+        ),
         NS,
         NO,
         k,

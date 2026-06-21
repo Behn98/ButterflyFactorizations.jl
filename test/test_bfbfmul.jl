@@ -1,4 +1,4 @@
-@testitem "Testing Addition of Butterflies" begin
+@testitem "Testing Multiplication of Butterflies" begin
     using Test
     using H2Trees
     using OhMyThreads
@@ -31,14 +31,6 @@
 
     tree1 = TwoNTree(T, U, lambda / 10)     #testspace, trialspace
     tree2 = TwoNTree(U, V, lambda / 10)
-
-    go1 = H2Trees.values(tree1.testcluster, H2Trees.root(tree1.testcluster))
-
-    gs1 = H2Trees.values(tree1.trialcluster, H2Trees.root(tree1.trialcluster))
-
-    go2 = H2Trees.values(tree2.testcluster, H2Trees.root(tree2.testcluster))
-
-    gs2 = H2Trees.values(tree2.trialcluster, H2Trees.root(tree2.trialcluster))
 
     @views farasm1 = BEAST.blockassembler(op, T, U)
     @views function farassembler1(Z, tdata, sdata)
@@ -73,11 +65,11 @@
     Bfly1 = ButterflyFactorizations.subroutine_BF(farassembler1, tree1, 1, 1, k, 10^(-4))
     Bfly2 = ButterflyFactorizations.subroutine_BF(farassembler2, tree2, 1, 1, k, 10^(-4))
 
-    Bfly1A = ButterflyFactorizations.mulBFs(Bfly1, Bfly2, 10^-3)
+    Bfly1A = ButterflyFactorizations.mulBFs(Bfly1, Bfly2, 10^-4)
 
     x_bfly1 = zeros(ComplexF64, size(Bfly1, 1))
 
-    @views mul!(x_bfly1[go1], Bfly1A, x_t[gs2])
+    @views mul!(x_bfly1, Bfly1A, x_t)
 
-    @test norm(x_bfly1 - x_s1) / norm(x_s1) < 10^(-2)
+    @test norm(x_bfly1 - x_s1) / norm(x_s1) < 10^(-3)
 end

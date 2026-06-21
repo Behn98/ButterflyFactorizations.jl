@@ -64,8 +64,6 @@ function mulBFs(BF_1_init::BF, BF_2_init::BF, τ::Float64)
         result.Q.Dict,         # Q_final = Q_2
         [r.Dict for r in result.R],       # R_final[level][Snode][Onode]
         result.P.Dict,          # Updated P
-        BF_2.PermQ,
-        BF_1.PermP,         # Permutations from the original BFs
         (size(BF_1, 1), size(BF_2, 2)),
         BF_2.NS,
         BF_1.NO,
@@ -327,9 +325,9 @@ function trivialmul(BF_1_init::BF, BF_2_init::BF)
     BF_1 = deepcopy(BF_1_init)
     BF_2 = deepcopy(BF_2_init)
     M_messenger = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
-    for leaf in keys(BF_1.Q)
-        M_messenger[BF_1.NO, leaf] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-        M_messenger[BF_1.NO, leaf][leaf, BF_2.NS] = BF_1.Q[leaf] * BF_2.P[leaf]
+    for (NO, leaf) in keys(BF_1.Q)
+        M_messenger[NO, leaf] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
+        M_messenger[BF_1.NO, leaf][leaf, BF_2.NS] = BF_1.Q[NO, leaf] * BF_2.P[leaf, BF_2.NS]
     end
 
     L = length(BF_1.R) # Number of R-levels
@@ -361,13 +359,11 @@ function trivialmul(BF_1_init::BF, BF_2_init::BF)
         result.Q.Dict,         # Q_final = Q_2
         [r.Dict for r in result.R],       # R_final[level][Snode][Onode]
         result.P.Dict,          # Updated P
-        BF_1.PermP,         # Permutations from the original BFs
-        BF_2.PermQ,
         (size(BF_1, 1), size(BF_2, 2)),
         BF_2.NS,
         BF_1.NO,
         BF_1.k,         # Or recalculated k
-        τ,
+        max(BF_1.τ, BF_2.τ),
         BF_2.stree,
         BF_1.otree,
     )
@@ -400,7 +396,7 @@ function splitmulbf(butterflycluster_init::Matrix{BF}, higherkBF_init::BF, τ::F
         osubtree = h2treelevels(higherkBF.otree, children[i])
         new_P = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
         for leaf in osubtree[end]
-            new_P[leaf, higherkBF.NS] = higherkBF.P[leaf, higherkBF.NS]
+            new_P[leaf, higherkBF.NS] = copy(higherkBF.P[leaf, higherkBF.NS])
         end
         new_R = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(
             undef, l - 1
@@ -410,7 +406,7 @@ function splitmulbf(butterflycluster_init::Matrix{BF}, higherkBF_init::BF, τ::F
             for onode in osubtree[j + 1]
                 for snode in ssubtree[end - j - 1]
                     #if haskey(higherkBF.R[j], (onode, snode))
-                    new_R[j][(onode, snode)] = higherkBF.R[j + 1][(onode, snode)]
+                    new_R[j][(onode, snode)] = copy(higherkBF.R[j + 1][(onode, snode)])
                     #end
                 end
             end
@@ -420,8 +416,6 @@ function splitmulbf(butterflycluster_init::Matrix{BF}, higherkBF_init::BF, τ::F
             new_Q,
             new_R,
             new_P,
-            higherkBF.PermQ,
-            higherkBF.PermP,
             (size(higherkBF, 1), size(higherkBF, 2)),
             higherkBF.NS,
             children[i],
@@ -437,100 +431,71 @@ function splitmulbf(butterflycluster_init::Matrix{BF}, higherkBF_init::BF, τ::F
     intermediate = Matrix{BF}(undef, size(butterflycluster, 1), numchildren)
     for i in 1:size(butterflycluster, 1)
         for j in 1:numchildren
-            intermediate[i, j] = mulBFs(
+            intermediate[i, j] = mulBFs(#trivialmul
                 butterflycluster[i, j],
                 lowerkBFs[j],
-                τ,#max(butterflycluster[i, j].τ, lowerkBFs[j].τ),
+                τ,
             )
         end
     end
     rowsize = size(intermediate, 1)
     colsize = size(intermediate, 2)
-    #tobeadditioned = Vector{BF}(undef, rowsize)
-    new_P = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-    new_PermP = Dict{Tuple{Int,Int},Vector{Int}}()
-    new_R = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(undef, l)
+    @show rowsize, colsize
+    tobeadditioned = Vector{BF}(undef, rowsize)
+
     for i in 1:rowsize
-        #=
         new_P = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
         new_R = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(
             undef, l
         )
-        =#
         for s in eachindex(new_R)
             new_R[s] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
         end
+
         for j in 1:colsize
-            new_P = merge(new_P, butterflycluster[i, j].P)#((i + j) % rowsize) + 1
-            new_PermP = merge(new_PermP, butterflycluster[i, j].PermP)
+            # Target index based on your wrap-around logic
+            target_idx = ((i + j) % rowsize) + 1
+            target_bf = intermediate[target_idx, j]
+
+            new_P = deep_accumulate_P!(new_P, target_bf.P)
             for k in 1:(l - 1)
-                src_R = intermediate[i, j].R[k]#((i + j) % rowsize) + 1
-                deep_accumulate_R!(new_R[k + 1], src_R)
+                new_R[k + 1] = deep_accumulate_R!(new_R[k + 1], target_bf.R[k])
             end
         end
-        #=
+
         new_R[1] = higherkBF.R[1]
         new_Q = higherkBF.Q
-        tobeadditioned[i] = BF(
-            new_Q,
-            new_R,
-            new_P,
-            higherkBF.PermQ,
-            higherkBF.PermP,#needs to be formed anew....
-            (
-                length(
-                    H2Trees.values(
-                        butterflycluster[1, 1].otree,
-                        H2Trees.parent(
-                            butterflycluster[1, 1].otree, butterflycluster[1, 1].NO
+        tobeadditioned[i] = recompress_BF(
+            BF(
+                new_Q,
+                new_R,
+                new_P,
+                (
+                    length(
+                        H2Trees.values(
+                            butterflycluster[1, 1].otree,
+                            H2Trees.parent(
+                                butterflycluster[1, 1].otree, butterflycluster[1, 1].NO
+                            ),
                         ),
                     ),
+                    size(higherkBF, 2),
                 ),
-                size(higherkBF, 2),
+                higherkBF.NS,
+                H2Trees.parent(butterflycluster[1, 1].otree, butterflycluster[1, 1].NO),
+                higherkBF.k,
+                higherkBF.τ,
+                higherkBF.stree,
+                butterflycluster[1, 1].otree,
             ),
-            higherkBF.NS,
-            H2Trees.parent(butterflycluster[1, 1].otree, butterflycluster[1, 1].NO),
-            higherkBF.k,
-            higherkBF.τ,
-            higherkBF.stree,
-            higherkBF.otree,
+            τ,
         )
-        =#
     end
     #=
-    result = add_eqbfs(tobeadditioned[1], tobeadditioned[2], τ)
-    for i in eachindex(tobeadditioned[3:end])
-        result = add_eqbfs(result, tobeadditioned[3:end][i], τ)
-    end
-    =#
-    new_R[1] = higherkBF.R[1]
-    new_Q = higherkBF.Q
-    result = recompress_BF(
-        BF(
-            new_Q,
-            new_R,
-            new_P,
-            higherkBF.PermQ,
-            new_PermP,
-            (
-                length(
-                    H2Trees.values(
-                        butterflycluster[1, 1].otree,
-                        H2Trees.parent(
-                            butterflycluster[1, 1].otree, butterflycluster[1, 1].NO
-                        ),
-                    ),
-                ),
-                size(higherkBF, 2),
-            ),
-            higherkBF.NS,
-            H2Trees.parent(butterflycluster[1, 1].otree, butterflycluster[1, 1].NO),
-            higherkBF.k,
-            higherkBF.τ,
-            higherkBF.stree,
-            higherkBF.otree,
-        ),
-        τ,
-    )
-    return result
+        result = add_eqbfs(tobeadditioned[1], tobeadditioned[2], τ)
+        for i in eachindex(tobeadditioned[3:end])
+            result = add_eqbfs(result, tobeadditioned[3:end][i], τ)
+        end
+        =#
+    return tobeadditioned
 end

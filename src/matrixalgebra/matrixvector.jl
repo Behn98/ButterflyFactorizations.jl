@@ -18,13 +18,9 @@
 
         for i in start_idx:end_idx
             bf = A.BFs[i]
-            gs = H2Trees.values(A.tree.trialcluster, bf.NS)
-            go = H2Trees.values(A.tree.testcluster, bf.NO)
+            res = apply_BF(bf, x; scheduler=OhMyThreads.SerialScheduler())
 
-            x_view = view(x, gs)
-            res = apply_BF(bf, x_view; scheduler=OhMyThreads.SerialScheduler())
-
-            y_local[go] .+= res
+            y_local .+= res
         end
         y_locals[c] = y_local
     end
@@ -56,13 +52,10 @@ end
 
         for i in start_idx:end_idx
             bf = At.lmap.BFs[i]
-            gs = H2Trees.values(At.lmap.tree.trialcluster, bf.NS)
-            go = H2Trees.values(At.lmap.tree.testcluster, bf.NO)
 
-            x_view = view(x, go)
-            res = apply_BF(transpose(bf), x_view; scheduler=OhMyThreads.SerialScheduler())
+            res = apply_BF(transpose(bf), x; scheduler=OhMyThreads.SerialScheduler())
 
-            y_local[gs] .+= res
+            y_local .+= res
         end
         y_locals[c] = y_local
     end
@@ -94,13 +87,11 @@ end
 
         for i in start_idx:end_idx
             bf = At.lmap.BFs[i]
-            gs = H2Trees.values(At.lmap.tree.trialcluster, bf.NS)
-            go = H2Trees.values(At.lmap.tree.testcluster, bf.NO)
 
-            x_view = view(x, go)
+            x_view = view(x)
             res = apply_BF(bf', x_view; scheduler=OhMyThreads.SerialScheduler())
 
-            y_local[gs] .+= res
+            y_local .+= res
         end
         y_locals[c] = y_local
     end
@@ -131,13 +122,10 @@ end
 
         for i in start_idx:end_idx
             bf = A.BFs[i]
-            gs = H2Trees.values(A.tree.trialcluster, bf.NS)
-            go = H2Trees.values(A.tree.testcluster, bf.NO)
 
-            x_view = view(x, gs)
-            res = mul_flat_bf(bf, x_view; scheduler=OhMyThreads.SerialScheduler())
+            res = mul_flat_bf(bf, x; scheduler=OhMyThreads.SerialScheduler())
 
-            y_local[go] .+= res
+            y_local .+= res
         end
         y_locals[c] = y_local
     end
@@ -169,15 +157,10 @@ end
 
         for i in start_idx:end_idx
             bf = At.lmap.BFs[i]
-            gs = H2Trees.values(At.lmap.tree.trialcluster, bf.NS)
-            go = H2Trees.values(At.lmap.tree.testcluster, bf.NO)
 
-            x_view = view(x, go)
-            res = mul_flat_bf(
-                transpose(bf), x_view; scheduler=OhMyThreads.SerialScheduler()
-            )
+            res = mul_flat_bf(transpose(bf), x; scheduler=OhMyThreads.SerialScheduler())
 
-            y_local[gs] .+= res
+            y_local .+= res
         end
         y_locals[c] = y_local
     end
@@ -209,13 +192,10 @@ end
 
         for i in start_idx:end_idx
             bf = At.lmap.BFs[i]
-            gs = H2Trees.values(At.lmap.tree.trialcluster, bf.NS)
-            go = H2Trees.values(At.lmap.tree.testcluster, bf.NO)
 
-            x_view = view(x, go)
-            res = mul_flat_bf(bf', x_view; scheduler=OhMyThreads.SerialScheduler())
+            res = mul_flat_bf(bf', x; scheduler=OhMyThreads.SerialScheduler())
 
-            y_local[gs] .+= res
+            y_local .+= res
         end
         y_locals[c] = y_local
     end

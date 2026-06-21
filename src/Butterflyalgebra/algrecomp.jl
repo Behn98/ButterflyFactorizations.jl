@@ -30,8 +30,6 @@ function recompress_BF(Butterfly::BF, τ)
     BFalg = recompress_BF(BFalg, τ)
     return BF(
         BFalg,
-        Butterfly.PermQ,
-        Butterfly.PermP,
         Butterfly.NS,
         Butterfly.NO,
         Butterfly.k,
@@ -41,7 +39,7 @@ function recompress_BF(Butterfly::BF, τ)
     )
 end
 
-@views function recompress_BF_right(Butterfly_init::AlgBF, τ)
+function recompress_BF_right(Butterfly_init::AlgBF, τ)
     Butterfly = deepcopy(Butterfly_init)
     Q = Butterfly.Q.Dict
     R = [Butterfly.R[r].Dict for r in eachindex(Butterfly.R)]
@@ -78,7 +76,6 @@ end
                 push!(R_k, block)
                 push!(row_spc, size(block, 1))
             end
-
             A_k = vcat(R_k...)
             QRA = pqr(A_k; rtol=τ)
 
@@ -108,7 +105,7 @@ end
 end
 
 # Overload 1: Updating intermediate R factors (Clean 1:1 matching)
-@views function update_next_level_R_right(
+function update_next_level_R_right(
     R_u::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
     rightfactor::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}},
 )
@@ -125,7 +122,7 @@ end
 end
 
 # Overload 2: Updating the terminal Q factor
-@views function update_next_level_R_right(
+function update_next_level_R_right(
     R_u::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
     rightfactor::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
 )
