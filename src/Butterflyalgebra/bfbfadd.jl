@@ -18,41 +18,82 @@ function add_eqbfs(BF_1_init::BF, BF_2_init::BF, τ)
     @assert BF_1_init.NS == BF_2_init.NS && BF_1_init.NO == BF_2_init.NO "rootids must match for addition."
     BF_1 = deepcopy(BF_1_init)
     BF_2 = deepcopy(BF_2_init)
+
+    P_new = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
+    for k in keys(BF_1.P)
+        if haskey(BF_2.P, k)
+            P_new[k] = hcat(BF_1.P[k], BF_2.P[k])
+        else
+            P_new[k] = BF_1.P[k]
+        end
+    end
+    #=
+    for k in keys(BF_2.P)
+        if !haskey(BF_1.P, k)
+            P_new[k] = BF_2.P[k]
+        end
+    end
+    =#
     R_new = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(
         undef, length(BF_1.R)
     )
     for l in eachindex(BF_1.R)
-        R_new[l] = BF_1.R[l]
-        for row in keys(BF_2.R[l])
-            if !haskey(R_new[l], row)
-                R_new[l][row] = copy(BF_2.R[l][row])
-                continue
-            end
-            for col in keys(BF_2.R[l][row])
-                if haskey(R_new[l][row], col)
-                    R_new[l][row][col] = blockdiag(BF_1.R[l][row][col], BF_2.R[l][row][col])
-                else
-                    R_new[l][row][col] = vcat(
-                        zeros(
-                            ComplexF64,
-                            size(BF_1_init.R[l][row][first(keys(BF_1_init.R[l][row]))], 1),
-                            size(BF_2_init.R[l][row][col], 2),
-                        ),
-                        BF_2.R[l][row][col],
-                    )
+        R_new[l] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
+        col_to_rows1 = Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}()
+        for row_skel in keys(BF_1.R[l])
+            for col_idx in keys(BF_1.R[l][row_skel])
+                if !haskey(col_to_rows1, col_idx)
+                    col_to_rows1[col_idx] = Vector{Tuple{Int,Int}}()
                 end
+                push!(col_to_rows1[col_idx], row_skel)
             end
-            for col in keys(BF_1.R[l][row])
-                if haskey(BF_2.R[l][row], col)
-                    continue
-                else
-                    R_new[l][row][col] = vcat(
+        end
+        col_to_rows2 = Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}()
+        for row_skel in keys(BF_2.R[l])
+            for col_idx in keys(BF_2.R[l][row_skel])
+                if !haskey(col_to_rows2, col_idx)
+                    col_to_rows2[col_idx] = Vector{Tuple{Int,Int}}()
+                end
+                push!(col_to_rows2[col_idx], row_skel)
+            end
+        end
+        newrowspace = Dict{Tuple{Int,Int},Int}()
+        for row in keys(BF_1.R[l])
+            newrowspace[row] =
+                size(BF_1.R[l][row][first(keys(BF_1.R[l][row]))], 1) +
+                size(BF_2.R[l][row][first(keys(BF_2.R[l][row]))], 1)
+        end
+        newcolspace = Dict{Tuple{Int,Int},Int}()
+        for col in keys(col_to_rows1)
+            newcolspace[col] =
+                size(BF_1.R[l][col_to_rows1[col][1]][col], 2) +
+                size(BF_2.R[l][col_to_rows2[col][1]][col], 2)
+        end
+        for row in keys(newrowspace)
+            R_new[l][row] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
+            for col in keys(newcolspace)
+                if haskey(BF_1.R[l], row) &&
+                    haskey(BF_1.R[l][row], col) &&
+                    haskey(BF_2.R[l], row) &&
+                    haskey(BF_2.R[l][row], col)
+                    R_new[l][row][col] = blockdiag(BF_1.R[l][row][col], BF_2.R[l][row][col])
+                elseif haskey(BF_1.R[l], row) && haskey(BF_1.R[l][row], col)
+                    R_new[l][row][col] = blockdiag(
                         BF_1.R[l][row][col],
                         zeros(
                             ComplexF64,
-                            size(BF_2_init.R[l][row][first(keys(BF_2_init.R[l][row]))], 1),
-                            size(BF_1_init.R[l][row][col], 2),
+                            newrowspace[row]-size(BF_1.R[l][row][col], 1),
+                            newcolspace[col]-size(BF_1.R[l][row][col], 2),
                         ),
+                    )
+                elseif haskey(BF_2.R[l], row) && haskey(BF_2.R[l][row], col)
+                    R_new[l][row][col] = blockdiag(
+                        zeros(
+                            ComplexF64,
+                            newrowspace[row]-size(BF_2.R[l][row][col], 1),
+                            newcolspace[col]-size(BF_2.R[l][row][col], 2),
+                        ),
+                        BF_2.R[l][row][col],
                     )
                 end
             end
@@ -66,28 +107,13 @@ function add_eqbfs(BF_1_init::BF, BF_2_init::BF, τ)
             Q_new[k] = BF_1.Q[k]
         end
     end
-
+    #=
     for k in keys(BF_2.Q)
         if !haskey(BF_1.Q, k)
             Q_new[k] = BF_2.Q[k]
         end
     end
-
-    P_new = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-    for k in keys(BF_1.P)
-        if haskey(BF_2.P, k)
-            P_new[k] = hcat(BF_1.P[k], BF_2.P[k])
-        else
-            P_new[k] = BF_1.P[k]
-        end
-    end
-
-    for k in keys(BF_2.P)
-        if !haskey(BF_1.P, k)
-            P_new[k] = BF_2.P[k]
-        end
-    end
-
+    =#
     return recompress_BF(
         BF(
             Q_new,

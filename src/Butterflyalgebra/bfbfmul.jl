@@ -462,7 +462,14 @@ function splitmulbf(butterflycluster_init::Matrix{BF}, higherkBF_init::BF, τ::F
                 new_R[k + 1] = deep_accumulate_R!(new_R[k + 1], target_bf.R[k])
             end
         end
-
+        localkeys = collect(keys(new_P))
+        for key in localkeys
+            nk = (key[1], H2Trees.parent(butterflycluster[1, 1].otree, key[2]))
+            new_P[nk] = copy(new_P[key])
+            new_R[end][nk] = copy(new_R[end][key])
+            delete!(new_P, key)
+            delete!(new_R[end], key)
+        end
         new_R[1] = higherkBF.R[1]
         new_Q = higherkBF.Q
         tobeadditioned[i] = recompress_BF(
@@ -491,11 +498,15 @@ function splitmulbf(butterflycluster_init::Matrix{BF}, higherkBF_init::BF, τ::F
             τ,
         )
     end
-    #=
-        result = add_eqbfs(tobeadditioned[1], tobeadditioned[2], τ)
-        for i in eachindex(tobeadditioned[3:end])
-            result = add_eqbfs(result, tobeadditioned[3:end][i], τ)
-        end
-        =#
-    return tobeadditioned
+    #return tobeadditioned
+    l = length(tobeadditioned)-1
+    result = add_eqbfs(tobeadditioned[1], tobeadditioned[2], τ)
+
+    println("addition 1 of $l done \n")
+    for i in eachindex(tobeadditioned[3:end])
+        result = add_eqbfs(result, tobeadditioned[3:end][i], τ)
+        h = i+1
+        println("addition $h of $l done \n")
+    end
+    return result
 end
