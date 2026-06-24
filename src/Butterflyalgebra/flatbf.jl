@@ -1,9 +1,10 @@
-function flatten_bf(bf::BF)
+function FlatBF(bf::BF)
     L = length(bf.R)
     NO = bf.NO
     NS = bf.NS
+    dim = (length(H2Trees.values(bf.otree, 1)), length(H2Trees.values(bf.stree, 1)))
 
-    # -- NYTT: Om BF bara består av Q och P (nivå 0 för R) --
+    # -- Om BF bara består av Q och P (nivå 0 för R) --
     if L == 0
         q_blocks = Matrix{ComplexF64}[]
         q_col_offsets = Int[]
@@ -13,7 +14,7 @@ function flatten_bf(bf::BF)
             push!(q_blocks, block)
             push!(q_perms, H2Trees.values(bf.stree, qkey[2]))
             push!(q_col_offsets, curr_offset_q)
-            curr_offset_q += size(block, 2) # Ut-dimension för Q
+            curr_offset_q += size(block, 2)
         end
         flat_Q = FlatQLayer(q_blocks, q_col_offsets, q_perms)
 
@@ -25,19 +26,21 @@ function flatten_bf(bf::BF)
             push!(p_blocks, block)
             push!(p_perms, H2Trees.values(bf.otree, pkey[1]))
             push!(p_row_offsets, curr_offset_p)
-            curr_offset_p += size(block, 2) # In-dimension för P
+            curr_offset_p += size(block, 2)
         end
         flat_P = FlatPLayer(p_blocks, p_row_offsets, p_perms)
 
-        # Returnera direkt med en tom array av FlatLinearLayer
-        return FlatBF(
-            flat_Q,
-            FlatLinearLayer[],
-            flat_P,
-            (length(H2Trees.values(bf.otree, 1)), length(H2Trees.values(bf.stree, 1))),
-            NS,
-            NO,
-        )
+        flat_R = FlatLinearLayer[]
+
+        # Pre-allocate workspace for L=0
+        int_size = if isempty(flat_Q.blocks)
+            0
+        else
+            (flat_Q.col_offsets[end] + size(flat_Q.blocks[end], 1) - 1)
+        end
+        layer_vectors = [zeros(ComplexF64, int_size)]
+
+        return FlatBF(flat_Q, flat_R, flat_P, dim, NS, NO, layer_vectors)
     end
     # -------------------------------------------------------
 
@@ -45,14 +48,12 @@ function flatten_bf(bf::BF)
     R_col_maps = Vector{Dict{Tuple{Int,Int},Int32}}(undef, L)
     R_row_maps = Vector{Dict{Tuple{Int,Int},Int32}}(undef, L)
 
-    # Nivå 1: Samla alla unika kolumn-nycklar
     cols_1 = Set{Tuple{Int,Int}}()
     for (r_key, cols_dict) in bf.R[1], c_key in keys(cols_dict)
         push!(cols_1, c_key)
     end
     R_col_maps[1] = Dict(k => Int32(i) for (i, k) in enumerate(sort!(collect(cols_1))))
 
-    # Kedjekoppla resten av nivåerna: rows[l] blir cols[l+1]
     for l in 1:L
         rows_l = sort!(collect(keys(bf.R[l])))
         R_row_maps[l] = Dict(k => Int32(i) for (i, k) in enumerate(rows_l))
@@ -63,31 +64,24 @@ function flatten_bf(bf::BF)
 
     # 2. Platta till R-nivåerna till FlatLinearLayer
     flat_R = Vector{FlatLinearLayer}(undef, L)
-    # Behåll tidigare nivåers rad-storlekar för att kunna fylla i kolumn-storlekar i nästa nivå
     old_row_sizes = zeros(Int, length(R_row_maps[1]))
+
     for l in 1:L
         R_dict = bf.R[l]
         row_map = R_row_maps[l]
         col_map = R_col_maps[l]
 
-        # Räkna ut skalära storlekar/offsets för kolumner
         col_sizes = zeros(Int, length(col_map))
-        # Räkna ut skalära storlekar/offsets för rader
         row_sizes = zeros(Int, length(row_map))
+
         for (r_key, cols_dict) in R_dict
             for (c_key, block) in cols_dict
-                #if isempty(block)
                 if l == 1
-                    # För nivå 1, där blocken kommer direkt från Q, kan vi använda Q-blockets storlek
                     q_block = bf.Q[c_key]
                     col_sizes[col_map[c_key]] = size(q_block, 1)
                 else
-                    # För högre nivåer, där blocken kommer från R, kan vi använda det första blockets storlek
                     col_sizes[col_map[c_key]] = old_row_sizes[R_row_maps[l - 1][c_key]]
                 end
-                continue
-                #end
-                #col_sizes[col_map[c_key]] = size(block, 2)
             end
             if isempty(first(Base.values(cols_dict)))
                 row_sizes[row_map[r_key]] = col_sizes[col_map[first(keys(cols_dict))]]
@@ -95,6 +89,7 @@ function flatten_bf(bf::BF)
             end
             row_sizes[row_map[r_key]] = size(first(Base.values(cols_dict)), 1)
         end
+
         col_offsets = Vector{Int}(undef, length(col_map))
         curr = 1
         for i in 1:length(col_map)
@@ -111,7 +106,6 @@ function flatten_bf(bf::BF)
         end
         out_size = curr - 1
 
-        # Bygg CSR-struktur
         row_ptr = Vector{Int32}(undef, length(row_map) + 1)
         col_idx = Int32[]
         blocks = Matrix{ComplexF64}[]
@@ -121,7 +115,6 @@ function flatten_bf(bf::BF)
             row_ptr[i] = block_counter
             cols_dict = R_dict[r_key]
 
-            # Sortera kolumner för maximal cache-prestanda i CSR
             sorted_c_keys = sort!(collect(keys(cols_dict)); by=k -> col_map[k])
             for c_key in sorted_c_keys
                 push!(col_idx, col_map[c_key])
@@ -137,40 +130,38 @@ function flatten_bf(bf::BF)
         old_row_sizes = row_sizes
     end
 
-    # 3. Platta till Q (Kopplas till R[1]:s kolumn-offsets)
+    # 3. Platta till Q
     q_blocks = Matrix{ComplexF64}[]
     q_col_offsets = Int[]
     q_perms = Vector{Int}[]
     for (qkey, block) in bf.Q
         push!(q_blocks, block)
         push!(q_perms, H2Trees.values(bf.stree, qkey[2]))
-        # Q-blocket matar direkt in i R[1] på rätt par-nyckel
         r1_c_id = R_col_maps[1][qkey]
         push!(q_col_offsets, flat_R[1].col_offsets[r1_c_id])
     end
     flat_Q = FlatQLayer(q_blocks, q_col_offsets, q_perms)
 
-    # 4. Platta till P (Kopplas från R[end]:s rad-offsets)
+    # 4. Platta till P
     p_blocks = Matrix{ComplexF64}[]
     p_row_offsets = Int[]
     p_perms = Vector{Int}[]
     for (pkey, block) in bf.P
         push!(p_blocks, block)
         push!(p_perms, H2Trees.values(bf.otree, pkey[1]))
-        # P-blocket läser direkt från R[end] baserat på par-nyckeln
         rend_r_id = R_row_maps[end][pkey]
         push!(p_row_offsets, flat_R[end].row_offsets[rend_r_id])
     end
     flat_P = FlatPLayer(p_blocks, p_row_offsets, p_perms)
-    return FlatBF(
-        flat_Q,
-        flat_R,
-        flat_P,
-        (length(H2Trees.values(bf.otree, 1)), length(H2Trees.values(bf.stree, 1))),
-        #because we lose access to the tree, we need to store global matrix dimensions here ...
-        NS,
-        NO,
-    )
+
+    # 5. Pre-allocate workspace based on R-layer sizes
+    layer_vectors = Vector{Vector{ComplexF64}}(undef, L + 1)
+    layer_vectors[1] = zeros(ComplexF64, flat_R[1].in_size)
+    for l in 1:L
+        layer_vectors[l + 1] = zeros(ComplexF64, flat_R[l].out_size)
+    end
+
+    return FlatBF(flat_Q, flat_R, flat_P, dim, NS, NO, layer_vectors)
 end
 
 # Intern hjälpfunktion som vänder på strukturen och transponerar blocken
