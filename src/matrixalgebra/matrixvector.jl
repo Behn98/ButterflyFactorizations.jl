@@ -123,9 +123,7 @@ end
         for i in start_idx:end_idx
             bf = A.BFs[i]
 
-            res = mul_flat_bf(bf, x; scheduler=OhMyThreads.SerialScheduler())
-
-            y_local .+= res
+            mul_flat_bf!(y_local, bf, x)
         end
         y_locals[c] = y_local
     end

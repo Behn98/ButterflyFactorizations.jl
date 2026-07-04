@@ -200,6 +200,7 @@ struct FlatBF
     dim::Tuple{Int,Int}   # (totala observatörer, totala källor)
     NS::Int64
     NO::Int64
+    layer_vectors::Vector{Vector{ComplexF64}} # NYTT: Pre-allocated workspace
 end
 
 struct BFSTAT

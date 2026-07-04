@@ -138,7 +138,80 @@ function apply_BF(
     return result
 end
 
-function mul_flat_bf(
+function mul_flat_bf!(
+    y::AbstractVector{ComplexF64}, bf::FlatBF, x::AbstractVector{ComplexF64}
+)
+    # 1. Zero out the pre-allocated workspace
+    for v in bf.layer_vectors
+        fill!(v, zero(ComplexF64))
+    end
+
+    # Aliases for clarity
+    layer_vectors = bf.layer_vectors
+
+    # --- STEG 1: Applicera Q ---
+    r1_in = layer_vectors[1]
+    for i in 1:length(bf.Q.blocks)
+        B = bf.Q.blocks[i]
+        c_start = bf.Q.col_offsets[i]
+        p = bf.Q.perm[i]
+
+        # Fast memory mapping (consider writing a manual loop if blocks are tiny!)
+        @views mul!(r1_in[c_start:(c_start + size(B, 1) - 1)], B, x[p], 1.0, 1.0)
+    end
+
+    # --- STEG 2: Loopa igenom alla R-nivåer ---
+    for l in 1:length(bf.R)
+        layer = bf.R[l]
+        v_in = layer_vectors[l]
+        v_out = layer_vectors[l + 1]
+
+        # Native for-loops (no tforeach overhead)
+        @inbounds for i in 1:(length(layer.row_ptr) - 1)
+            r_start = layer.row_offsets[i]
+
+            for b in layer.row_ptr[i]:(layer.row_ptr[i + 1] - 1)
+                j = layer.col_idx[b]
+                c_start = layer.col_offsets[j]
+                B = layer.blocks[b]
+
+                if isempty(B)
+                    nr = if (i < length(layer.row_offsets))
+                        (layer.row_offsets[i + 1] - r_start)
+                    else
+                        (length(v_out) - r_start + 1)
+                    end
+                    @views v_out[r_start:(r_start + nr - 1)] .+= v_in[c_start:(c_start + nr - 1)]
+                    continue
+                end
+
+                nr, nc = size(B)
+                @views mul!(
+                    v_out[r_start:(r_start + nr - 1)],
+                    B,
+                    v_in[c_start:(c_start + nc - 1)],
+                    1.0,
+                    1.0,
+                )
+            end
+        end
+    end
+
+    # --- STEG 3: Applicera P (writes directly to global y) ---
+    rend_out = layer_vectors[end]
+    for i in 1:length(bf.P.blocks)
+        B = bf.P.blocks[i]
+        r_start = bf.P.row_offsets[i]
+        p = bf.P.perm[i]
+
+        # Safe because PermP represents disjoint leaves
+        @views mul!(y[p], B, rend_out[r_start:(r_start + size(B, 2) - 1)], 1.0, 1.0)
+    end
+
+    return nothing # Writes directly to y
+end
+
+function mul_flat_bf_p(
     bf::FlatBF, x::AbstractVector{ComplexF64}; scheduler=OhMyThreads.SerialScheduler()
 )
     # 1. Allokera temporära arbetsvektorer baserat på lagrens storlek
