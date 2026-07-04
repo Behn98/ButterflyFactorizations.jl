@@ -27,6 +27,8 @@ function add_eqbfs(BF_1_init::BF, BF_2_init::BF, τ)
             P_new[k] = BF_1.P[k]
         end
     end
+    single = 0
+    comb = 0
     #=
     for k in keys(BF_2.P)
         if !haskey(BF_1.P, k)
@@ -59,15 +61,33 @@ function add_eqbfs(BF_1_init::BF, BF_2_init::BF, τ)
         end
         newrowspace = Dict{Tuple{Int,Int},Int}()
         for row in keys(BF_1.R[l])
-            newrowspace[row] =
-                size(BF_1.R[l][row][first(keys(BF_1.R[l][row]))], 1) +
-                size(BF_2.R[l][row][first(keys(BF_2.R[l][row]))], 1)
+            if haskey(BF_2.R[l], row)
+                newrowspace[row] =
+                    size(BF_1.R[l][row][first(keys(BF_1.R[l][row]))], 1) +
+                    size(BF_2.R[l][row][first(keys(BF_2.R[l][row]))], 1)
+            else
+                newrowspace[row] = size(BF_1.R[l][row][first(keys(BF_1.R[l][row]))], 1)
+            end
+        end
+        for row in keys(BF_2.R[l])
+            if !haskey(newrowspace, row)
+                newrowspace[row] = size(BF_2.R[l][row][first(keys(BF_2.R[l][row]))], 1)
+            end
         end
         newcolspace = Dict{Tuple{Int,Int},Int}()
         for col in keys(col_to_rows1)
-            newcolspace[col] =
-                size(BF_1.R[l][col_to_rows1[col][1]][col], 2) +
-                size(BF_2.R[l][col_to_rows2[col][1]][col], 2)
+            if haskey(col_to_rows2, col)
+                newcolspace[col] =
+                    size(BF_1.R[l][col_to_rows1[col][1]][col], 2) +
+                    size(BF_2.R[l][col_to_rows2[col][1]][col], 2)
+            else
+                newcolspace[col] = size(BF_1.R[l][col_to_rows1[col][1]][col], 2)
+            end
+        end
+        for col in keys(col_to_rows2)
+            if !haskey(newcolspace, col)
+                newcolspace[col] = size(BF_2.R[l][col_to_rows2[col][1]][col], 2)
+            end
         end
         for row in keys(newrowspace)
             R_new[l][row] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
@@ -76,8 +96,10 @@ function add_eqbfs(BF_1_init::BF, BF_2_init::BF, τ)
                     haskey(BF_1.R[l][row], col) &&
                     haskey(BF_2.R[l], row) &&
                     haskey(BF_2.R[l][row], col)
+                    comb += 1
                     R_new[l][row][col] = blockdiag(BF_1.R[l][row][col], BF_2.R[l][row][col])
                 elseif haskey(BF_1.R[l], row) && haskey(BF_1.R[l][row], col)
+                    single += 1
                     R_new[l][row][col] = blockdiag(
                         BF_1.R[l][row][col],
                         zeros(
@@ -87,6 +109,7 @@ function add_eqbfs(BF_1_init::BF, BF_2_init::BF, τ)
                         ),
                     )
                 elseif haskey(BF_2.R[l], row) && haskey(BF_2.R[l][row], col)
+                    single += 1
                     R_new[l][row][col] = blockdiag(
                         zeros(
                             ComplexF64,
@@ -114,6 +137,8 @@ function add_eqbfs(BF_1_init::BF, BF_2_init::BF, τ)
         end
     end
     =#
+    @show single
+    @show comb
     return recompress_BF(
         BF(
             Q_new,

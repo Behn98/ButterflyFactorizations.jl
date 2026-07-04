@@ -442,7 +442,14 @@ function splitmulbf(butterflycluster_init::Matrix{BF}, higherkBF_init::BF, τ::F
     colsize = size(intermediate, 2)
     @show rowsize, colsize
     tobeadditioned = Vector{BF}(undef, rowsize)
-
+    nodaloffset = 1
+    otmapv = Vector{Vector{Dict{Int,Int}}}(undef, colsize)
+    for i in 1:rowsize
+        supertree, mappings, root_super_id, nodaloffset = build_supertree(
+            children, higherkBF.otree, nodaloffset
+        )
+        otmapv[i] = mappings
+    end
     for i in 1:rowsize
         new_P = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
         new_R = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(
@@ -452,14 +459,51 @@ function splitmulbf(butterflycluster_init::Matrix{BF}, higherkBF_init::BF, τ::F
             new_R[s] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
         end
 
+        #otmapv = Vector{Dict{Int,Int}}(undef, colsize)
+        colspaces = Vector{Dict{Tuple{Int,Int},Int}}(undef, colsize)
         for j in 1:colsize
             # Target index based on your wrap-around logic
-            target_idx = ((i + j) % rowsize) + 1
+            target_idx = ((i + j-2) % rowsize) + 1
             target_bf = intermediate[target_idx, j]
-
-            new_P = deep_accumulate_P!(new_P, target_bf.P)
-            for k in 1:(l - 1)
-                new_R[k + 1] = deep_accumulate_R!(new_R[k + 1], target_bf.R[k])
+            #otmapv[j] = treemapping(children[j], children[target_idx], higherkBF.otree)
+            otmap = otmapv[target_idx][j]
+            colspaces[j] = retrievecolspace(target_bf.R[1])
+            deep_accumulate_P!(new_P, target_bf.P)
+            for k in 1:(l - 2)
+                deep_accumulate_R!(
+                    new_R[k + 1], target_bf.R[k]; otmap=otmap, stmap=Dict{Int,Int}()
+                )
+            end
+            for (node_key, inner_dict_src) in target_bf.R[l - 1]
+                if !haskey(new_R[l], node_key)
+                    new_R[l][node_key] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
+                    for (sub_key, mat_src) in inner_dict_src
+                        if haskey(otmap, sub_key[1])
+                            new_sub_key = (otmap[sub_key[1]], sub_key[2])
+                        else
+                            new_sub_key = sub_key
+                        end
+                        new_R[l][node_key][new_sub_key] = copy(mat_src)
+                    end
+                else
+                    # Node key exists, merge the inner mapping level
+                    inner_dict_dest = dest[node_key]
+                    for (sub_key, mat_src) in inner_dict_src
+                        if haskey(otmap, sub_key[1])
+                            new_sub_key = (otmap[sub_key[1]], sub_key[2])
+                        else
+                            new_sub_key = sub_key
+                        end
+                        if !haskey(inner_dict_dest, new_sub_key)
+                            inner_dict_dest[new_sub_key] = copy(mat_src)
+                        else
+                            println(
+                                "Overlapping block detected at node_key: $new_node_key, sub_key: $new_sub_key",
+                            )
+                            blockdiag(inner_dict_dest[new_sub_key], mat_src)
+                        end
+                    end
+                end
             end
         end
         localkeys = collect(keys(new_P))
@@ -470,33 +514,43 @@ function splitmulbf(butterflycluster_init::Matrix{BF}, higherkBF_init::BF, τ::F
             delete!(new_P, key)
             delete!(new_R[end], key)
         end
-        new_R[1] = higherkBF.R[1]
+        new_R[1] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
+        for j in eachindex(colspaces)
+            target_idx = ((i + j-2) % rowsize) + 1
+            otmap = otmapv[target_idx][j]
+            for key in keys(colspaces[j])
+                if haskey(otmap, key[1])
+                    new_key = (otmap[key[1]], key[2])
+                    new_R[1][new_key] = copy(higherkBF.R[1][key])
+                end
+            end
+        end
         new_Q = higherkBF.Q
-        tobeadditioned[i] = recompress_BF(
-            BF(
-                new_Q,
-                new_R,
-                new_P,
-                (
-                    length(
-                        H2Trees.values(
-                            butterflycluster[1, 1].otree,
-                            H2Trees.parent(
-                                butterflycluster[1, 1].otree, butterflycluster[1, 1].NO
-                            ),
+        tobeadditioned[i] = #recompress_BF(
+        BF(
+            new_Q,
+            new_R,
+            new_P,
+            (
+                length(
+                    H2Trees.values(
+                        butterflycluster[1, 1].otree,
+                        H2Trees.parent(
+                            butterflycluster[1, 1].otree, butterflycluster[1, 1].NO
                         ),
                     ),
-                    size(higherkBF, 2),
                 ),
-                higherkBF.NS,
-                H2Trees.parent(butterflycluster[1, 1].otree, butterflycluster[1, 1].NO),
-                higherkBF.k,
-                higherkBF.τ,
-                higherkBF.stree,
-                butterflycluster[1, 1].otree,
+                size(higherkBF, 2),
             ),
-            τ,
-        )
+            higherkBF.NS,
+            H2Trees.parent(butterflycluster[1, 1].otree, butterflycluster[1, 1].NO),
+            higherkBF.k,
+            higherkBF.τ,
+            higherkBF.stree,
+            butterflycluster[1, 1].otree,
+        )#,
+        #τ,
+        #)
     end
     #return tobeadditioned
     l = length(tobeadditioned)-1
