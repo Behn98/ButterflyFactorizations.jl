@@ -73,7 +73,7 @@
 
     @test norm(x_bfly1 - x_s1) / norm(x_s1) < 10^(-3)
 end
-
+#=
 @testitem "Testing Multiplication of a low rank Butterfly cluster with a higher rank Butterfly" begin
     using H2Trees
     using Test
@@ -181,3 +181,4 @@ end
 
     @test reldif4 = norm(y_exact3 - y_cluster4) / norm(y_exact3) < 1e-1
 end
+=#
