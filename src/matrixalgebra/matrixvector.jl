@@ -5,44 +5,28 @@
     fill!(y, zero(T))
     y_near = A.nearinteractions * x
     y .+= y_near
-    old_blas = BLAS.get_num_threads()
-    BLAS.set_num_threads(1)
-    y_lock = Threads.SpinLock()
 
-    @tasks for i in eachindex(A.BFs)
+    n_chunks = min(length(A.BFs), Threads.nthreads() * 4)
+    chunk_size = cld(length(A.BFs), n_chunks)
+    y_locals = Vector{Vector{T}}(undef, n_chunks)
+
+    @tasks for c in 1:n_chunks
         @set scheduler = DynamicScheduler()
+        y_local = zeros(T, length(y))
+        start_idx = (c - 1) * chunk_size + 1
+        end_idx = min(c * chunk_size, length(A.BFs))
 
-        bf = A.BFs[i]
-        gs = H2Trees.values(A.tree.trialcluster, bf.NS)
-        go = H2Trees.values(A.tree.testcluster, bf.NO)
+        for i in start_idx:end_idx
+            bf = A.BFs[i]
+            res = apply_BF(bf, x; scheduler=OhMyThreads.SerialScheduler())
 
-        # Beräkna resultatet för blocket (detta sker helt parallellt)
-        res = apply_BF(bf, x[gs])
-
-        # Lås kortvarigt när vi uppdaterar 'y' så att inte trådar skriver över varandra
-        lock(y_lock) do
-            y[go] .+= res
+            y_local .+= res
         end
+        y_locals[c] = y_local
     end
-    # Återställ BLAS
-    BLAS.set_num_threads(old_blas)
 
-    return y
-end
-
-@views function LinearAlgebra.mul!(
-    y::AbstractVecOrMat,
-    At::LinearMaps.TransposeMap{<:Any,<:ButterflyFactorizations.PetrovGalerkinBF},
-    x::AbstractVector{T},
-) where {T}
-    LinearMaps.check_dim_mul(y, At.lmap, x)
-    fill!(y, zero(T))
-    y .+= transpose(At.lmap.nearinteractions) * x
-    for i in eachindex(At.lmap.BFs)
-        gs = H2Trees.values(At.lmap.tree.trialcluster, At.lmap.BFs[i].NS)
-        go = H2Trees.values(At.lmap.tree.testcluster, At.lmap.BFs[i].NO)
-
-        y[gs] .+= apply_BF(transpose(At.lmap.BFs[i]), x[go])
+    for c in 1:n_chunks
+        y .+= y_locals[c]
     end
     return y
 end
@@ -55,16 +39,171 @@ end
     LinearMaps.check_dim_mul(y, At.lmap, x)
     fill!(y, zero(T))
     y .+= adjoint(At.lmap.nearinteractions) * x
-    for i in eachindex(At.lmap.BFs)
-        gs = H2Trees.values(At.lmap.tree.trialcluster, At.lmap.BFs[i].NS)
-        go = H2Trees.values(At.lmap.tree.testcluster, At.lmap.BFs[i].NO)
 
-        y[gs] .+= apply_BF(At.lmap.BFs[i]', x[go])
-        # OBS: Använd din apply_BF_adjoint funktion här!
+    n_chunks = min(length(At.lmap.BFs), Threads.nthreads() * 4)
+    chunk_size = cld(length(At.lmap.BFs), n_chunks)
+    y_locals = Vector{Vector{T}}(undef, n_chunks)
+
+    @tasks for c in 1:n_chunks
+        @set scheduler = DynamicScheduler()
+        y_local = zeros(T, length(y))
+        start_idx = (c - 1) * chunk_size + 1
+        end_idx = min(c * chunk_size, length(At.lmap.BFs))
+
+        for i in start_idx:end_idx
+            bf = At.lmap.BFs[i]
+
+            res = apply_BF(bf', x; scheduler=OhMyThreads.SerialScheduler())
+
+            y_local .+= res
+        end
+        y_locals[c] = y_local
+    end
+
+    for c in 1:n_chunks
+        y .+= y_locals[c]
     end
     return y
 end
 
+@views function LinearAlgebra.mul!(
+    y::AbstractVecOrMat,
+    At::LinearMaps.TransposeMap{<:Any,<:ButterflyFactorizations.PetrovGalerkinBF},
+    x::AbstractVector{T},
+) where {T}
+    LinearMaps.check_dim_mul(y, At.lmap, x)
+    fill!(y, zero(T))
+    y .+= transpose(At.lmap.nearinteractions) * x
+
+    n_chunks = min(length(At.lmap.BFs), Threads.nthreads() * 4)
+    chunk_size = cld(length(At.lmap.BFs), n_chunks)
+    y_locals = Vector{Vector{T}}(undef, n_chunks)
+
+    @tasks for c in 1:n_chunks
+        @set scheduler = DynamicScheduler()
+        y_local = zeros(T, length(y))
+        start_idx = (c - 1) * chunk_size + 1
+        end_idx = min(c * chunk_size, length(At.lmap.BFs))
+
+        for i in start_idx:end_idx
+            bf = At.lmap.BFs[i]
+
+            res = apply_BF(transpose(bf), x; scheduler=OhMyThreads.SerialScheduler())
+
+            y_local .+= res
+        end
+        y_locals[c] = y_local
+    end
+
+    for c in 1:n_chunks
+        y .+= y_locals[c]
+    end
+    return y
+end
+
+@views function LinearAlgebra.mul!(
+    y::AbstractVecOrMat, A::ButterflyFactorizations.FlatPGBF, x::AbstractVector{T}
+) where {T}
+    LinearMaps.check_dim_mul(y, A, x)
+    fill!(y, zero(T))
+    y_near = A.nearinteractions * x
+    y .+= y_near
+
+    n_chunks = min(length(A.BFs), Threads.nthreads() * 4)
+    chunk_size = cld(length(A.BFs), n_chunks)
+    y_locals = Vector{Vector{T}}(undef, n_chunks)
+
+    @tasks for c in 1:n_chunks
+        @set scheduler = DynamicScheduler()
+        y_local = zeros(T, length(y))
+        start_idx = (c - 1) * chunk_size + 1
+        end_idx = min(c * chunk_size, length(A.BFs))
+
+        for i in start_idx:end_idx
+            bf = A.BFs[i]
+
+            mul_flat_bf!(y_local, bf, x)
+        end
+        y_locals[c] = y_local
+    end
+
+    for c in 1:n_chunks
+        y .+= y_locals[c]
+    end
+    return y
+end
+
+@views function LinearAlgebra.mul!(
+    y::AbstractVecOrMat,
+    At::LinearMaps.TransposeMap{<:Any,<:ButterflyFactorizations.FlatPGBF},
+    x::AbstractVector{T},
+) where {T}
+    LinearMaps.check_dim_mul(y, At.lmap, x)
+    fill!(y, zero(T))
+    y .+= transpose(At.lmap.nearinteractions) * x
+
+    n_chunks = min(length(At.lmap.BFs), Threads.nthreads() * 4)
+    chunk_size = cld(length(At.lmap.BFs), n_chunks)
+    y_locals = Vector{Vector{T}}(undef, n_chunks)
+
+    @tasks for c in 1:n_chunks
+        @set scheduler = DynamicScheduler()
+        y_local = zeros(T, length(y))
+        start_idx = (c - 1) * chunk_size + 1
+        end_idx = min(c * chunk_size, length(At.lmap.BFs))
+
+        for i in start_idx:end_idx
+            bf = At.lmap.BFs[i]
+
+            res = mul_flat_bf(transpose(bf), x; scheduler=OhMyThreads.SerialScheduler())
+
+            y_local .+= res
+        end
+        y_locals[c] = y_local
+    end
+
+    for c in 1:n_chunks
+        y .+= y_locals[c]
+    end
+    return y
+end
+
+@views function LinearAlgebra.mul!(
+    y::AbstractVecOrMat,
+    At::LinearMaps.AdjointMap{<:Any,<:ButterflyFactorizations.FlatPGBF},
+    x::AbstractVector{T},
+) where {T}
+    LinearMaps.check_dim_mul(y, At.lmap, x)
+    fill!(y, zero(T))
+    y .+= adjoint(At.lmap.nearinteractions) * x
+
+    n_chunks = min(length(At.lmap.BFs), Threads.nthreads() * 4)
+    chunk_size = cld(length(At.lmap.BFs), n_chunks)
+    y_locals = Vector{Vector{T}}(undef, n_chunks)
+
+    @tasks for c in 1:n_chunks
+        @set scheduler = DynamicScheduler()
+        y_local = zeros(T, length(y))
+        start_idx = (c - 1) * chunk_size + 1
+        end_idx = min(c * chunk_size, length(At.lmap.BFs))
+
+        for i in start_idx:end_idx
+            bf = At.lmap.BFs[i]
+
+            res = mul_flat_bf(bf', x; scheduler=OhMyThreads.SerialScheduler())
+
+            y_local .+= res
+        end
+        y_locals[c] = y_local
+    end
+
+    for c in 1:n_chunks
+        y .+= y_locals[c]
+    end
+    return y
+end
+
+# ... (Här börjar dina orörda funktioner för PetrovGalerkinBF_mats) ...
 @views function LinearAlgebra.mul!(
     y::AbstractVecOrMat,
     A::ButterflyFactorizations.PetrovGalerkinBF_mats,

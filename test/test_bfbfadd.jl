@@ -37,16 +37,6 @@
     tree3 = TwoNTree(U2, T, lambda / 10)
     tree4 = TwoNTree(U, T2, lambda / 10)
 
-    go1 = H2Trees.values(tree1.testcluster, H2Trees.root(tree1.testcluster))
-    go2 = H2Trees.values(tree2.testcluster, H2Trees.root(tree2.testcluster))
-    go3 = H2Trees.values(tree3.testcluster, H2Trees.root(tree3.testcluster))
-    go4 = H2Trees.values(tree4.testcluster, H2Trees.root(tree4.testcluster))
-
-    gs1 = H2Trees.values(tree1.trialcluster, H2Trees.root(tree1.trialcluster))
-    gs2 = H2Trees.values(tree2.trialcluster, H2Trees.root(tree2.trialcluster))
-    gs3 = H2Trees.values(tree3.trialcluster, H2Trees.root(tree3.trialcluster))
-    gs4 = H2Trees.values(tree4.trialcluster, H2Trees.root(tree4.trialcluster))
-
     @views farasm = BEAST.blockassembler(op, T, U)
     @views function farassembler1(Z, tdata, sdata)
         @views store(v, m, n) = (Z[m, n] += v)
@@ -96,10 +86,18 @@
     =========================================================================
     =========================================================================#
 
-    Bfly1 = ButterflyFactorizations.subroutine_BF(farassembler1, tree1, 1, 1, k, 10^(-4))
-    Bfly2 = ButterflyFactorizations.subroutine_BF(farassembler2, tree2, 1, 1, k, 10^(-4))
-    Bfly3 = ButterflyFactorizations.subroutine_BF(farassembler3, tree3, 1, 1, k, 10^(-4))
-    Bfly4 = ButterflyFactorizations.subroutine_BF(farassembler4, tree4, 1, 1, k, 10^(-4))
+    Bfly1 = ButterflyFactorizations.subroutine_BF(
+        farassembler1, tree1, 1, 1, k, 10^(-4); scheduler=OhMyThreads.DynamicScheduler()
+    )
+    Bfly2 = ButterflyFactorizations.subroutine_BF(
+        farassembler2, tree2, 1, 1, k, 10^(-4); scheduler=OhMyThreads.DynamicScheduler()
+    )
+    Bfly3 = ButterflyFactorizations.subroutine_BF(
+        farassembler3, tree3, 1, 1, k, 10^(-4); scheduler=OhMyThreads.DynamicScheduler()
+    )
+    Bfly4 = ButterflyFactorizations.subroutine_BF(
+        farassembler4, tree4, 1, 1, k, 10^(-4); scheduler=OhMyThreads.DynamicScheduler()
+    )
 
     Bfly1A = ButterflyFactorizations.add_eqbfs(Bfly1, Bfly1, 10^-3)
     Bfly2A = ButterflyFactorizations.add_eqbfs(Bfly2, Bfly2, 10^-3)
@@ -111,10 +109,10 @@
     x_bfly3 = zeros(ComplexF64, size(Bfly3, 1))
     x_bfly4 = zeros(ComplexF64, size(Bfly4, 1))
 
-    @views mul!(x_bfly1[go1], Bfly1A, x_t[gs1])
-    @views mul!(x_bfly2[go2], Bfly2A, x_t[gs2])
-    @views mul!(x_bfly3[go3], Bfly3A, x_t[gs3])
-    @views mul!(x_bfly4[go4], Bfly4A, x_t2[gs4])
+    @views mul!(x_bfly1, Bfly1A, x_t)
+    @views mul!(x_bfly2, Bfly2A, x_t)
+    @views mul!(x_bfly3, Bfly3A, x_t)
+    @views mul!(x_bfly4, Bfly4A, x_t2)
 
     @test norm(x_bfly1 - x_s1) / norm(x_s1) < 10^(-3)
     @test norm(x_bfly2 - x_s2) / norm(x_s2) < 10^(-3)

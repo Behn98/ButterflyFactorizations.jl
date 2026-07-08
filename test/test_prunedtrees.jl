@@ -1,4 +1,4 @@
-#=
+
 @testitem "Testing Blockassembly subroutines for pruned trees" begin
     using Test
     using BEAST
@@ -21,7 +21,7 @@
     X1 = raviartthomas(m1)
     m2 = translate(m1, SVector(5.0, 0.0, 0.0))
     X2 = raviartthomas(m2)
-    #=
+
     Ttree = H2Trees.KMeansTree(X1.pos, 2; minvalues=100)
     Stree = H2Trees.KMeansTree(X2.pos, 2; minvalues=100)
 
@@ -29,7 +29,6 @@
     go1 = H2Trees.values(blktree1.testcluster, H2Trees.root(blktree1.testcluster))
 
     gs1 = H2Trees.values(blktree1.trialcluster, H2Trees.root(blktree1.trialcluster))
-    =#
 
     Ttree2 = H2Trees.TwoNTree(X1, h; minvalues=100)
     Stree2 = H2Trees.TwoNTree(X2, h; minvalues=100)
@@ -39,38 +38,43 @@
 
     gs2 = H2Trees.values(blktree2.trialcluster, H2Trees.root(blktree2.trialcluster))
     kernelmatrix = ButterflyFactorizations.AbstractKernelMatrix(op, X1, X2)
-    #=
-    Bfmat = ButterflyFactorizations.subroutine_BF(
-        kernelmatrix,
+
+    Bfmat = ButterflyFactorizations.PetrovGalerkinBF(
+        op,
+        X1,
+        X2,
         blktree1,
-        1,
-        1,
-        k,
-        10^(-4);
-        Compressor=ButterflyFactorizations.PartialQR(),
+        k;
+        compressor=ButterflyFactorizations.PartialQR(),
+        tol=1e-4,
+        α=1.5,
+        scheduler=OhMyThreads.DynamicScheduler(),
     )
-    =#
-    Bfmat2 = ButterflyFactorizations.subroutine_BF(
-        kernelmatrix,
+
+    Bfmat2 = ButterflyFactorizations.PetrovGalerkinBF(
+        op,
+        X1,
+        X2,
         blktree2,
-        1,
-        1,
-        k,
-        10^(-4);
-        Compressor=ButterflyFactorizations.PartialQR(),
+        k;
+        compressor=ButterflyFactorizations.PartialQR(),
+        tol=1e-4,
+        α=1.5,
+        scheduler=OhMyThreads.DynamicScheduler(),
     )
 
     A = assemble(op, X1, X2)
     x = randn(ComplexF64, size(A, 2))
     y_exact = A * x
-    #=
-    y_approx1 = zeros(ComplexF64, size(A, 1))
-    y_approx1[go1] = Bfmat * x[gs1]
 
-    @test(norm(y_exact - y_approx1) / norm(y_exact))< 10^-3
-    =#
+    y_approx1 = zeros(ComplexF64, size(A, 1))
+    y_approx1 = Bfmat * x#[go1][gs1]
+    (norm(y_exact - y_approx1) / norm(y_exact))
+
+    @test ((norm(y_exact - y_approx1) / norm(y_exact)) < 10^-3)
+
     y_approx = zeros(ComplexF64, size(A, 1))
-    y_approx[go2] = Bfmat2 * x[gs2]
-    @test (norm(y_exact - y_approx) / norm(y_exact)) < 10^-3
+    y_approx = Bfmat2 * x
+    (norm(y_exact - y_approx) / norm(y_exact))
+    @test ((norm(y_exact - y_approx) / norm(y_exact)) < 10^-3)
 end
-=#

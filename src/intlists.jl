@@ -41,27 +41,26 @@ function (t::isFarFunctor)(
     srctree::H2Trees.TwoNTree, tsttree::H2Trees.TwoNTree, snode, onode
 )
     ocenter = H2Trees.center(tsttree, onode)
-    olength = H2Trees.halfsize(tsttree, onode)
+    olength = H2Trees.halfsize(tsttree, onode) # Assuming this is half-width
     scenter = H2Trees.center(srctree, snode)
     slength = H2Trees.halfsize(srctree, snode)
-    W = max(H2Trees.halfsize(srctree, snode), H2Trees.halfsize(tsttree, onode))
-    ro = (sqrt(3) / 2) * olength
-    rs = (sqrt(3) / 2) * slength
-    if norm(scenter - ocenter) - (ro + rs) > t.α * W
-        return true
-    else
-        mind = 0.0
-        length = (slength + olength) / 2
-        for i in 1:3
-            mind += max(0.0, abs(ocenter[i] - scenter[i]) - length)^2
-        end
-        mind = sqrt(mind)
-        if mind > t.α * W
-            return true
-        else
-            return false
+
+    W = max(slength, olength)
+    target_dist = t.α * W
+
+    # 1. Fast Axis-Aligned Bounding Box (AABB) Distance
+    # Calculate exact distance between the two boxes
+    mind_sq = 0.0
+    for i in 1:3
+        # Distance between intervals along axis i
+        dist_axis = abs(ocenter[i] - scenter[i]) - (slength + olength)
+        if dist_axis > 0.0
+            mind_sq += dist_axis^2
         end
     end
+
+    # If the closest points of the cubes are further than α * W, they are far-field
+    return sqrt(mind_sq) > target_dist
 end
 
 function (t::isFarFunctor)(
@@ -69,23 +68,17 @@ function (t::isFarFunctor)(
 )
     ocenter = H2Trees.center(tsttree, onode)
     scenter = H2Trees.center(srctree, snode)
-
-    # För BoundingBalls är halfsize exakt sfärens radie
     olength = H2Trees.radius(tsttree, onode)
     slength = H2Trees.radius(srctree, snode)
 
-    W = max(slength, olength)
-
-    # Avståndet mellan mittpunkterna
     dist = norm(scenter - ocenter)
 
-    # Kolla om avståndet minus BÅDA radierna är tillräckligt stort
-    # (Dvs. avståndet mellan sfärernas yttersta kanter)
-    if dist - (olength + slength) > t.α * W
-        return true
-    else
-        return false
-    end
+    # If you want standard H-matrix condition:
+    W = max(slength, olength)
+    return dist - (olength + slength) > t.α * W
+
+    # OR: If doing pure Butterfly and needing a relative gap condition, use:
+    # return dist > (1 + t.α) * (olength + slength)
 end
 
 """
@@ -115,14 +108,12 @@ function nearandfar(tree::H2Trees.BlockTree, α)
     tsttree = testtree(tree)
     node_o = root(tsttree)
     node_s = root(srctree)
-    nearsv = Vector{Int}[]
-    nearov = Vector{Int}[]
-    #nearinteractions = Dict{Int64,Vector{Int64}}()          #observernodeid --> sourcenodeid
-    farinteractions = Dict{Int64,Vector{Int64}}()           #observernodeid --> sourcenodeid
+    nearinteractions = Vector{Tuple{Int64,Int64}}()         #observernodeid --> sourcenodeid
+    farinteractions = Vector{Tuple{Int64,Int64}}()          #observernodeid --> sourcenodeid
     process_nodes!(
-        srctree, tsttree, node_o, node_s, admissible, farinteractions, nearsv, nearov
+        srctree, tsttree, node_o, node_s, admissible, farinteractions, nearinteractions
     )
-    return nearov, nearsv, farinteractions
+    return farinteractions, nearinteractions
 end
 
 """
@@ -151,19 +142,64 @@ function process_nodes!(
     node_s,
     admissible::isFarFunctor,
     farinteractions,
-    nearsv,
-    nearov,
+    nearinteractions,
 )
-    if admissible(srctree, tsttree, node_s, node_o)
-        push!(get!(farinteractions, node_o, Int64[]), node_s)
+    if admissible(srctree, tsttree, node_s, node_o) #&&
+        #!(isleaf(tsttree, node_o) && isleaf(srctree, node_s))
+        push!(farinteractions, (node_o, node_s))
         return nothing
     elseif isleaf(tsttree, node_o) && isleaf(srctree, node_s)
-        push!(nearsv, H2Trees.values(srctree, node_s))
-        push!(nearov, H2Trees.values(tsttree, node_o))
+        #push!(nearsv, H2Trees.values(srctree, node_s))
+        #push!(nearov, H2Trees.values(tsttree, node_o))
+        push!(nearinteractions, (node_o, node_s))
         return nothing
     end
     # split the larger node
-    if H2Trees.halfsize(tsttree, node_o) >= H2Trees.halfsize(srctree, node_s)
+    #=
+        if (
+            H2Trees.halfsize(tsttree, node_o) >= H2Trees.halfsize(srctree, node_s) &&
+            !isleaf(tsttree, node_o)
+        ) || isleaf(srctree, node_s)
+            for child_o in collect(children(tsttree, node_o))
+                process_nodes!(
+                    srctree,
+                    tsttree,
+                    child_o,
+                    node_s,
+                    admissible,
+                    farinteractions,
+                    nearinteractions,
+                )
+            end
+        else
+            for child_s in collect(children(srctree, node_s))
+                process_nodes!(
+                    srctree,
+                    tsttree,
+                    node_o,
+                    child_s,
+                    admissible,
+                    farinteractions,
+                    nearinteractions,
+                )
+            end
+        end
+    =#
+    if !isleaf(tsttree, node_o) && !isleaf(srctree, node_s)
+        for child_o in collect(children(tsttree, node_o))
+            for child_s in collect(children(srctree, node_s))
+                process_nodes!(
+                    srctree,
+                    tsttree,
+                    child_o,
+                    child_s,
+                    admissible,
+                    farinteractions,
+                    nearinteractions,
+                )
+            end
+        end
+    elseif !isleaf(tsttree, node_o)
         for child_o in collect(children(tsttree, node_o))
             process_nodes!(
                 srctree,
@@ -172,8 +208,7 @@ function process_nodes!(
                 node_s,
                 admissible,
                 farinteractions,
-                nearsv,
-                nearov,
+                nearinteractions,
             )
         end
     else
@@ -185,8 +220,7 @@ function process_nodes!(
                 child_s,
                 admissible,
                 farinteractions,
-                nearsv,
-                nearov,
+                nearinteractions,
             )
         end
     end
@@ -199,19 +233,22 @@ function process_nodes!(
     node_s,
     admissible::isFarFunctor,
     farinteractions,
-    nearsv,
-    nearov,
+    nearinteractions,
 )
-    if admissible(srctree, tsttree, node_s, node_o)
-        push!(get!(farinteractions, node_o, Int64[]), node_s)
+    if admissible(srctree, tsttree, node_s, node_o) #&&
+        #!(isleaf(tsttree, node_o) && isleaf(srctree, node_s))
+        push!(farinteractions, (node_o, node_s))
         return nothing
     elseif isleaf(tsttree, node_o) && isleaf(srctree, node_s)
-        push!(nearsv, H2Trees.values(srctree, node_s))
-        push!(nearov, H2Trees.values(tsttree, node_o))
+        push!(nearinteractions, (node_o, node_s))
         return nothing
     end
     # split the larger node
-    if H2Trees.radius(tsttree, node_o) >= H2Trees.radius(srctree, node_s)
+    #=
+    if (
+        H2Trees.radius(tsttree, node_o) >= H2Trees.radius(srctree, node_s) &&
+        !isleaf(tsttree, node_o)
+    ) || isleaf(srctree, node_s)
         for child_o in collect(children(tsttree, node_o))
             process_nodes!(
                 srctree,
@@ -220,8 +257,7 @@ function process_nodes!(
                 node_s,
                 admissible,
                 farinteractions,
-                nearsv,
-                nearov,
+                nearinteractions,
             )
         end
     else
@@ -233,8 +269,47 @@ function process_nodes!(
                 child_s,
                 admissible,
                 farinteractions,
-                nearsv,
-                nearov,
+                nearinteractions,
+            )
+        end
+    end
+    =#
+    if !isleaf(tsttree, node_o) && !isleaf(srctree, node_s)
+        for child_o in collect(children(tsttree, node_o))
+            for child_s in collect(children(srctree, node_s))
+                process_nodes!(
+                    srctree,
+                    tsttree,
+                    child_o,
+                    child_s,
+                    admissible,
+                    farinteractions,
+                    nearinteractions,
+                )
+            end
+        end
+    elseif !isleaf(tsttree, node_o)
+        for child_o in collect(children(tsttree, node_o))
+            process_nodes!(
+                srctree,
+                tsttree,
+                child_o,
+                node_s,
+                admissible,
+                farinteractions,
+                nearinteractions,
+            )
+        end
+    else
+        for child_s in collect(children(srctree, node_s))
+            process_nodes!(
+                srctree,
+                tsttree,
+                node_o,
+                child_s,
+                admissible,
+                farinteractions,
+                nearinteractions,
             )
         end
     end

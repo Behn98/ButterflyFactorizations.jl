@@ -282,7 +282,7 @@ blktree = TwoNTree(X, X, lambda / 10)
     X,
     blktree,
     k;
-    Compressor=ButterflyFactorizations.PartialQR(),
+    compressor=ButterflyFactorizations.PartialQR(),
     tol=1e-3,
     α=2,
 )

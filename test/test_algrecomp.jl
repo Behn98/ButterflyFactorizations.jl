@@ -37,16 +37,6 @@
     tree3 = TwoNTree(U2, T, lambda / 10)
     tree4 = TwoNTree(U, T2, lambda / 10)
 
-    go1 = H2Trees.values(tree1.testcluster, H2Trees.root(tree1.testcluster))
-    go2 = H2Trees.values(tree2.testcluster, H2Trees.root(tree2.testcluster))
-    go3 = H2Trees.values(tree3.testcluster, H2Trees.root(tree3.testcluster))
-    go4 = H2Trees.values(tree4.testcluster, H2Trees.root(tree4.testcluster))
-
-    gs1 = H2Trees.values(tree1.trialcluster, H2Trees.root(tree1.trialcluster))
-    gs2 = H2Trees.values(tree2.trialcluster, H2Trees.root(tree2.trialcluster))
-    gs3 = H2Trees.values(tree3.trialcluster, H2Trees.root(tree3.trialcluster))
-    gs4 = H2Trees.values(tree4.trialcluster, H2Trees.root(tree4.trialcluster))
-
     @views farasm = BEAST.blockassembler(op, T, U)
     @views function farassembler1(Z, tdata, sdata)
         @views store(v, m, n) = (Z[m, n] += v)
@@ -96,13 +86,21 @@
     =========================================================================
     =========================================================================#
 
-    Bfly1 = ButterflyFactorizations.subroutine_BF(farassembler1, tree1, 1, 1, k, 10^(-4))
+    Bfly1 = ButterflyFactorizations.subroutine_BF(
+        farassembler1, tree1, 1, 1, k, 10^(-4); scheduler=OhMyThreads.DynamicScheduler()
+    )
     size1 = Base.summarysize(Bfly1)
-    Bfly2 = ButterflyFactorizations.subroutine_BF(farassembler2, tree2, 1, 1, k, 10^(-4))
+    Bfly2 = ButterflyFactorizations.subroutine_BF(
+        farassembler2, tree2, 1, 1, k, 10^(-4); scheduler=OhMyThreads.DynamicScheduler()
+    )
     size2 = Base.summarysize(Bfly2)
-    Bfly3 = ButterflyFactorizations.subroutine_BF(farassembler3, tree3, 1, 1, k, 10^(-4))
+    Bfly3 = ButterflyFactorizations.subroutine_BF(
+        farassembler3, tree3, 1, 1, k, 10^(-4); scheduler=OhMyThreads.DynamicScheduler()
+    )
     size3 = Base.summarysize(Bfly3)
-    Bfly4 = ButterflyFactorizations.subroutine_BF(farassembler4, tree4, 1, 1, k, 10^(-4))
+    Bfly4 = ButterflyFactorizations.subroutine_BF(
+        farassembler4, tree4, 1, 1, k, 10^(-4); scheduler=OhMyThreads.DynamicScheduler()
+    )
     size4 = Base.summarysize(Bfly4)
 
     RBfly1 = ButterflyFactorizations.recompress_BF(Bfly1, 10^(-2))
@@ -124,10 +122,10 @@
     x_test3 = zeros(ComplexF64, size(A3, 1))
     x_test4 = zeros(ComplexF64, size(A4, 1))
 
-    @views mul!(x_test1[go1], RBfly1, x_t[gs1])
-    @views mul!(x_test2[go2], RBfly2, x_t[gs2])
-    @views mul!(x_test3[go3], RBfly3, x_t[gs3])
-    @views mul!(x_test4[go4], RBfly4, x_t2[gs4])
+    @views mul!(x_test1, RBfly1, x_t)
+    @views mul!(x_test2, RBfly2, x_t)
+    @views mul!(x_test3, RBfly3, x_t)
+    @views mul!(x_test4, RBfly4, x_t2)
 
     @test norm(x_test1 - x_s1) / norm(x_s1) < 10^(-1)
     @test norm(x_test2 - x_s2) / norm(x_s2) < 10^(-1)

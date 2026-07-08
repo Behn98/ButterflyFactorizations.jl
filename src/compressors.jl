@@ -44,6 +44,8 @@ function (t::PartialQR)(
     n_obs = length(obs_index)
     n_src = length(src_index)
 
+    old_blas = BLAS.get_num_threads()
+    BLAS.set_num_threads(1)
     # 1. Starta med den geometriska gissningen, men garantera minst t.ex. 10 rader
     n_otilde = min(max(n_otilde_guess, 10), n_obs)
 
@@ -51,6 +53,8 @@ function (t::PartialQR)(
         # --- random row sampling ---
         idx = randperm(n_obs)
         row = @view obs_index[idx[1:n_otilde]]
+        #idx = [1 + round(Int, (i - 1) * (n_obs - 1) / (n_otilde - 1)) for i in 1:n_otilde]
+        #row = @view obs_index[idx]
         col = src_index  # full view, no copy
 
         # --- assemble Z ---
@@ -70,9 +74,10 @@ function (t::PartialQR)(
         # ADAPTIV KOLL: Om ranken maxade ut vårt sample (eller är
         # väldigt nära), har vi antagligen för lite rader testade!
         # ==========================================================
-        if r >= n_otilde - 2 && n_otilde < n_obs
+        if r > Int(floor(0.8*n_otilde)) && n_otilde < n_obs
             # Dubbla antalet rader vi samplar och försök igen
             n_otilde = min(n_otilde * 2, n_obs)
+
             continue
         end
 
@@ -89,7 +94,7 @@ function (t::PartialQR)(
         ldiv!(R11, tmp)
 
         k = src_index[P[1:r]]
-
+        BLAS.set_num_threads(old_blas)
         return tmp, k, r
     end
 end
@@ -130,7 +135,7 @@ function estimate_rank_3d(
     ;
     C=1.0,
     Cε=3.0,
-    Rmin=5,
+    Rmin=3,
 )
 
     # Center separation
@@ -140,7 +145,7 @@ function estimate_rank_3d(
     dmin = max(d - 0.5 * (a_s + a_o), 1e-4)
 
     # Geometric directional rank estimate
-    R_geom = C * k * (a_s * a_o) / dmin
+    R_geom = C * (k * (a_s * a_o) / dmin)^2
 
     # Tolerance-dependent padding
     R_tol = Cε * log(1 / ε)
@@ -160,7 +165,7 @@ function estimate_rank_3d(
     ε::Float64;
     C=1.0,
     Cε=3.0,
-    Rmin=5,
+    Rmin=3,
 )
     center = H2Trees.center
     halfsize = H2Trees.halfsize
@@ -178,7 +183,7 @@ function estimate_rank_3d(
     dmin = max(d - 0.5 * (a_s + a_o), 1e-4)
 
     # Geometric directional rank estimate
-    R_geom = C * k * (a_s * a_o) / dmin
+    R_geom = C * (k * (a_s * a_o) / dmin)^2
 
     # Tolerance-dependent padding
     R_tol = Cε * log(1 / ε)
@@ -198,7 +203,7 @@ function estimate_rank_3d(
     ε::Float64;
     C=1.0,
     Cε=3.0,
-    Rmin=5,
+    Rmin=3,
 )
     center = H2Trees.center
     radius = H2Trees.radius
@@ -214,10 +219,10 @@ function estimate_rank_3d(
 
     # Minimum separation: Radierna MÅSTE subtraheras i sin helhet!
     # Bytt ut 1e-12 mot 1e-4 för att förhindra IntegerOverflow vid överlappande löv
-    dmin = max(d - 0.5 * (a_s + a_o), 1e-4)
+    dmin = max(d - (a_s + a_o), 1e-4)
 
     # Geometric directional rank estimate
-    R_geom = C * k * (a_s * a_o) / dmin
+    R_geom = C * (k * (a_s * a_o) / dmin)^2
 
     # Tolerance-dependent padding
     R_tol = Cε * log(1 / ε)

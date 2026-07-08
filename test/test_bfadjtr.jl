@@ -40,16 +40,6 @@
     tree3 = TwoNTree(U2, T, lambda / 10)
     tree4 = TwoNTree(U, T2, lambda / 10)
 
-    go1 = H2Trees.values(tree1.testcluster, H2Trees.root(tree1.testcluster))
-    go2 = H2Trees.values(tree2.testcluster, H2Trees.root(tree2.testcluster))
-    go3 = H2Trees.values(tree3.testcluster, H2Trees.root(tree3.testcluster))
-    go4 = H2Trees.values(tree4.testcluster, H2Trees.root(tree4.testcluster))
-
-    gs1 = H2Trees.values(tree1.trialcluster, H2Trees.root(tree1.trialcluster))
-    gs2 = H2Trees.values(tree2.trialcluster, H2Trees.root(tree2.trialcluster))
-    gs3 = H2Trees.values(tree3.trialcluster, H2Trees.root(tree3.trialcluster))
-    gs4 = H2Trees.values(tree4.trialcluster, H2Trees.root(tree4.trialcluster))
-
     @views farasm = BEAST.blockassembler(op, T, U)
     @views function farassembler1(Z, tdata, sdata)
         @views store(v, m, n) = (Z[m, n] += v)
@@ -103,10 +93,18 @@
     =========================================================================
     =========================================================================#
 
-    Bfly1 = ButterflyFactorizations.subroutine_BF(farassembler1, tree1, 1, 1, k, 10^(-3))
-    Bfly2 = ButterflyFactorizations.subroutine_BF(farassembler2, tree2, 1, 1, k, 10^(-3))
-    Bfly3 = ButterflyFactorizations.subroutine_BF(farassembler3, tree3, 1, 1, k, 10^(-3))
-    Bfly4 = ButterflyFactorizations.subroutine_BF(farassembler4, tree4, 1, 1, k, 10^(-3))
+    Bfly1 = ButterflyFactorizations.subroutine_BF(
+        farassembler1, tree1, 1, 1, k, 10^(-3); scheduler=OhMyThreads.DynamicScheduler()
+    )
+    Bfly2 = ButterflyFactorizations.subroutine_BF(
+        farassembler2, tree2, 1, 1, k, 10^(-3); scheduler=OhMyThreads.DynamicScheduler()
+    )
+    Bfly3 = ButterflyFactorizations.subroutine_BF(
+        farassembler3, tree3, 1, 1, k, 10^(-3); scheduler=OhMyThreads.DynamicScheduler()
+    )
+    Bfly4 = ButterflyFactorizations.subroutine_BF(
+        farassembler4, tree4, 1, 1, k, 10^(-3); scheduler=OhMyThreads.DynamicScheduler()
+    )
 
     Bfly1m = ButterflyFactorizations.subroutine_BF_mats(
         farassembler1, tree1, 1, 1, k, 10^(-3)
@@ -126,10 +124,10 @@
     x_test3 = zeros(ComplexF64, size(A3, 2))
     x_test4 = zeros(ComplexF64, size(A4, 2))
 
-    @views mul!(x_test1[gs1], Bfly1', x_t[go1])
-    @views mul!(x_test2[gs2], Bfly2', x_t[go2])
-    @views mul!(x_test3[gs3], Bfly3', x_t2[go3])
-    @views mul!(x_test4[gs4], Bfly4', x_t[go4])
+    @views mul!(x_test1, Bfly1', x_t)
+    @views mul!(x_test2, Bfly2', x_t)
+    @views mul!(x_test3, Bfly3', x_t2)
+    @views mul!(x_test4, Bfly4', x_t)
 
     @test norm(x_test1 - x_s1a) / norm(x_s1a) < 10^(-2)
     @test norm(x_test2 - x_s2a) / norm(x_s2a) < 10^(-2)
@@ -146,10 +144,10 @@
     @test norm(x_test3 - x_s3a) / norm(x_s3a) < 10^(-2)
     @test norm(x_test4 - x_s4a) / norm(x_s4a) < 10^(-2)
 
-    @views mul!(x_test1[gs1], transpose(Bfly1), x_t[go1])
-    @views mul!(x_test2[gs2], transpose(Bfly2), x_t[go2])
-    @views mul!(x_test3[gs3], transpose(Bfly3), x_t2[go3])
-    @views mul!(x_test4[gs4], transpose(Bfly4), x_t[go4])
+    @views mul!(x_test1, transpose(Bfly1), x_t)
+    @views mul!(x_test2, transpose(Bfly2), x_t)
+    @views mul!(x_test3, transpose(Bfly3), x_t2)
+    @views mul!(x_test4, transpose(Bfly4), x_t)
 
     @test norm(x_test1 - x_s1t) / norm(x_s1t) < 10^(-2)
     @test norm(x_test2 - x_s2t) / norm(x_s2t) < 10^(-2)
