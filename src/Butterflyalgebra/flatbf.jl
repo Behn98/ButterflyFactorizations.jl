@@ -1,3 +1,33 @@
+"""
+    FlatBF(bf::BF) -> FlatBF
+
+Convert a hierarchical, tree-structured Butterfly Factorization (`BF`) into a flattened,
+memory-contiguous representation (`FlatBF`) optimized for high-performance evaluation.
+
+This constructor packs sparse, dictionary-mapped block matrices into contiguous arrays and CSR-like
+(Compressed Sparse Row) pointer formats to maximize cache locality and eliminate dictionary-lookup
+overheads during matrix-vector multiplication.
+
+# Arguments
+
+  - `bf::BF`: The original butterfly factorization instance containing hierarchical tree nodes and dictionary-based block matrices (`Q`, `R`, and `P`).
+
+# Returns
+
+  - `FlatBF`: A flattened representation containing:
+      + `flat_Q`: Contiguous source/output layer factorization components.
+      + `flat_R`: A vector of `FlatLinearLayer` structures using explicit row/column offset indexing instead of nested dictionaries.
+      + `flat_P`: Contiguous observer/input layer factorization components.
+      + `dim`: The global structural dimensions of the operator.
+      + `NS` / `NO`: The counts for source and observer dimensions.
+      + `layer_vectors`: A pre-allocated cache of workspace arrays corresponding to the inner dimensions of each factor level, preventing run-time allocations during evaluations.
+
+# Structural Transformations
+
+ 1. **Edge-Case Evaluation (L = 0):** If the factorization contains zero internal `R` levels, it bypasses the middle transformations, flattening only `Q` and `P` directly into a single-stage workspace.
+ 2. **ID Mapping & CSR Construction:** Synchronizes index spaces between consecutive `R` layers using an explicit coordinate tracking array, packing the sparse tree interactions into contiguous blocks with a `row_ptr` and `col_idx` indexing scheme.
+ 3. **Workspace Pre-allocation:** Computes the maximum incoming/outgoing vector sizes across all internal factor steps and allocates a dedicated `layer_vectors` buffer to guarantee allocation-free matrix applications.
+"""
 function FlatBF(bf::BF)
     L = length(bf.R)
     NO = bf.NO
@@ -164,11 +194,10 @@ function FlatBF(bf::BF)
     return FlatBF(flat_Q, flat_R, flat_P, dim, NS, NO, layer_vectors)
 end
 
-# Intern hjälpfunktion som vänder på strukturen och transponerar blocken
 function transform_bf(bf::FlatBF, conjugate::Bool)
     L = length(bf.R)
 
-    # 1. Transformera R-lagren och vänd på ordningen (l -> L - l + 1)
+    # 1. Transform the R-layers and reverse their order (l -> L - l + 1)
     new_R = Vector{FlatLinearLayer}(undef, L)
     for l in 1:L
         old_layer = bf.R[l]
@@ -176,7 +205,7 @@ function transform_bf(bf::FlatBF, conjugate::Bool)
         num_old_rows = length(old_layer.row_ptr) - 1
         num_old_cols = length(old_layer.col_offsets)
 
-        # Samla block för de nya raderna (vilka är de gamla kolumnerna)
+        # Collect blocks for the new rows (which are the old columns)
         new_row_blocks = [Int[] for _ in 1:num_old_cols]
         new_row_cols = [Int32[] for _ in 1:num_old_cols]
 
@@ -188,7 +217,7 @@ function transform_bf(bf::FlatBF, conjugate::Bool)
             end
         end
 
-        # Bygg den nya CSR-strukturen för detta transponerade lager
+        # Build the new CSR structure for this transposed layer
         new_row_ptr = Vector{Int32}(undef, num_old_cols + 1)
         new_col_idx = Int32[]
         new_blocks = Matrix{ComplexF64}[]
@@ -196,26 +225,26 @@ function transform_bf(bf::FlatBF, conjugate::Bool)
         counter = 1
         for j in 1:num_old_cols
             new_row_ptr[j] = counter
-            # Rad-indexen 'old_i' är redan sorterade eftersom vi loopade i från 1:num_old_rows
+            # Row indices 'old_i' are already sorted because we looped 'i' from 1:num_old_rows
             for (k, b) in enumerate(new_row_blocks[j])
                 old_i = new_row_cols[j][k]
                 push!(new_col_idx, old_i)
                 B = old_layer.blocks[b]
 
-                # Transponera eller adjungera det enskilda matrisblocket
+                # Transpose or adjoin the individual matrix block
                 push!(new_blocks, conjugate ? collect(B') : collect(transpose(B)))
                 counter += 1
             end
         end
         new_row_ptr[end] = counter
 
-        # Rad- och kolumn-offsets byter plats
+        # Row and column configurations swap places
         new_row_offsets = old_layer.col_offsets
         new_col_offsets = old_layer.row_offsets
         new_in_size     = old_layer.out_size
         new_out_size    = old_layer.in_size
 
-        # Placera lagret i omvänd ordning i den nya vektorn
+        # Place the layer in reverse order into the new vector
         new_R[L - l + 1] = FlatLinearLayer(
             new_row_ptr,
             new_col_idx,
@@ -227,22 +256,39 @@ function transform_bf(bf::FlatBF, conjugate::Bool)
         )
     end
 
-    # 2. Transformera Q (som blir nya P eftersom den ligger sist i kedjan nu)
+    # 2. Transform Q (becomes the new P since it is at the end of the chain now)
     new_P_blocks = Matrix{ComplexF64}[]
     for B in bf.Q.blocks
         push!(new_P_blocks, conjugate ? collect(B') : collect(transpose(B)))
     end
     new_P = FlatPLayer(new_P_blocks, bf.Q.col_offsets, bf.Q.perm)
 
-    # 3. Transformera P (som blir nya Q eftersom den ligger först i kedjan nu)
+    # 3. Transform P (becomes the new Q since it is at the start of the chain now)
     new_Q_blocks = Matrix{ComplexF64}[]
     for B in bf.P.blocks
         push!(new_Q_blocks, conjugate ? collect(B') : collect(transpose(B)))
     end
     new_Q = FlatQLayer(new_Q_blocks, bf.P.row_offsets, bf.P.perm)
 
-    # Vänd på den globala matrisdimensionen
+    # Reverse the global matrix dimensions
     new_shape = (bf.out_shape[2], bf.out_shape[1])
 
-    return FlatBF(new_Q, new_R, new_P, new_shape, bf.NO, bf.NS)
+    # 4. Pre-allocate compliance workspace based on the new R-layer sizes
+    layer_vectors = Vector{Vector{ComplexF64}}(undef, L + 1)
+    if L == 0
+        int_size = if isempty(new_Q.blocks)
+            0
+        else
+            (new_Q.col_offsets[end] + size(new_Q.blocks[end], 1) - 1)
+        end
+        layer_vectors = [zeros(ComplexF64, int_size)]
+    else
+        layer_vectors[1] = zeros(ComplexF64, new_R[1].in_size)
+        for l in 1:L
+            layer_vectors[l + 1] = zeros(ComplexF64, new_R[l].out_size)
+        end
+    end
+
+    # 5. Return the struct matching the 7-argument FlatBF format exactly
+    return FlatBF(new_Q, new_R, new_P, new_shape, bf.NO, bf.NS, layer_vectors)
 end

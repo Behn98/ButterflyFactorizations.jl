@@ -112,7 +112,7 @@ function apply_BF(
     # ------------------------------------------------------------
     # Final assembly
     # ------------------------------------------------------------
-    p_keys = collect(keys(R[end]))
+    p_keys = collect(keys(P))
     p_results = let coeffs_current = coeffs_current
         tmap(p_keys; scheduler=scheduler) do pkey
             if !haskey(coeffs_current, pkey)

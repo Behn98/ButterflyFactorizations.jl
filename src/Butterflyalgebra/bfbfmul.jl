@@ -1,21 +1,36 @@
 import H2Trees: values, center, halfsize, children, isleaf, trialtree, testtree
 """
-    mulBFs(BF_1::BF, BF_2::BF, τ::Float64)
+    mulBFs(BF_1_init::BF, BF_2_init::BF, τ::Float64) -> BF
 
-Algebraically multiplies two Butterfly Factorization (BF) structures and recompresses the
-result using the truncation tolerance `τ`.
+Compute the operator product of two Butterfly Factorizations (`BF`) and compress the
+resulting representation to a specified accuracy tolerance.
 
-Both factorizations must have the same number of levels, and the source dimensions of `BF_1`
-must match the observer dimensions of `BF_2`. Additionally, the resulting structure is
-purely algebraic and may lose its direct physical interpretation, similar to multiplying two
-dense matrices directly. The function constructs an intermediate messenger structure to hold
-the products of the factors, then iteratively multiplies and recompresses the factors level
-by level, ultimately returning a new `BF` that represents the product of the two input
-factorizations. The resulting `BF` maintains the same hierarchical structure but with
-potentially reduced ranks in the `R` factors, leading to improved efficiency in storage and
-matrix-vector products while preserving the overall accuracy within the specified tolerance.
-In terms of storage future work has to include more aggressive recompression strategies to
-prevent the intermediate factors from growing too large.
+This function implements hierarchical butterfly-butterfly multiplication. It merges the internal
+factors of both trees by initializing an intermediate structural "messenger" matrix,
+and then sequentially alternates row-swapping (`browswap`) and low-rank truncation (`recompress_BF`)
+to prevent rank explosion.
+
+# Arguments
+
+  - `BF_1_init::BF`: The left butterfly factorization operator.
+  - `BF_2_init::BF`: The right butterfly factorization operator.
+  - `τ::Float64`: The accuracy tolerance parameter used during internal row-swaps and factor recompressions.
+
+# Constraints & Assumed Invariants
+
+  - **Level Matching:** Both butterfly factorizations must possess the exact same number of hierarchical levels (`length`).
+  - **Dimensional Compatibility:** The source dimension of the left operator (`BF_1_init.NS`) must match the observer dimension of the right operator (`BF_2_init.NO`).
+
+# Returns
+
+  - `BF`: A new, optimized, and recompressed `BF` object representing the combined operator product.
+
+# Core Algorithm Steps
+
+ 1. **Messenger Initialization:** Creates an initial central block mapping by multiplying `BF_1.Q` and `BF_2.P`.
+ 2. **Layer Intertwining:** Absorbs the outermost structural remainder levels (`BF_1.R[1]` and `BF_2.R[end]`) into the messenger.
+ 3. **Iterative Row Swapping:** Loops through the internal tree layers, executing a series of butterfly row-swaps (`browswap`) to correctly align the hierarchical spatial/frequency boxes.
+ 4. **Trimming:** Truncates redundant rank dimensions via `recompress_BF` at each step to maintain the strict \$O(N \\log N)\$ butterfly complexity.
 """
 function mulBFs(BF_1_init::BF, BF_2_init::BF, τ::Float64)
     @assert length(BF_1_init) == length(BF_2_init) "Both BFs must have the same number of levels"
@@ -72,6 +87,12 @@ function mulBFs(BF_1_init::BF, BF_2_init::BF, τ::Float64)
         BF_2.stree,
         BF_1.otree,
     )
+end
+
+function Base.:*(
+    Butterfly1::ButterflyFactorizations.BF, Butterfly2::ButterflyFactorizations.BF
+)
+    return mulBFs(Butterfly1, Butterfly2, max(Butterfly1.τ, Butterfly2.τ))
 end
 
 function mul_factors(
@@ -308,7 +329,6 @@ function browswap(LeftFactor::R_factor, RightFactor::R_factor, τ)
     )
 end
 
-# add tree to the struct...
 function LinearAlgebra.mul!(
     C::ButterflyFactorizations.BF,
     A::ButterflyFactorizations.BF,

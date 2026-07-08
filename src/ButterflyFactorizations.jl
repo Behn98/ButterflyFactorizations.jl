@@ -47,7 +47,7 @@ using LowRankApprox
 using SparseArrays
 
 export PetrovGalerkinBF, PetrovGalerkinBF_mats, subroutine_BF, subroutine_BF_mats, PartialQR
-export mulBFs, add_eqbfs, recompress_BF, apply_BF
+export mulBFs, add_eqbfs, recompress_BF, apply_BF, FlatBF
 
 #Helper funcitons
 include("auxillaries.jl")

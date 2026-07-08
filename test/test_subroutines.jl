@@ -42,45 +42,13 @@
     tree4 = BlockTree(tree41, tree42)
 
     farassembler1 = ButterflyFactorizations.AbstractKernelMatrix(op, T, U)
-    #=
-    @views function farassembler1(Z, tdata, sdata)
-        @views store(v, m, n) = (Z[m, n] += v)
 
-        # Skapa blockassemblern LOKALT inuti anropet så att den är thread-safe!
-        farasm_local = BEAST.blockassembler(op, T, U)
-        return farasm_local(tdata, sdata, store)
-    end
-    =#
     farassembler2 = ButterflyFactorizations.AbstractKernelMatrix(op, U, T)
-    #=
-    @views function farassembler2(Z, tdata, sdata)
-        @views store(v, m, n) = (Z[m, n] += v)
 
-        # Skapa blockassemblern LOKALT inuti anropet så att den är thread-safe!
-        farasm_local = BEAST.blockassembler(op, U, T)
-        return farasm_local(tdata, sdata, store)
-    end
-    =#
     farassembler3 = ButterflyFactorizations.AbstractKernelMatrix(op, U2, T)
-    #=
-    @views function farassembler3(Z, tdata, sdata)
-        @views store(v, m, n) = (Z[m, n] += v)
 
-        # Skapa blockassemblern LOKALT inuti anropet så att den är thread-safe!
-        farasm_local = BEAST.blockassembler(op, U2, T)
-        return farasm_local(tdata, sdata, store)
-    end
-    =#
     farassembler4 = ButterflyFactorizations.AbstractKernelMatrix(op, U, T2)
-    #=
-    @views function farassembler4(Z, tdata, sdata)
-        @views store(v, m, n) = (Z[m, n] += v)
 
-        # Skapa blockassemblern LOKALT inuti anropet så att den är thread-safe!
-        farasm_local = BEAST.blockassembler(op, U, T2)
-        return farasm_local(tdata, sdata, store)
-    end
-    =#
     #========================================================================
     =========================================================================
                         Assembly of Matrices and Vectors
@@ -104,10 +72,18 @@
     =========================================================================
     =========================================================================#
 
-    Bfly1 = ButterflyFactorizations.subroutine_BF(farassembler1, tree1, 1, 1, k, 10^(-3))
-    Bfly2 = ButterflyFactorizations.subroutine_BF(farassembler2, tree2, 1, 1, k, 10^(-3))
-    Bfly3 = ButterflyFactorizations.subroutine_BF(farassembler3, tree3, 1, 1, k, 10^(-3))
-    Bfly4 = ButterflyFactorizations.subroutine_BF(farassembler4, tree4, 1, 1, k, 10^(-3))
+    Bfly1 = ButterflyFactorizations.subroutine_BF(
+        farassembler1, tree1, 1, 1, k, 10^(-3); scheduler=OhMyThreads.DynamicScheduler()
+    )
+    Bfly2 = ButterflyFactorizations.subroutine_BF(
+        farassembler2, tree2, 1, 1, k, 10^(-3); scheduler=OhMyThreads.DynamicScheduler()
+    )
+    Bfly3 = ButterflyFactorizations.subroutine_BF(
+        farassembler3, tree3, 1, 1, k, 10^(-3); scheduler=OhMyThreads.DynamicScheduler()
+    )
+    Bfly4 = ButterflyFactorizations.subroutine_BF(
+        farassembler4, tree4, 1, 1, k, 10^(-3); scheduler=OhMyThreads.DynamicScheduler()
+    )
 
     Bfly1m = ButterflyFactorizations.subroutine_BF_mats(
         farassembler1, tree1, 1, 1, k, 10^(-3)

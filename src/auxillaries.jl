@@ -426,10 +426,7 @@ function deep_accumulate_P!(
             dest[key] = copy(mat_src)
         else
             println("Overlapping block detected at key: $key")
-            # CRITICAL: Mathematically combine the overlapping matrices.
-            # Usually, overlapping blocks in a cluster tree addition require
-            # matrix addition, or checking if they stack.
-            # If they are overlapping blocks of the same size:
+            #may not happen --> preserve the existing block and append the new one
             dest[key] = hcat(dest[key], mat_src)
         end
     end
@@ -445,10 +442,7 @@ function deep_accumulate_Q!(
             dest[key] = copy(mat_src)
         else
             println("Overlapping block detected at key: $key")
-            # CRITICAL: Mathematically combine the overlapping matrices.
-            # Usually, overlapping blocks in a cluster tree addition require
-            # matrix addition, or checking if they stack.
-            # If they are overlapping blocks of the same size:
+            #may not happen --> preserve the existing block and append the new one
             dest[key] = vcat(dest[key], mat_src)
         end
     end
@@ -504,10 +498,7 @@ function deep_accumulate_R!(
                     println(
                         "Overlapping block detected at node_key: $new_node_key, sub_key: $new_sub_key",
                     )
-                    # CRITICAL: Mathematically combine the overlapping matrices.
-                    # Usually, overlapping blocks in a cluster tree addition require
-                    # matrix addition, or checking if they stack.
-                    # If they are overlapping blocks of the same size:
+                    #may not happen --> preserve the existing block and append the new one
                     blockdiag(inner_dict_dest[new_sub_key], mat_src)
                 end
             end

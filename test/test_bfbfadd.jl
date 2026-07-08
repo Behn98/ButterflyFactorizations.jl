@@ -86,10 +86,18 @@
     =========================================================================
     =========================================================================#
 
-    Bfly1 = ButterflyFactorizations.subroutine_BF(farassembler1, tree1, 1, 1, k, 10^(-4))
-    Bfly2 = ButterflyFactorizations.subroutine_BF(farassembler2, tree2, 1, 1, k, 10^(-4))
-    Bfly3 = ButterflyFactorizations.subroutine_BF(farassembler3, tree3, 1, 1, k, 10^(-4))
-    Bfly4 = ButterflyFactorizations.subroutine_BF(farassembler4, tree4, 1, 1, k, 10^(-4))
+    Bfly1 = ButterflyFactorizations.subroutine_BF(
+        farassembler1, tree1, 1, 1, k, 10^(-4); scheduler=OhMyThreads.DynamicScheduler()
+    )
+    Bfly2 = ButterflyFactorizations.subroutine_BF(
+        farassembler2, tree2, 1, 1, k, 10^(-4); scheduler=OhMyThreads.DynamicScheduler()
+    )
+    Bfly3 = ButterflyFactorizations.subroutine_BF(
+        farassembler3, tree3, 1, 1, k, 10^(-4); scheduler=OhMyThreads.DynamicScheduler()
+    )
+    Bfly4 = ButterflyFactorizations.subroutine_BF(
+        farassembler4, tree4, 1, 1, k, 10^(-4); scheduler=OhMyThreads.DynamicScheduler()
+    )
 
     Bfly1A = ButterflyFactorizations.add_eqbfs(Bfly1, Bfly1, 10^-3)
     Bfly2A = ButterflyFactorizations.add_eqbfs(Bfly2, Bfly2, 10^-3)

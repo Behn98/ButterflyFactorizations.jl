@@ -1,18 +1,28 @@
 """
-There are exactly two cases to consider when adding Butterfly factorizations (BFs).
-In both cases, the corresponding matrix blocks are of equal dimensions.
+    add_eqbfs(BF_1_init::BF, BF_2_init::BF, τ) -> BF
 
-Case 1 (Same Source and Observer Clusters):
-The BFs map between the same observer and source clusters. Because the underlying
-compression scheme relies on a single tree, the physical degrees of freedom (DoF)
-match. Thus, the `Q` and `P` matrices can be appropriately combined without
-disturbing the underlying physics, applying the addition described in the literature.
+Add two Butterfly Factorization (`BF`) representations together and recompress the result.
 
-Case 2 (Disjoint Source and Observer Clusters):
-The BFs represent disjoint source and observer clusters. A direct spatial
-concatenation cannot occur, so the BFs are simply joined into a new structure.
-Note that this resulting structure is purely algebraic and loses its direct physical
-interpretation, similar to adding the two dense matrices directly.
+This function implements the addition of two hierarchical butterfly representations by combining
+their respective structural components (`P`, `R`, and `Q` matrices) and subsequently truncating
+the resulting operator to a desired accuracy tolerance.
+
+# Arguments
+
+  - `BF_1_init::BF`: The first butterfly factorization operand.
+  - `BF_2_init::BF`: The second butterfly factorization operand. Must share the same number of source (`NS`) and output (`NO`) nodes as `BF_1_init`.
+  - `τ`: The tolerance threshold used for the final recompression step.
+
+# Returns
+
+  - `BF`: A new, recompressed `BF` object representing the operator sum of the inputs.
+
+# Implementation Details
+
+  - **P Matrices:** Merged using horizontal concatenation (`hcat`).
+  - **Q Matrices:** Merged using vertical concatenation (`vcat`).
+  - **R Matrices:** Intersecting block keys across layers are combined via block-diagonalization (`blockdiag`). Unmatched keys are safely padded with zeros to preserve structural dimensions before block-diagonalization.
+  - **Recompression:** The final structural configuration is passed to `recompress_BF` with the parameter `τ` to optimize memory and rank efficiency.
 """
 function add_eqbfs(BF_1_init::BF, BF_2_init::BF, τ)
     @assert BF_1_init.NS == BF_2_init.NS && BF_1_init.NO == BF_2_init.NO "rootids must match for addition."
@@ -27,8 +37,8 @@ function add_eqbfs(BF_1_init::BF, BF_2_init::BF, τ)
             P_new[k] = BF_1.P[k]
         end
     end
-    single = 0
-    comb = 0
+    #single = 0
+    #comb = 0
     #=
     for k in keys(BF_2.P)
         if !haskey(BF_1.P, k)
@@ -96,10 +106,10 @@ function add_eqbfs(BF_1_init::BF, BF_2_init::BF, τ)
                     haskey(BF_1.R[l][row], col) &&
                     haskey(BF_2.R[l], row) &&
                     haskey(BF_2.R[l][row], col)
-                    comb += 1
+                    #comb += 1
                     R_new[l][row][col] = blockdiag(BF_1.R[l][row][col], BF_2.R[l][row][col])
                 elseif haskey(BF_1.R[l], row) && haskey(BF_1.R[l][row], col)
-                    single += 1
+                    #single += 1
                     R_new[l][row][col] = blockdiag(
                         BF_1.R[l][row][col],
                         zeros(
@@ -109,7 +119,7 @@ function add_eqbfs(BF_1_init::BF, BF_2_init::BF, τ)
                         ),
                     )
                 elseif haskey(BF_2.R[l], row) && haskey(BF_2.R[l][row], col)
-                    single += 1
+                    #single += 1
                     R_new[l][row][col] = blockdiag(
                         zeros(
                             ComplexF64,
@@ -137,8 +147,8 @@ function add_eqbfs(BF_1_init::BF, BF_2_init::BF, τ)
         end
     end
     =#
-    @show single
-    @show comb
+    #@show single
+    #@show comb
     return recompress_BF(
         BF(
             Q_new,

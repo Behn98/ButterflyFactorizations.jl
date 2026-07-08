@@ -133,7 +133,7 @@ function estimate_rank_3d(
     a_o::Float64,
     ε::Float64,
     ;
-    C=0.5,
+    C=1.0,
     Cε=3.0,
     Rmin=3,
 )
@@ -163,7 +163,7 @@ function estimate_rank_3d(
     Snode::Int,
     Onode::Int,
     ε::Float64;
-    C=0.5,
+    C=1.0,
     Cε=3.0,
     Rmin=3,
 )
@@ -201,7 +201,7 @@ function estimate_rank_3d(
     Snode::Int,
     Onode::Int,
     ε::Float64;
-    C=0.5,
+    C=1.0,
     Cε=3.0,
     Rmin=3,
 )
