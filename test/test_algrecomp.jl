@@ -16,7 +16,7 @@
 
     lambda = 1.0
     k = 2 * pi / lambda
-    x = meshsphere(1.0, lambda / 10)
+    x = meshsphere(0.5, lambda / 10)
     y = translate(x, SVector(5.0, 0.0, 0.0))
     x2 = meshsphere(0.5, lambda / 10)
     y2 = translate(x2, SVector(5.0, 0.0, 0.0))

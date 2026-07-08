@@ -17,7 +17,7 @@
     op = Maxwell3D.singlelayer(; wavenumber=k)
 
     #Geometry
-    m1 = meshsphere(1.0, h)
+    m1 = meshsphere(0.25, h)
     X1 = raviartthomas(m1)
     m2 = translate(m1, SVector(5.0, 0.0, 0.0))
     X2 = raviartthomas(m2)
@@ -26,17 +26,11 @@
     Stree = H2Trees.KMeansTree(X2.pos, 2; minvalues=100)
 
     blktree1 = H2Trees.BlockTree(Ttree, Stree)
-    go1 = H2Trees.values(blktree1.testcluster, H2Trees.root(blktree1.testcluster))
-
-    gs1 = H2Trees.values(blktree1.trialcluster, H2Trees.root(blktree1.trialcluster))
 
     Ttree2 = H2Trees.TwoNTree(X1, h; minvalues=100)
     Stree2 = H2Trees.TwoNTree(X2, h; minvalues=100)
 
     blktree2 = BlockTree(Ttree2, Stree2)
-    go2 = H2Trees.values(blktree2.testcluster, H2Trees.root(blktree2.testcluster))
-
-    gs2 = H2Trees.values(blktree2.trialcluster, H2Trees.root(blktree2.trialcluster))
     kernelmatrix = ButterflyFactorizations.AbstractKernelMatrix(op, X1, X2)
 
     Bfmat = ButterflyFactorizations.PetrovGalerkinBF(

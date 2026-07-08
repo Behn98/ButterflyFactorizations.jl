@@ -16,7 +16,7 @@
 
     lambda = 1.0
     k = 2 * pi / lambda
-    x = meshsphere(1.0, lambda / 10)
+    x = meshsphere(0.25, lambda / 10)
     y = translate(x, SVector(5.0, 0.0, 0.0))
     z = translate(x, SVector(8.0, 0.0, 0.0))
     op = Maxwell3D.singlelayer(; wavenumber=k)
@@ -113,19 +113,20 @@ end
     #tree1 = BlockTree(treeo, trees)
     tree1 = TwoNTree(T, U, lambda / 10)     #testspace, trialspace
     kernelmatrix1 = ButterflyFactorizations.AbstractKernelMatrix(op, T, U)
-
-    schildren = collect(H2Trees.children(tree1.trialcluster, 73))
-    gsc = sort!(H2Trees.values(tree1.trialcluster, 73))
-    ochildren = collect(H2Trees.children(tree1.testcluster, 73))
-    goc = sort!(H2Trees.values(tree1.testcluster, 73))
+    parent1 = collect(H2Trees.children(tree1.trialcluster, 1))[1]
+    parent2 = collect(H2Trees.children(tree1.testcluster, 1))[2]
+    schildren = collect(H2Trees.children(tree1.trialcluster, parent2))
+    gsc = sort!(H2Trees.values(tree1.trialcluster, parent2))
+    ochildren = collect(H2Trees.children(tree1.testcluster, parent2))
+    goc = sort!(H2Trees.values(tree1.testcluster, parent2))
     Bfcluster = Matrix{ButterflyFactorizations.BF}(
         undef, length(ochildren), length(schildren)
     )
     higherkBF = ButterflyFactorizations.subroutine_BF(
         kernelmatrix1,
         tree1,
-        73,
-        2,
+        parent2,
+        parent1,
         k,
         1e-4;
         compressor=ButterflyFactorizations.PartialQR(),
