@@ -98,23 +98,19 @@ end
     k = 2 * pi / lambda
     x = meshsphere(1.0, lambda / 10)
     y = translate(x, SVector(5.0, 0.0, 0.0))
-    z = translate(x, SVector(8.0, 0.0, 0.0))
     op = Maxwell3D.singlelayer(; wavenumber=k)
     T = raviartthomas(x)
     U = raviartthomas(y)
-    V = raviartthomas(z)
     #========================================================================
     =========================================================================
                     Tree construction  and Kernelmatrix assembly
     =========================================================================
     =========================================================================#
-    #treeo = H2Trees.KMeansTree(T.pos, 2; minvalues=100)
-    #trees = H2Trees.KMeansTree(U.pos, 2; minvalues=100)
-    #tree1 = BlockTree(treeo, trees)
     tree1 = TwoNTree(T, U, lambda / 10)     #testspace, trialspace
     kernelmatrix1 = ButterflyFactorizations.AbstractKernelMatrix(op, T, U)
-    parent1 = collect(H2Trees.children(tree1.trialcluster, 1))[1]
-    parent2 = collect(H2Trees.children(tree1.testcluster, 1))[2]
+    firstlvl = collect(H2Trees.children(tree1.trialcluster, 1))
+    parent1 = firstlvl[1]
+    parent2 = firstlvl[2]
     schildren = collect(H2Trees.children(tree1.trialcluster, parent2))
     gsc = sort!(H2Trees.values(tree1.trialcluster, parent2))
     ochildren = collect(H2Trees.children(tree1.testcluster, parent2))
@@ -179,8 +175,6 @@ end
         end
     end
     @test reldif3 = norm(y_exact3 - ycluster3) / norm(y_exact3) < 1e-3
-
-    tmap = ButterflyFactorizations.treemapping(schildren[1], schildren[2], higherkBF.otree)
 
     splitbfprod = ButterflyFactorizations.splitmulbf(Bfcluster, higherkBF, 1e-2)
     y_cluster4 = splitbfprod * x_t

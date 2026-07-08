@@ -26,7 +26,6 @@ tree structure is desired, such as in the case of recompression or algebraic ope
 the factors. However, it requires careful handling of index permutations to ensure correct
 MV products, which is managed through the `PermQ` and `PermP` dictionaries.
 """
-
 function subroutine_BF(
     kernelmatrix,
     H2Blocktree,
