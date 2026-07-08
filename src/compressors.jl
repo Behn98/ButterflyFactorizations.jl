@@ -145,7 +145,7 @@ function estimate_rank_3d(
     dmin = max(d - 0.5 * (a_s + a_o), 1e-4)
 
     # Geometric directional rank estimate
-    R_geom = C * k * (a_s * a_o) / dmin
+    R_geom = C * (k * (a_s * a_o) / dmin)^2
 
     # Tolerance-dependent padding
     R_tol = Cε * log(1 / ε)
@@ -183,7 +183,7 @@ function estimate_rank_3d(
     dmin = max(d - 0.5 * (a_s + a_o), 1e-4)
 
     # Geometric directional rank estimate
-    R_geom = C * k * (a_s * a_o) / dmin
+    R_geom = C * (k * (a_s * a_o) / dmin)^2
 
     # Tolerance-dependent padding
     R_tol = Cε * log(1 / ε)
@@ -222,7 +222,7 @@ function estimate_rank_3d(
     dmin = max(d - (a_s + a_o), 1e-4)
 
     # Geometric directional rank estimate
-    R_geom = C * k * (a_s * a_o) / dmin
+    R_geom = C * (k * (a_s * a_o) / dmin)^2
 
     # Tolerance-dependent padding
     R_tol = Cε * log(1 / ε)
