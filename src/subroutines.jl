@@ -722,7 +722,7 @@ end
 
 #------------------------STATISTICS-------------------------------
 
-function subroutine_BF(
+function subroutine_BF_stat(
     kernelmatrix,
     H2Blocktree,
     NO::Int,
