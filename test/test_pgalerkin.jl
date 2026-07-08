@@ -71,7 +71,7 @@
     =========================================================================#
     lambda = 1.0
     k = 2 * pi / lambda
-    x = meshsphere(1.0, lambda / 10)
+    x = meshsphere(0.25, lambda / 10)
     op = Maxwell3D.singlelayer(; wavenumber=k)
     T = raviartthomas(x)
     length(T)

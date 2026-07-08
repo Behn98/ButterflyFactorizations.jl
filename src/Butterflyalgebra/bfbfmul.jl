@@ -1,36 +1,47 @@
 import H2Trees: values, center, halfsize, children, isleaf, trialtree, testtree
+
 """
     mulBFs(BF_1_init::BF, BF_2_init::BF, τ::Float64) -> BF
 
 Compute the operator product of two Butterfly Factorizations (`BF`) and compress the
 resulting representation to a specified accuracy tolerance.
 
-This function implements hierarchical butterfly-butterfly multiplication. It merges the internal
-factors of both trees by initializing an intermediate structural "messenger" matrix,
-and then sequentially alternates row-swapping (`browswap`) and low-rank truncation (`recompress_BF`)
-to prevent rank explosion.
+This function implements hierarchical butterfly-butterfly multiplication. It merges the
+internal factors of both trees by initializing an intermediate structural "messenger"
+matrix, and then sequentially alternates row-swapping (`browswap`) and low-rank truncation
+(`recompress_BF`) to prevent rank explosion.
 
 # Arguments
 
   - `BF_1_init::BF`: The left butterfly factorization operator.
   - `BF_2_init::BF`: The right butterfly factorization operator.
-  - `τ::Float64`: The accuracy tolerance parameter used during internal row-swaps and factor recompressions.
+  - `τ::Float64`: The accuracy tolerance parameter used during internal row-swaps and factor
+    recompressions.
 
 # Constraints & Assumed Invariants
 
-  - **Level Matching:** Both butterfly factorizations must possess the exact same number of hierarchical levels (`length`).
-  - **Dimensional Compatibility:** The source dimension of the left operator (`BF_1_init.NS`) must match the observer dimension of the right operator (`BF_2_init.NO`).
+  - **Level Matching:** Both butterfly factorizations must possess the exact same number of
+    hierarchical levels (`length`).
+  - **Dimensional Compatibility:** The source dimension of the left operator
+    (`BF_1_init.NS`) must match the observer dimension of the right operator
+    (`BF_2_init.NO`).
 
 # Returns
 
-  - `BF`: A new, optimized, and recompressed `BF` object representing the combined operator product.
+  - `BF`: A new, optimized, and recompressed `BF` object representing the combined operator
+    product.
 
 # Core Algorithm Steps
 
- 1. **Messenger Initialization:** Creates an initial central block mapping by multiplying `BF_1.Q` and `BF_2.P`.
- 2. **Layer Intertwining:** Absorbs the outermost structural remainder levels (`BF_1.R[1]` and `BF_2.R[end]`) into the messenger.
- 3. **Iterative Row Swapping:** Loops through the internal tree layers, executing a series of butterfly row-swaps (`browswap`) to correctly align the hierarchical spatial/frequency boxes.
- 4. **Trimming:** Truncates redundant rank dimensions via `recompress_BF` at each step to maintain the strict \$O(N \\log N)\$ butterfly complexity.
+ 1. **Messenger Initialization:** Creates an initial central block mapping by multiplying
+    `BF_1.Q` and `BF_2.P`.
+ 2. **Layer Intertwining:** Absorbs the outermost structural remainder levels (`BF_1.R[1]`
+    and `BF_2.R[end]`) into the messenger.
+ 3. **Iterative Row Swapping:** Loops through the internal tree layers, executing a series
+    of butterfly row-swaps (`browswap`) to correctly align the hierarchical
+    spatial/frequency boxes.
+ 4. **Trimming:** Truncates redundant rank dimensions via `recompress_BF` at each step to
+    maintain the strict \$O(N \\log N)\$ butterfly complexity.
 """
 function mulBFs(BF_1_init::BF, BF_2_init::BF, τ::Float64)
     @assert length(BF_1_init) == length(BF_2_init) "Both BFs must have the same number of levels"
@@ -70,7 +81,7 @@ function mulBFs(BF_1_init::BF, BF_2_init::BF, τ::Float64)
     for m in 1:(L - 1)
         for t in 1:m
             result = browswap(result, L + 2 - t, τ)
-            print("swap done \n")
+            #print("swap done \n")
         end
         result = recompress_BF(mul_factors(result, L + 1 - m), τ)#
     end
@@ -389,18 +400,53 @@ function trivialmul(BF_1_init::BF, BF_2_init::BF)
     )
 end
 
-#When multiplying two Blocks in a BF, one possible case is that one of the factors turns out
-#to be a hirachically divided block of Butterflies of some lvl k and the other factor is a
-#single BF block of lvl k+1. In that case Heldring suggests a special algorithm, however he
-#only provides a sketch of the algorithm and no details on how to implement it. The idea is
-#to split the single BF block into multiple blocks that match the hirachical division of the
-#other factor and then multiply them separately. Let us recall that the hirachical structure
-#and the nature of multiplication do let us make some assumptions. The columnspace of the
-#cluster block and the higher k BF's rowspace match and while we dont only treat binary
-#trees, the tree structure will anyways remain consistent. Since the tree structure is
-#implicitely realted to the Data architecture employed in the Dictionary architecture the
-#main challenge is to find the right way to arrange the keys of the large Butterfly to
-#perform the multiplications separately.
+"""
+    splitmulbf(butterflycluster_init::Matrix{BF}, higherkBF_init::BF, τ::Float64) -> BF
+
+Compute the operator product of a hierarchically divided matrix cluster of Butterflies
+(level \$k\$) and a single, larger Butterfly Factorization block (level \$k+1\$) using
+Heldring's block-splitting algorithm.
+
+This function addresses the architectural challenge of multiplying non-uniform hierarchical
+levels by subdividing the structural components of the larger factor to match the sparse
+data layout of the smaller cluster blocks. It separately processes individual
+sub-multiplications before realigning and reducing them back into a single unified
+representation.
+
+# Arguments
+
+  - `butterflycluster_init::Matrix{BF}`: A matrix layout of lower-level butterfly factors
+    representing the hierarchically split operator components.
+  - `higherkBF_init::BF`: A single, un-split butterfly factorization at a higher
+    hierarchical tree tier.
+  - `τ::Float64`: Accuracy tolerance threshold passed down to internal multiplications
+    (`mulBFs`) and the final accumulation stages (`add_eqbfs`).
+
+# Returns
+
+  - `BF`: A single consolidated and recompressed butterfly factorization representing the
+    entire operator product.
+
+# Algorithmic Steps
+
+ 1. **Factor Subdivision (Step 1):** The structural `P` and `R` dictionaries of the
+    higher-tier operator are sliced into `numchildren` distinct independent BFs matching the
+    target output subtree nodes (`children`).
+ 2. **Intermediate Block Multiplications:** Executes element-wise sub-multiplications
+    between the cluster elements and the newly generated lower-tier factors via `mulBFs`.
+ 3. **Supertree Alignment & Coordinate Remapping:** Builds a global supertree reference to
+    map differing index spaces. It shifts spatial/frequency cluster coordinates up to common
+    parent frames and merges data blocks through horizontal/vertical accumulations and
+    diagonal padding where key configurations overlap.
+ 4. **Hierarchical Reduction:** Consolidates the array of realigned intermediate structures
+    down into a single final operator via sequential `add_eqbfs` calls.
+
+# Notes
+
+  - The original structural `Q` factors of the larger operator are intentionally preserved
+    and held back until the final phase to maintain dimension consistency across structural
+    modifications.
+"""
 function splitmulbf(butterflycluster_init::Matrix{BF}, higherkBF_init::BF, τ::Float64)
     butterflycluster = deepcopy(butterflycluster_init)
     higherkBF = deepcopy(higherkBF_init)
@@ -460,7 +506,6 @@ function splitmulbf(butterflycluster_init::Matrix{BF}, higherkBF_init::BF, τ::F
     end
     rowsize = size(intermediate, 1)
     colsize = size(intermediate, 2)
-    @show rowsize, colsize
     tobeadditioned = Vector{BF}(undef, rowsize)
     nodaloffset = 1
     otmapv = Vector{Vector{Dict{Int,Int}}}(undef, colsize)
@@ -576,11 +621,11 @@ function splitmulbf(butterflycluster_init::Matrix{BF}, higherkBF_init::BF, τ::F
     l = length(tobeadditioned)-1
     result = add_eqbfs(tobeadditioned[1], tobeadditioned[2], τ)
 
-    println("addition 1 of $l done \n")
+    #println("addition 1 of $l done \n")
     for i in eachindex(tobeadditioned[3:end])
         result = add_eqbfs(result, tobeadditioned[3:end][i], τ)
         h = i+1
-        println("addition $h of $l done \n")
+        #println("addition $h of $l done \n")
     end
     return result
 end
