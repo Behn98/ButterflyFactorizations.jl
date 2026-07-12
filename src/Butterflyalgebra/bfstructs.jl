@@ -4,7 +4,8 @@ import Base: show
 # ==========================================
 
 struct R_factor{T,M<:AbstractMatrix}
-    Dict::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},M}}
+    dict::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Tuple{Int,Int,Int}}}#(E,row,col))
+    elementblocks::Vector{Matrix{M}}
     slvl::Tuple{Int,Int}
     olvl::Tuple{Int,Int}
     rowstree::T
@@ -14,12 +15,14 @@ struct R_factor{T,M<:AbstractMatrix}
 end
 
 struct Q_factor{T,M<:AbstractMatrix}
-    Dict::Dict{Tuple{Int,Int},M}
+    dict::Dict{Tuple{Int,Int},M}
     stree::T
+    otree::T
 end
 
 struct P_factor{T,M<:AbstractMatrix}
-    Dict::Dict{Tuple{Int,Int},M}
+    dict::Dict{Tuple{Int,Int},M}
+    stree::T
     otree::T
 end
 
@@ -29,7 +32,7 @@ end
 
 # These helpers allow you to instantiate factors without explicitly typing out {T, M}
 function R_factor(
-    Dict::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},M}},
+    dict::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},M}},
     slvl,
     olvl,
     rst::T,
@@ -37,15 +40,54 @@ function R_factor(
     cst::T,
     cot::T,
 ) where {T,M}
-    return R_factor{T,M}(Dict, slvl, olvl, rst, rot, cst, cot)
+    rowgrps = group_identical_colspaces(dict)
+    eidx = 1
+    elementblocks = Vector{Matrix{M}}()
+    mapping = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Tuple{Int,Int,Int}}}()
+    for (col_space, rows) in rowgrps
+        matrix_grid, r_labels, c_labels = build_matrix_from_group(dict, rows, col_space)
+        push!(elementblocks, matrix_grid)
+        for (i, row) in enumerate(r_labels)
+            if !haskey(mapping, row)
+                mapping[row] = Dict{Tuple{Int,Int},Tuple{Int,Int,Int}}()
+            end
+            for (j, col) in enumerate(c_labels)
+                mapping[row][col] = (eidx, i, j)
+            end
+        end
+        eidx += 1
+    end
+    return R_factor{T,M}(mapping, elementblocks, slvl, olvl, rst, rot, cst, cot)
 end
 
-function Q_factor(Dict::Dict{Tuple{Int,Int},M}, stree::T) where {T,M}
-    return Q_factor{T,M}(Dict, stree)
+function R_factor(
+    dict::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Tuple{Int,Int,Int}}},
+    elementblocks::Vector{Matrix{M}},
+    slvl,
+    olvl,
+    rst::T,
+    rot::T,
+    cst::T,
+    cot::T,
+) where {T,M}
+    return R_factor{T,M}(dict, elementblocks, slvl, olvl, rst, rot, cst, cot)
 end
 
-function P_factor(Dict::Dict{Tuple{Int,Int},M}, otree::T) where {T,M}
-    return P_factor{T,M}(Dict, otree)
+function (t::R_factor{T,M})(row::Tuple{Int,Int}, col::Tuple{Int,Int}) where {T,M}
+    if haskey(t.dict, row) && haskey(t.dict[row], col)
+        (eidx, i, j) = t.dict[row][col]
+        return t.elementblocks[eidx][i, j]
+    else
+        return zero(M)
+    end
+end
+
+function Q_factor(dict::Dict{Tuple{Int,Int},M}, stree::T, otree::T) where {T,M}
+    return Q_factor{T,M}(dict, stree, otree)
+end
+
+function P_factor(dict::Dict{Tuple{Int,Int},M}, otree::T, stree::T) where {T,M}
+    return P_factor{T,M}(dict, stree, otree)
 end
 
 # We introduce a new parameter 'M' for the Matrix/Array type
@@ -73,20 +115,20 @@ function BF(
     return BF{T,M}(Q, R, P, dim, NS, NO, k, τ, stree, otree)
 end
 
-struct AlgBF{T,M<:AbstractMatrix}
+struct AlgBF{T,M<:AbstractMatrix}#algebraic butterfly factorization
     dim::Tuple{Int,Int}
-    Q::Q_factor{T}   # Assumed to internalize M or be generic enough
-    R::Vector{R_factor{T}}
-    P::P_factor{T}
+    Q::Q_factor{T,M}   # Assumed to internalize M or be generic enough
+    R::Vector{R_factor{T,M}}
+    P::P_factor{T,M}
 
     # 1. Base inner constructor
     AlgBF{T,M}(dim, Q, R, P) where {T,M} = new{T,M}(dim, Q, R, P)
 
     # 2. Constructor converting BF to AlgBF (Extracts both T and M automatically!)
     function AlgBF(Butterfly::BF{T,M}) where {T,M}
-        Q = Q_factor(Butterfly.Q, Butterfly.stree)
+        Q = Q_factor(Butterfly.Q, Butterfly.stree, Butterfly.otree)
         lr = length(Butterfly.R)
-        R_vec = Vector{R_factor{T}}(undef, lr)
+        R_vec = Vector{R_factor{T,M}}(undef, lr)
         for l in eachindex(Butterfly.R)
             R_vec[l] = R_factor(
                 Butterfly.R[l],
@@ -98,7 +140,7 @@ struct AlgBF{T,M<:AbstractMatrix}
                 Butterfly.otree,
             )
         end
-        P = P_factor(Butterfly.P, Butterfly.otree)
+        P = P_factor(Butterfly.P, Butterfly.otree, Butterfly.stree)
         return new{T,M}(Butterfly.dim, Q, R_vec, P)
     end
 
@@ -109,8 +151,8 @@ struct AlgBF{T,M<:AbstractMatrix}
         R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},M}}},
         P::Dict{Tuple{Int,Int},M},
     ) where {T,M}
-        Q_f = Q_factor(Q, BFalg.Q.stree)
-        R_factors = Vector{R_factor{T}}(undef, length(R))
+        Q_f = Q_factor(Q, BFalg.Q.stree, BFalg.Q.otree)
+        R_factors = Vector{R_factor{T,M}}(undef, length(R))
         for l in eachindex(R)
             R_factors[l] = R_factor(
                 R[l],
@@ -122,33 +164,36 @@ struct AlgBF{T,M<:AbstractMatrix}
                 BFalg.R[l].colotree,
             )
         end
-        P_f = P_factor(P, BFalg.P.otree)
+        P_f = P_factor(P, BFalg.P.otree, BFalg.P.stree)
         return new{T,M}(BFalg.dim, Q_f, R_factors, P_f)
     end
 end
 
 # --- Updated Companion Outer Constructors & Helpers ---
 
-function AlgBF(dim, Q::Q_factor{T}, R::AbstractVector, P::P_factor{T}) where {T}
-    # Fallback to standard dense Matrix if type M can't be inferred directly here
-    # (Though usually you'll want to pass the type explicitly or rely on the BF converter)
-    return AlgBF{T,Matrix{ComplexF64}}(dim, Q, R, P)
+function AlgBF(
+    dim, Q::Q_factor{T,M}, R::AbstractVector{R_factor{T,M}}, P::P_factor{T,M}
+) where {T,M}
+    return AlgBF{T,M}(dim, Q, R, P)
 end
 
 # Conversion back from AlgBF to BF
-function BF(algBF::AlgBF{T,M}, NS, NO, k, τ, stree::T, otree::T) where {T,M}
-    return BF{T,M}(
-        algBF.Q.Dict,
-        [r.Dict for r in algBF.R],
-        algBF.P.Dict,
-        algBF.dim,
-        NS,
-        NO,
-        k,
-        τ,
-        stree,
-        otree,
-    )
+function BF(algBF::AlgBF{T,M}, k, τ) where {T,M}
+    NS = first(keys(algBF.P.dict))[2]
+    NO = first(keys(algBF.Q.dict))[1]
+    stree = algBF.Q.stree
+    otree = algBF.P.otree
+    newR = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},M}}}(undef, length(algBF.R))
+    for l in eachindex(algBF.R)
+        newR[l] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},M}}()
+        for (row, col_dict) in algBF.R[l].dict
+            newR[l][row] = Dict{Tuple{Int,Int},M}()
+            for (col, (eidx, i, j)) in col_dict
+                newR[l][row][col] = algBF.R[l].elementblocks[eidx][i, j]
+            end
+        end
+    end
+    return BF{T,M}(algBF.Q.dict, newR, algBF.P.dict, algBF.dim, NS, NO, k, τ, stree, otree)
 end
 
 struct BF_Mats
@@ -215,7 +260,7 @@ end
 
 # Multi-line REPL presentation
 function show(io::IO, mime::MIME"text/plain", alg::AlgBF{T,M}) where {T,M}
-    println(io, "Algorithmic Butterfly Factorization (AlgBF)")
+    println(io, "Algebraic Butterfly Factorization (AlgBF)")
     println(io, "  Tree Type:   ", T)
     println(io, "  Matrix Type: ", M)
     println(io, "  Dimension:   ", alg.dim)
@@ -233,26 +278,26 @@ end
 
 # --- Q_factor Display ---
 function show(io::IO, q::Q_factor{T,M}) where {T,M}
-    return print(io, "Q_factor{$T, $M}(keys=$(length(q.Dict)))")
+    return print(io, "Q_factor{$T, $M}(keys=$(length(q.dict)))")
 end
 
 function show(io::IO, ::MIME"text/plain", q::Q_factor{T,M}) where {T,M}
     println(io, "Butterfly Q_factor")
     println(io, "  Matrix Type: ", M)
     println(io, "  Tree Type:   ", T)
-    return print(io, "  Storage:     ", length(q.Dict), " blocks mapped in Dict")
+    return print(io, "  Storage:     ", length(q.dict), " blocks mapped in Dict")
 end
 
 # --- P_factor Display ---
 function show(io::IO, p::P_factor{T,M}) where {T,M}
-    return print(io, "P_factor{$T, $M}(keys=$(length(p.Dict)))")
+    return print(io, "P_factor{$T, $M}(keys=$(length(p.dict)))")
 end
 
 function show(io::IO, ::MIME"text/plain", p::P_factor{T,M}) where {T,M}
     println(io, "Butterfly P_factor")
     println(io, "  Matrix Type: ", M)
     println(io, "  Tree Type:   ", T)
-    return print(io, "  Storage:     ", length(p.Dict), " blocks mapped in Dict")
+    return print(io, "  Storage:     ", length(p.dict), " blocks mapped in Dict")
 end
 
 # --- R_factor Display ---
@@ -264,7 +309,7 @@ function show(io::IO, ::MIME"text/plain", r::R_factor{T,M}) where {T,M}
     println(io, "Butterfly R_factor (Middle Level)")
     println(io, "  Matrix Type: ", M)
     println(io, "  Levels (s/o):", r.slvl, " / ", r.olvl)
-    return print(io, "  Storage:     ", length(r.Dict), " top-level block keys")
+    return print(io, "  Storage:     ", length(r.dict), " top-level block keys")
 end
 
 # 1. This controls the 1-line display (e.g., when inside arrays)
@@ -283,5 +328,22 @@ function show(io::IO, mime::MIME"text/plain", bf::BF{T,M}) where {T,M}
     return print(
         io,
         "  Storage:     Q ($(length(bf.Q)) keys), R ($(length(bf.R)) levels), P ($(length(bf.P)) keys)",
+    )
+end
+
+# 1. This controls the 1-line display (e.g., when inside arrays)
+function show(io::IO, bf::BF_Mats)
+    return print(io, "BF_Mats(dim=$(bf.dim), k=$(bf.k))")
+end
+
+# 2. This controls the multi-line display when a BF object is returned in the REPL
+function show(io::IO, mime::MIME"text/plain", bf::BF_Mats)
+    println(io, "Butterfly Factorization (BF_Mats)")
+    println(io, "  Dimension:   ", bf.dim)
+    println(io, "  NS / NO:     ", bf.NS, " / ", bf.NO)
+    println(io, "  k / τ:       ", bf.k, " / ", bf.τ)
+    return print(
+        io,
+        "  Storage:     Q ($(Base.summarysize(bf.Q)/1024) KB), R ($(length(bf.R)) levels), P ($(Base.summarysize(bf.P)/1024) KB)",
     )
 end

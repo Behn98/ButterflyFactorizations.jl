@@ -542,6 +542,71 @@ function retrievecolspace(
     return colspace
 end
 
+function col_to_row_map(rmat::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}})
+    colspace = Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}()
+    for (row, inner_dict) in rmat
+        for (col, mat) in inner_dict
+            if !haskey(colspace, col)
+                colspace[col] = Vector{Tuple{Int,Int}}()
+            end
+            push!(colspace[col], row)
+        end
+    end
+
+    return colspace
+end
+
+function group_identical_colspaces(
+    data::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},M}}
+) where {M}
+    RowType = Tuple{Int,Int}
+    ColType = Tuple{Int,Int}
+
+    # Map a Set of column keys to a Vector of row keys
+    groups = Dict{Set{ColType},Vector{RowType}}()
+
+    for (row, col_dict) in data
+        # Abstract Dict keys into a Set. Sets have order-independent hashing.
+        col_space = Set{ColType}(keys(col_dict))
+
+        # Group the row by its column space signature
+        vec = get!(() -> RowType[], groups, col_space)
+        push!(vec, row)
+    end
+
+    # If you only want groups that actually have duplicates (more than 1 row):
+    #duplicates_only = filter(p -> length(p.second) > 1, groups)
+
+    return groups
+end
+
+function build_matrix_from_group(data, rows, cols)
+    # 1. Sort keys (Julia automatically orders them exactly as you requested)
+    sorted_rows = sort(collect(rows))
+    sorted_cols = sort(collect(cols))
+
+    # 2. Get dimensions
+    n_rows = length(sorted_rows)
+    n_cols = length(sorted_cols)
+
+    # 3. Grab the concrete matrix type M from the first element
+    M = typeof(data[first(sorted_rows)][first(sorted_cols)])
+
+    # 4. Allocate the 2D grid
+    grid_matrix = Matrix{M}(undef, n_rows, n_cols)
+
+    # 5. Populate the grid (looping column-first for Julia's memory layout)
+    for j in 1:n_cols
+        col_key = sorted_cols[j]
+        for i in 1:n_rows
+            row_key = sorted_rows[i]
+            grid_matrix[i, j] = data[row_key][col_key]
+        end
+    end
+
+    return grid_matrix, sorted_rows, sorted_cols
+end
+
 function build_supertree(roots::Vector{Int}, tree, init_super_id::Int)
     N = length(roots)
 

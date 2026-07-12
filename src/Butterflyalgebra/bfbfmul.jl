@@ -87,9 +87,9 @@ function mulBFs(BF_1_init::BF, BF_2_init::BF, τ::Float64)
     end
     #@views result = recompress_BF(result, τ)
     return BF(
-        result.Q.Dict,         # Q_final = Q_2
-        [r.Dict for r in result.R],       # R_final[level][Snode][Onode]
-        result.P.Dict,          # Updated P
+        result.Q.dict,         # Q_final = Q_2
+        [r.dict for r in result.R],       # R_final[level][Snode][Onode]
+        result.P.dict,          # Updated P
         (size(BF_1, 1), size(BF_2, 2)),
         BF_2.NS,
         BF_1.NO,
@@ -192,8 +192,8 @@ end
 function mul_factors(BF::AlgBF, idx::Int)
     L = length(BF.R)
     if idx > 1 && idx < (L + 1)
-        leftfactor = BF.R[L + 1 - (idx - 1)].Dict
-        rightfactor = BF.R[L + 1 - idx].Dict
+        leftfactor = BF.R[L + 1 - (idx - 1)].dict
+        rightfactor = BF.R[L + 1 - idx].dict
         product = R_factor(
             mul_factors(leftfactor, rightfactor),
             (BF.R[L + 1 - idx].slvl[1], BF.R[L + 1 - (idx - 1)].slvl[2]),
@@ -205,8 +205,8 @@ function mul_factors(BF::AlgBF, idx::Int)
         )
     elseif idx == 1
         @show "Multiplying P and R[1]"
-        leftfactor = BF.P.Dict
-        rightfactor = BF.R[L + 1 - idx].Dict
+        leftfactor = BF.P.dict
+        rightfactor = BF.R[L + 1 - idx].dict
         product = R_factor(
             mul_factors(leftfactor, rightfactor),
             (BF.R[L + 1 - idx].slvl[1], BF.R[L + 1 - idx].slvl[2]),
@@ -219,8 +219,8 @@ function mul_factors(BF::AlgBF, idx::Int)
         #should not occure since we only call this function for idx in 2:(L-1)
     else
         @show "Multiplying R[end] and Q"
-        leftfactor = BF.R[L + 1 - idx].Dict
-        rightfactor = BF.Q.Dict
+        leftfactor = BF.R[L + 1 - idx].dict
+        rightfactor = BF.Q.dict
         product = R_factor(
             mul_factors(leftfactor, rightfactor),
             (BF.R[L + 1 - idx].slvl[1], BF.R[L + 1 - idx].slvl[2]),
@@ -271,14 +271,14 @@ function browswap(LeftFactor::R_factor, RightFactor::R_factor, τ)
     NewLeftFactor = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
     NewRightFactor = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
 
-    Intermediate = mul_factors(LeftFactor.Dict, RightFactor.Dict)
+    Intermediate = mul_factors(LeftFactor.dict, RightFactor.dict)
     col_tree = RightFactor.colstree
     parentkeyscols = Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}()
     parentkeysrows = Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}()
     for row in keys(Intermediate)
         parentgrps = group_by_parents(col_tree, keys(Intermediate[row]), 2)
         for (parentnodes, localcols) in parentgrps
-            parentkey = (first(keys(LeftFactor.Dict[row]))[1], parentnodes) #H2Trees.parent(row_tree, row[1])first(localcols)[1]parentnodeo
+            parentkey = (first(keys(LeftFactor.dict[row]))[1], parentnodes) #H2Trees.parent(row_tree, row[1])first(localcols)[1]parentnodeo
             if !haskey(parentkeysrows, parentkey)
                 parentkeysrows[parentkey] = Vector{Tuple{Int,Int}}()
             end
@@ -387,9 +387,9 @@ function trivialmul(BF_1_init::BF, BF_2_init::BF)
     end
     #@views result = recompress_BF(result, τ, tree)
     return BF(
-        result.Q.Dict,         # Q_final = Q_2
-        [r.Dict for r in result.R],       # R_final[level][Snode][Onode]
-        result.P.Dict,          # Updated P
+        result.Q.dict,         # Q_final = Q_2
+        [r.dict for r in result.R],       # R_final[level][Snode][Onode]
+        result.P.dict,          # Updated P
         (size(BF_1, 1), size(BF_2, 2)),
         BF_2.NS,
         BF_1.NO,
