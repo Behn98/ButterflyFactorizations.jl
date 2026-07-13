@@ -5,6 +5,7 @@ import Base: show
 
 struct R_factor{T,M<:AbstractMatrix}
     dict::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Tuple{Int,Int,Int}}}#(E,row,col))
+    inverse_map::Vector{Matrix{Union{Nothing,Tuple{Tuple{Int,Int},Tuple{Int,Int}}}}}
     elementblocks::Vector{Matrix{M}}
     slvl::Tuple{Int,Int}
     olvl::Tuple{Int,Int}
@@ -12,6 +13,15 @@ struct R_factor{T,M<:AbstractMatrix}
     rowotree::T
     colstree::T
     colotree::T
+end
+
+function (t::R_factor{T,M})(row::Tuple{Int,Int}, col::Tuple{Int,Int}) where {T,M}
+    if haskey(t.dict, row) && haskey(t.dict[row], col)
+        (eidx, i, j) = t.dict[row][col]
+        return t.elementblocks[eidx][i, j]
+    else
+        return zero(M)
+    end
 end
 
 struct Q_factor{T,M<:AbstractMatrix}
@@ -44,24 +54,31 @@ function R_factor(
     eidx = 1
     elementblocks = Vector{Matrix{M}}()
     mapping = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Tuple{Int,Int,Int}}}()
+    invmapping = Vector{Matrix{Union{Nothing,Tuple{Tuple{Int,Int},Tuple{Int,Int}}}}}()
     for (col_space, rows) in rowgrps
         matrix_grid, r_labels, c_labels = build_matrix_from_group(dict, rows, col_space)
         push!(elementblocks, matrix_grid)
+        invmappinge = Matrix{Union{Nothing,Tuple{Tuple{Int,Int},Tuple{Int,Int}}}}(
+            undef, length(r_labels), length(c_labels)
+        )
         for (i, row) in enumerate(r_labels)
             if !haskey(mapping, row)
                 mapping[row] = Dict{Tuple{Int,Int},Tuple{Int,Int,Int}}()
             end
             for (j, col) in enumerate(c_labels)
                 mapping[row][col] = (eidx, i, j)
+                invmappinge[i, j] = (row, col)
             end
         end
+        push!(invmapping, invmappinge)
         eidx += 1
     end
-    return R_factor{T,M}(mapping, elementblocks, slvl, olvl, rst, rot, cst, cot)
+    return R_factor{T,M}(mapping, invmapping, elementblocks, slvl, olvl, rst, rot, cst, cot)
 end
 
 function R_factor(
     dict::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Tuple{Int,Int,Int}}},
+    invmapping::Vector{Matrix{Union{Nothing,Tuple{Tuple{Int,Int},Tuple{Int,Int}}}}},
     elementblocks::Vector{Matrix{M}},
     slvl,
     olvl,
@@ -70,16 +87,7 @@ function R_factor(
     cst::T,
     cot::T,
 ) where {T,M}
-    return R_factor{T,M}(dict, elementblocks, slvl, olvl, rst, rot, cst, cot)
-end
-
-function (t::R_factor{T,M})(row::Tuple{Int,Int}, col::Tuple{Int,Int}) where {T,M}
-    if haskey(t.dict, row) && haskey(t.dict[row], col)
-        (eidx, i, j) = t.dict[row][col]
-        return t.elementblocks[eidx][i, j]
-    else
-        return zero(M)
-    end
+    return R_factor{T,M}(dict, invmapping, elementblocks, slvl, olvl, rst, rot, cst, cot)
 end
 
 function Q_factor(dict::Dict{Tuple{Int,Int},M}, stree::T, otree::T) where {T,M}
@@ -166,6 +174,17 @@ struct AlgBF{T,M<:AbstractMatrix}#algebraic butterfly factorization
         end
         P_f = P_factor(P, BFalg.P.otree, BFalg.P.stree)
         return new{T,M}(BFalg.dim, Q_f, R_factors, P_f)
+    end
+
+    function AlgBF(
+        BFalg::AlgBF{T,M},
+        Q::Dict{Tuple{Int,Int},M},
+        R::Vector{R_factor{T,M}},
+        P::Dict{Tuple{Int,Int},M},
+    ) where {T,M}
+        Q_f = Q_factor(Q, BFalg.Q.stree, BFalg.Q.otree)
+        P_f = P_factor(P, BFalg.P.otree, BFalg.P.stree)
+        return new{T,M}(BFalg.dim, Q_f, R, P_f)
     end
 end
 

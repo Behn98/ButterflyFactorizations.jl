@@ -13,6 +13,7 @@ ButterflyFactorizations
 PetrovGalerkinBF
 PetrovGalerkinBF_mats
 FlatBF
+flattenmatrix
 subroutine_BF
 subroutine_BF_mats
 PartialQR

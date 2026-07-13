@@ -110,23 +110,45 @@ function Base.adjoint(R::R_factor{T,M}) where {T,M}
         return new_grid
     end
 
-    # 2. Transform the semantic lookup dictionary
+    # 2. Transform the inverse map (Transpose grids + swap internal coordinate pairs)
+    new_inverse_map = map(R.inverse_map) do imap
+        old_rows, old_cols = size(imap)
+        new_imap = Matrix{eltype(imap)}(undef, old_cols, old_rows)
+        for j in 1:old_cols
+            for i in 1:old_rows
+                val = imap[i, j]
+                if val === nothing
+                    new_imap[j, i] = nothing
+                else
+                    row_key, col_key = val
+                    # Swap the semantic keys because rows and columns have flipped roles
+                    new_imap[j, i] = (reverse(col_key), reverse(row_key))
+                end
+            end
+        end
+        return new_imap
+    end
+
+    # 3. Transform the semantic lookup dictionary
     # We dynamically infer the key types based on your row/col tuples
     new_lookup = Dict{Any,Dict{Any,Tuple{Int,Int,Int}}}()
 
     for (row_key, col_dict) in R.dict
         for (col_key, (grid_idx, r_idx, c_idx)) in col_dict
             # Look up or initialize the new outer key (which was the old column key)
-            inner_dict = get!(() -> Dict{Any,Tuple{Int,Int,Int}}(), new_lookup, col_key)
+            inner_dict = get!(
+                () -> Dict{Any,Tuple{Int,Int,Int}}(), new_lookup, reverse(col_key)
+            )
 
             # CRUCIAL: Swap r_idx and c_idx because the underlying grid matrix was transposed!
-            inner_dict[row_key] = (grid_idx, c_idx, r_idx)
+            inner_dict[reverse(row_key)] = (grid_idx, c_idx, r_idx)
         end
     end
 
     # Return a brand new, fully valid instance of your struct
     return R_factor{T,M}(
         new_lookup,
+        new_inverse_map,
         new_elementblocks,
         reverse(R.slvl),
         reverse(R.olvl),
@@ -153,23 +175,45 @@ function Base.transpose(R::R_factor{T,M}) where {T,M}
         return new_grid
     end
 
-    # 2. Transform the semantic lookup dictionary
+    # 2. Transform the inverse map (Transpose grids + swap internal coordinate pairs)
+    new_inverse_map = map(R.inverse_map) do imap
+        old_rows, old_cols = size(imap)
+        new_imap = Matrix{eltype(imap)}(undef, old_cols, old_rows)
+        for j in 1:old_cols
+            for i in 1:old_rows
+                val = imap[i, j]
+                if val === nothing
+                    new_imap[j, i] = nothing
+                else
+                    row_key, col_key = val
+                    # Swap the semantic keys because rows and columns have flipped roles
+                    new_imap[j, i] = (reverse(col_key), reverse(row_key))
+                end
+            end
+        end
+        return new_imap
+    end
+
+    # 3. Transform the semantic lookup dictionary
     # We dynamically infer the key types based on your row/col tuples
     new_lookup = Dict{Any,Dict{Any,Tuple{Int,Int,Int}}}()
 
     for (row_key, col_dict) in R.dict
         for (col_key, (grid_idx, r_idx, c_idx)) in col_dict
             # Look up or initialize the new outer key (which was the old column key)
-            inner_dict = get!(() -> Dict{Any,Tuple{Int,Int,Int}}(), new_lookup, col_key)
+            inner_dict = get!(
+                () -> Dict{Any,Tuple{Int,Int,Int}}(), new_lookup, reverse(col_key)
+            )
 
             # CRUCIAL: Swap r_idx and c_idx because the underlying grid matrix was transposed!
-            inner_dict[row_key] = (grid_idx, c_idx, r_idx)
+            inner_dict[reverse(row_key)] = (grid_idx, c_idx, r_idx)
         end
     end
 
     # Return a brand new, fully valid instance of your struct
     return R_factor{T,M}(
         new_lookup,
+        new_inverse_map,
         new_elementblocks,
         reverse(R.slvl),
         reverse(R.olvl),

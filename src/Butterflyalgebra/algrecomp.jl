@@ -28,80 +28,72 @@ function recompress_BF(Butterfly::BF, τ)
     P = Butterfly.P
     BFalg = AlgBF(Butterfly)
     BFalg = recompress_BF(BFalg, τ)
-    return BF(
-        BFalg,
-        Butterfly.NS,
-        Butterfly.NO,
-        Butterfly.k,
-        Butterfly.τ,
-        Butterfly.stree,
-        Butterfly.otree,
-    )
+    return BF(BFalg, Butterfly.k, Butterfly.τ)
 end
 
-function recompress_BF_right(Butterfly_init::AlgBF, τ)
+function recompress_BF_right(Butterfly_init::AlgBF, τ; include_Q=false)
     Butterfly = deepcopy(Butterfly_init)
     Q = Butterfly.Q.dict
-    R = [Butterfly.R[r].dict for r in eachindex(Butterfly.R)]
+    R = Butterfly.R
     P = Butterfly.P.dict
     lr = length(R)
-
-    for l in eachindex(R[1:(lr - 1)])
+    include_Q ? endidx = lr : endidx = lr - 1
+    for l in eachindex(R[1:endidx])
         lold = lr - l + 1
 
         # Bulletproof: Flatten R_u to map the full col_idx tuple directly to its matrix
         R_u = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()#Dict{Tuple{Int,Int},}
+        eblocks = R[lold].elementblocks
+        for (eidx, eblock) in enumerate(eblocks)
+            esize = size(eblock)
+            # 2. Process each unique column space
+            row_spc = Vector{Int}(undef, esize[1])
+            for i in eachindex(row_spc)
+                row_spc[i] = size(eblock[i, 1], 1)
+            end
+            for j in eachindex(eblock[1, :])
+                col_idx = R[lold].inverse_map[eidx][1, j][2]
+                A_k = vcat(eblock[:, j]...)
+                QRA = pqr(A_k; rtol=τ)
 
-        # 1. Map column skeletons to all associated row skeletons at this level
-        col_to_rows = Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}()
-        for row_skel in keys(R[lold])
-            for col_idx in keys(R[lold][row_skel])
-                if !haskey(col_to_rows, col_idx)
-                    col_to_rows[col_idx] = Vector{Tuple{Int,Int}}()
+                # Extract the local transfer matrix
+                T_mat = QRA[2][:, invperm(QRA[3])]
+                R_u[col_idx] = T_mat
+                last_idx = 0
+                for i in eachindex(row_spc)
+                    eblock[i, j] = Matrix(    #(parent_node, col_idx[2])
+                        QRA[1][(last_idx + 1):(last_idx + row_spc[i]), :],
+                    )
+                    last_idx += row_spc[i]
                 end
-                push!(col_to_rows[col_idx], row_skel)
             end
         end
-
-        # 2. Process each unique column space
-        for (col_idx, rows_with_col) in col_to_rows
-            #parent_groups = group_by_parents(testtree(tree), rows_with_col, 1)
-
-            #for (parent_node, local_rows) in parent_groups
-            R_k = Vector{Matrix{ComplexF64}}()
-            row_spc = Vector{Int}()
-
-            for row_skel in rows_with_col #local_rows
-                block = R[lold][row_skel][col_idx]
-                push!(R_k, block)
-                push!(row_spc, size(block, 1))
-            end
-            A_k = vcat(R_k...)
-            QRA = pqr(A_k; rtol=τ)
-
-            # Extract the local transfer matrix
-            T_mat = QRA[2][:, invperm(QRA[3])]
-            R_u[col_idx] = T_mat
-            last_idx = 0
-            for (j, row_skel) in enumerate(rows_with_col) #local_rows
-                #delete!(R[lold][row_skel], col_idx) # Remove the old column entry
-                R[lold][row_skel][col_idx] = Matrix(    #(parent_node, col_idx[2])
-                    QRA[1][(last_idx + 1):(last_idx + row_spc[j]), :],
-                )
-                last_idx += row_spc[j]
-            end
-            #end
-        end
-
         # 3. Propagate the accumulated R_u transformations
-        #if l < lr
-        R[lold - 1] = update_next_level_R_right(R_u, R[lold - 1])
-        #else
-        #    Q = update_next_level_R_right(R_u, Q)
-        #end
+        if l < lr
+            update_next_level_R_right(R_u, R[lold - 1])
+        else
+            Q = update_next_level_R_right(R_u, Q)
+        end
     end
 
     return AlgBF(Butterfly, Q, R, P)
+end
+
+function update_next_level_R_right(
+    R_u::Dict{Tuple{Int,Int},Matrix{ComplexF64}}, rightfactor::R_factor{T,M}
+) where {T,M}
+    for row in keys(rightfactor.dict)
+        # Because the row key of rightfactor is exactly the col_idx of the previous level
+        if haskey(R_u, row)
+            T_mat = R_u[row]
+            for col in keys(rightfactor.dict[row])
+                eidx, i, j = rightfactor.dict[row][col]
+                eblock = rightfactor.elementblocks[eidx]
+                eblock[i, j] = T_mat * eblock[i, j]
+            end
+        end
+    end
+    #return rightfactor
 end
 
 # Overload 1: Updating intermediate R factors (Clean 1:1 matching)
