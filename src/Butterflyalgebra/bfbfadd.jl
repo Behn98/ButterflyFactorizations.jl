@@ -169,3 +169,10 @@ end
 function add_neqbfs(BF_1::BF, BF_2::BF)
     return (BF_1, BF_2)   #insert struct here if needed
 end
+
+function add_eqbfs(BF_1_init::AlgBF, BF_2_init::AlgBF, τ)
+    BF_1 = BF(BF_1_init, 0, τ)
+    BF_2 = BF(BF_2_init, 0, τ)
+    BF_sum = add_eqbfs(BF_1, BF_2, τ)
+    return AlgBF(BF_sum)
+end

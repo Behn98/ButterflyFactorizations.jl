@@ -66,6 +66,7 @@ include("Butterflyalgebra/bfmatrix.jl")
 include("Butterflyalgebra/algrecomp.jl")
 include("Butterflyalgebra/bfbfadd.jl")
 include("Butterflyalgebra/bfbfmul.jl")
+include("Butterflyalgebra/bfsplitmul.jl")
 include("Butterflyalgebra/bfsplit.jl")
 
 #Tree traversale and Butterfly construction
