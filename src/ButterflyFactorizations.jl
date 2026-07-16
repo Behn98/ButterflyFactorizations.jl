@@ -58,6 +58,7 @@ include("kernelmatrix/beastkernelmatrix.jl")
 
 #Butterfly algebra --> any Block related functions
 include("Butterflyalgebra/bfstructs.jl")
+include("Butterflyalgebra/bfstructfuncts.jl")
 include("Butterflyalgebra/flatbf.jl")
 include("Butterflyalgebra/bfadjtr.jl")
 include("Butterflyalgebra/bfdims.jl")
@@ -83,5 +84,7 @@ include("matrixalgebra/csrmatrix.jl")
 include("matrixalgebra/indexing.jl")
 include("matrixalgebra/matrixvector.jl")
 include("matrixalgebra/matrixmatrix.jl")
+
+include("showalts.jl")
 
 end
