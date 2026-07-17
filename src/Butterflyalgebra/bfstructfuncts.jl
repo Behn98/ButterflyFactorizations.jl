@@ -1,9 +1,9 @@
 import Base: size, getindex, *, +, adjoint
 
-function (t::R_factor{T,M})(row::Tuple{Int,Int}, col::Tuple{Int,Int}) where {T,M}
+function (t::R_factor{M})(row::Tuple{Int,Int}, col::Tuple{Int,Int}) where {M}
     if haskey(t.dict, row) && haskey(t.dict[row], col)
-        (eidx, j) = t.dict[row][col]
-        return t.elementblocks[eidx][:, j]
+        (eidx, i, j) = t.dict[row][col]
+        return t.elementblocks[eidx][i, j]
     else
         return zero(M)
     end
@@ -14,23 +14,51 @@ end
 # ==========================================
 
 # These helpers allow you to instantiate factors without explicitly typing out {T, M}
-function R_factor(
-    dict::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},M}},
-    slvl,
-    olvl,
-    rst::T,
-    rot::T,
-    cst::T,
-    cot::T,
-) where {T,M}
-    return R_factor{T,M}(mapping, invmapping, elementblocks, slvl, olvl, rst, rot, cst, cot)
+function R_factor(dict::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},M}}) where {M}
+    rowgrps = group_identical_colspaces(dict)
+    eidx = 1
+    elementblocks = Vector{Matrix{M}}()
+    rowmap = Dict{RKey,Vector{CKey}}()
+    colmap = Dict{CKey,Vector{RKey}}()
+    mapping = Dict{Tuple{RKey,CKey},Tuple{Int,Int,Int}}()
+    invmapping = Vector{Matrix{Tuple{RKey,CKey}}}()
+    for (col_space, rows) in rowgrps
+        matrix_grid, r_labels, c_labels = build_matrix_from_group(dict, rows, col_space)
+        push!(elementblocks, matrix_grid)
+        invmappinge = Matrix{Tuple{RKey,CKey}}(undef, length(r_labels), length(c_labels))
+        for row in r_labels
+            rowmap[row] = c_labels
+        end
+        for col in c_labels
+            colmap[col] = r_labels
+        end
+        for (i, row) in enumerate(r_labels)
+            for (j, col) in enumerate(c_labels)
+                mapping[(row, col)] = (eidx, i, j)
+                invmappinge[i, j] = (row, col)
+            end
+        end
+        push!(invmapping, invmappinge)
+        eidx += 1
+    end
+    return R_factor{M}(rowmap, colmap, mapping, invmapping, elementblocks)
 end
 
-function Q_factor(dict::Dict{Tuple{Int,Int},M}, stree::T, otree::T) where {T,M}
+function R_factor(
+    rowmap::Dict{RKey,Vector{CKey}},
+    colmap::Dict{CKey,Vector{RKey}},
+    mapping::Dict{Tuple{RKey,CKey},Tuple{Int,Int,Int}},
+    invmapping::Vector{Matrix{Tuple{RKey,CKey}}},
+    elementblocks::Vector{Matrix{M}},
+) where {M}
+    return R_factor{M}(rowmap, colmap, mapping, invmapping, elementblocks)
+end
+
+function Q_factor(dict::Dict{RKey,M}, stree::T, otree::T) where {T,M}
     return Q_factor{T,M}(dict, stree, otree)
 end
 
-function P_factor(dict::Dict{Tuple{Int,Int},M}, otree::T, stree::T) where {T,M}
+function P_factor(dict::Dict{CKey,M}, otree::T, stree::T) where {T,M}
     return P_factor{T,M}(dict, stree, otree)
 end
 
@@ -44,66 +72,53 @@ end
 # --- Updated Companion Outer Constructors & Helpers ---
 
 function AlgBF(
-    dim, Q::Q_factor{T,M}, R::AbstractVector{R_factor{T,M}}, P::P_factor{T,M}
-) where {T,M}
-    return AlgBF{T,M}(dim, Q, R, P)
+    dim, Q::Q_factor{T,M}, R::AbstractVector{R_factor{S}}, P::P_factor{T,M}, k, τ
+) where {T,M,S}
+    return AlgBF{T,M,S}(dim, Q, R, P, k, τ)
 end
-
+#=
+function AlgBF(
+    dim, Q::Q_factor{T,M}, R::AbstractVector{R_factor{M}}, P::P_factor{T,M}, k, τ
+) where {T,M}
+    return AlgBF{T,M,M}(dim, Q, R, P, k, τ)
+end
+=#
 function AlgBF(Butterfly::BF{T,M}) where {T,M}
     Q = Q_factor(Butterfly.Q, Butterfly.stree, Butterfly.otree)
     lr = length(Butterfly.R)
-    R_vec = Vector{R_factor{T,M}}(undef, lr)
+    R_vec = Vector{R_factor{M}}(undef, lr)
     for l in eachindex(Butterfly.R)
-        R_vec[l] = R_factor(
-            Butterfly.R[l],
-            (lr - (l - 2), lr - (l - 1)),
-            (l, l + 1),
-            Butterfly.stree,
-            Butterfly.otree,
-            Butterfly.stree,
-            Butterfly.otree,
-        )
+        R_vec[l] = R_factor(Butterfly.R[l])
     end
     P = P_factor(Butterfly.P, Butterfly.otree, Butterfly.stree)
-    return AlgBF{T,M}(Butterfly.dim, Q, R_vec, P)
+    return AlgBF{T,M,M}(Butterfly.dim, Q, R_vec, P, Butterfly.k, Butterfly.τ)
 end
 
 function AlgBF(
-    BFalg::AlgBF{T,M},
-    Q::Dict{Tuple{Int,Int},M},
-    R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},M}}},
-    P::Dict{Tuple{Int,Int},M},
-) where {T,M}
+    BFalg::AlgBF{T,M,S},
+    Q::Dict{RKey,M},
+    R::Vector{Dict{RKey,Dict{CKey,S}}},
+    P::Dict{CKey,M},
+) where {T,M,S}
     Q_f = Q_factor(Q, BFalg.Q.stree, BFalg.Q.otree)
-    R_factors = Vector{R_factor{T,M}}(undef, length(R))
+    R_factors = Vector{R_factor{S}}(undef, length(R))
     for l in eachindex(R)
-        R_factors[l] = R_factor(
-            R[l],
-            BFalg.R[l].slvl,
-            BFalg.R[l].olvl,
-            BFalg.R[l].rowstree,
-            BFalg.R[l].rowotree,
-            BFalg.R[l].colstree,
-            BFalg.R[l].colotree,
-        )
+        R_factors[l] = R_factor(R[l])
     end
     P_f = P_factor(P, BFalg.P.otree, BFalg.P.stree)
-    return AlgBF{T,M}(BFalg.dim, Q_f, R_factors, P_f)
+    return AlgBF{T,M,S}(BFalg.dim, Q_f, R_factors, P_f, BFalg.k, BFalg.τ)
 end
 
 function AlgBF(
-    BFalg::AlgBF{T,M},
-    Q::Dict{Tuple{Int,Int},M},
-    R::Vector{R_factor{T,M}},
-    P::Dict{Tuple{Int,Int},M},
-) where {T,M}
+    BFalg::AlgBF{T,M,S}, Q::Dict{RKey,M}, R::Vector{R_factor{S}}, P::Dict{CKey,M}
+) where {T,M,S}
     Q_f = Q_factor(Q, BFalg.Q.stree, BFalg.Q.otree)
     P_f = P_factor(P, BFalg.P.otree, BFalg.P.stree)
-    return AlgBF{T,M}(BFalg.dim, Q_f, R, P_f, BFalg.k, BFalg.τ)
+    return AlgBF{T,M,S}(BFalg.dim, Q_f, R, P_f, BFalg.k, BFalg.τ)
 end
 
 # Conversion back from AlgBF to BF
-function BF(algBF::AlgBF{T,M}, k, τ) where {T,M}
+function BF(algBF::AlgBF{T,M,S}, k, τ) where {T,M,S}
     NS = first(keys(algBF.P.dict))[2]
     NO = first(keys(algBF.Q.dict))[1]
     stree = algBF.Q.stree
@@ -111,9 +126,16 @@ function BF(algBF::AlgBF{T,M}, k, τ) where {T,M}
     newR = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},M}}}(undef, length(algBF.R))
     for l in eachindex(algBF.R)
         newR[l] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},M}}()
-        for (row, col_dict) in algBF.R[l].dict
-            newR[l][row] = Dict{Tuple{Int,Int},M}()
-            for (col, (eidx, i, j)) in col_dict
+        for ((row, col), (eidx, i, j)) in algBF.R[l].block_map
+            if !haskey(newR[l], row)
+                newR[l][row] = Dict{Tuple{Int,Int},M}()
+            end
+            if typeof(algBF.R[l].elementblocks[eidx][i, j]) == StructuralIdentity
+                block = algBF.R[l].elementblocks[eidx][i, j]
+                newR[l][row][col] = Matrix{eltype(block)}(I, size(block, 1), size(block, 2))
+            elseif typeof(algBF.R[l].elementblocks[eidx][i, j]) == StructuralZero
+                newR[l][row][col] = Matrix{eltype(block)}(eltype(block), 0, 0)
+            else
                 newR[l][row][col] = algBF.R[l].elementblocks[eidx][i, j]
             end
         end
@@ -164,7 +186,3 @@ adjoint(I::StructuralIdentity{T}) where {T} = I
 
 # Zero + Zero = Zero
 +(Z1::StructuralZero{T}, Z2::StructuralZero{T}) where {T} = Z1
-
-const BlockType = Union{
-    Matrix{ComplexF64},StructuralZero{ComplexF64},StructuralIdentity{ComplexF64}
-}

@@ -28,7 +28,7 @@ function recompress_BF(Butterfly::BF, τ)
     P = Butterfly.P
     BFalg = AlgBF(Butterfly)
     BFalg = recompress_BF(BFalg, τ)
-    return BF(BFalg, Butterfly.k, Butterfly.τ)
+    return BF(BFalg, Butterfly.k, τ)
 end
 
 function recompress_BF_right(Butterfly_init::AlgBF, τ; include_Q=false)
@@ -80,14 +80,14 @@ function recompress_BF_right(Butterfly_init::AlgBF, τ; include_Q=false)
 end
 
 function update_next_level_R_right(
-    R_u::Dict{Tuple{Int,Int},Matrix{ComplexF64}}, rightfactor::R_factor{T,M}
-) where {T,M}
-    for row in keys(rightfactor.dict)
+    R_u::Dict{Tuple{Int,Int},Matrix{ComplexF64}}, rightfactor::R_factor{M}
+) where {M}
+    for row in keys(rightfactor.row_spaces)
         # Because the row key of rightfactor is exactly the col_idx of the previous level
         if haskey(R_u, row)
             T_mat = R_u[row]
-            for col in keys(rightfactor.dict[row])
-                eidx, i, j = rightfactor.dict[row][col]
+            for col in rightfactor.row_spaces[row]
+                eidx, i, j = rightfactor.block_map[(row, col)]
                 eblock = rightfactor.elementblocks[eidx]
                 eblock[i, j] = T_mat * eblock[i, j]
             end

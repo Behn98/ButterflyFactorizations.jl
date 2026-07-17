@@ -106,107 +106,96 @@ function Base.:*(
     return mulBFs(Butterfly1, Butterfly2, max(Butterfly1.τ, Butterfly2.τ))
 end
 
-function mul_factors(left::R_factor{T,M}, right::R_factor{T,M}) where {T,M}
-    RowColKey = Tuple{Int,Int}
-    ValueTuple = Tuple{Int,Int,Int}
-
-    # =========================================================================
-    # PHASE 1: Sparse Accumulation of Block Products
-    # =========================================================================
-    # Temporary storage mapping: row_key -> col_key -> accumulated_matrix
-    computed_blocks = Dict{RowColKey,Dict{RowColKey,M}}()
-
-    for (rowA, colsA_dict) in left.dict
-        for (inner_key, (eidxA, iA, jA)) in colsA_dict
-            # Check if there is a matching row in the right factor
-            if haskey(right.dict, inner_key)
-                matA = left.elementblocks[eidxA][iA, jA]
-
-                for (colB, (eidxB, iB, jB)) in right.dict[inner_key]
-                    matB = right.elementblocks[eidxB][iB, jB]
-
-                    # Compute the submatrix multiplication
-                    prod_mat = matA * matB
-
-                    # Accumulate into the temporary lookup
-                    inner_dict = get!(() -> Dict{RowColKey,M}(), computed_blocks, rowA)
-                    if haskey(inner_dict, colB)
-                        inner_dict[colB] += prod_mat
-                    else
-                        inner_dict[colB] = prod_mat
+function mul_factors(left::R_factor{M}, right::R_factor{M}) where {M}
+    neweblocks = Vector{Matrix{M}}()
+    new_rowspaces = Dict{RKey,Vector{CKey}}()
+    new_colspaces = Dict{CKey,Vector{RKey}}()
+    new_block_map = Dict{Tuple{RKey,CKey},Tuple{Int,Int,Int}}()
+    new_invmap = Vector{Matrix{Tuple{RKey,CKey}}}()
+    for (n, leftblock) in enumerate(left.elementblocks)
+        newrowspace = [left.inverse_map[n][:, 1][1]]
+        for i in 1:size(leftblock, 1)
+            if !haskey(new_rowspaces, newrowspace[i])
+                new_rowspaces[newrowspace[i]] = Vector{CKey}()
+            end
+            for j in 1:size(leftblock, 2)
+                localcolspace = left.inverse_map[n][i, j][2]
+                newcolspace = right.row_spaces[localcolspace]
+                push!(new_rowspaces[newrowspace[i]], newcol for newcol in newcolspace)
+                for col in colspaces
+                    if !haskey(new_colspaces, col)
+                        new_colspaces[col] = Vector{RKey}()
                     end
+                    push!(new_colspaces[col], newrowspace[i])
+                end
+                rightblock = right.elementblocks[right.block_map[(
+                    localcolspace, newcolspace[1]
+                )][1]]
+                if i == 1 && j == 1
+                    neweblock = Matrix{M}(undef, size(newrowspace, 1), size(newcolspace, 1))
+                    newinvblock = Matrix{Tuple{RKey,CKey}}(
+                        undef, size(newrowspace, 1), size(newcolspace, 1)
+                    )
+                    push!(neweblocks, neweblock)
+                    push!(new_invmap, newinvblock)
+                    eidx = length(neweblocks)
+                else
+                    eidx = new_block_map[(newrowspace[1], newcolspace[1])][1]
+                    neweblock = neweblocks[eidx]
+                    newinvblock = new_invmap[eidx]
+                end
+                for k in 1:size(rightblock, 2)
+                    new_block_map[(newrowspace[i], newcolspace[k])] = (eidx, i, k)
+                    neweblock[i, k] = leftblock[i, j] * rightblock[j, k]
+                    newinvblock[i, k] = (newrowspace[i], newcolspace[k])
                 end
             end
         end
     end
+    return R_factor{M}(new_rowspaces, new_colspaces, new_block_map, new_invmap, neweblocks)
+end
 
-    # =========================================================================
-    # PHASE 2: Re-grouping Rows by Column-Spaces
-    # =========================================================================
-    # Group row keys that share the exact same mathematical set of column keys
-    groups = Dict{Set{RowColKey},Vector{RowColKey}}()
-    for (row, col_dict) in computed_blocks
-        col_space = Set{RowColKey}(keys(col_dict))
-        push!(get!(() -> RowColKey[], groups, col_space), row)
-    end
-
-    # Pre-allocate containers for the new R_factor
-    new_elementblocks = Vector{Matrix{M}}()
-    new_inverse_map = Vector{Matrix{Union{Nothing,Tuple{RowColKey,RowColKey}}}}()
-    new_dict = Dict{RowColKey,Dict{RowColKey,ValueTuple}}()
-
-    # Build the structured grid matrices from our grouped sets
-    for (col_space, rows_in_group) in groups
-        # Lexicographical sorting guarantees alignment invariants
-        sorted_rows = sort(rows_in_group)
-        sorted_cols = sort(collect(col_space))
-
-        n_rows = length(sorted_rows)
-        n_cols = length(sorted_cols)
-
-        # Allocate the grids for this specific partition block
-        grid_matrix = Matrix{M}(undef, n_rows, n_cols)
-        grid_imap = Matrix{Union{Nothing,Tuple{RowColKey,RowColKey}}}(
-            nothing, n_rows, n_cols
-        )
-
-        push!(new_elementblocks, grid_matrix)
-        push!(new_inverse_map, grid_imap)
-        new_eidx = length(new_elementblocks) # Track current vector location
-
-        # Populate the matrices and metadata maps
-        for j in 1:n_cols
-            col_key = sorted_cols[j]
-            for i in 1:n_rows
-                row_key = sorted_rows[i]
-
-                # 1. Place the numerical data block
-                grid_matrix[i, j] = computed_blocks[row_key][col_key]
-
-                # 2. Update the O(1) inverse lookup layout
-                grid_imap[i, j] = (row_key, col_key)
-
-                # 3. Update the forward dictionary
-                inner_dict = get!(() -> Dict{RowColKey,ValueTuple}(), new_dict, row_key)
-                inner_dict[col_key] = (new_eidx, i, j)
+function mul_factors(left::R_factor{M}, right::R_factor{M}) where {M}
+    neweblocks = Vector{Matrix{M}}()
+    new_rowspaces = Dict{RKey,Vector{CKey}}()
+    new_colspaces = Dict{CKey,Vector{RKey}}()
+    new_block_map = Dict{Tuple{RKey,CKey},Tuple{Int,Int,Int}}()
+    new_invmap = Vector{Matrix{Tuple{RKey,CKey}}}()
+    for cols in keys(left.col_spaces)
+        i = 1
+        for row in left.col_spaces[cols]
+            if !haskey(new_rowspaces, row)
+                new_rowspaces[row] = Vector{CKey}()
             end
+            j = 1
+            neweblock = Matrix{M}(
+                undef, length(left.col_spaces[cols]), length(right.row_spaces[row])
+            )
+            newinvblock = Matrix{Tuple{RKey,CKey}}(
+                undef, length(left.col_spaces[cols]), length(right.row_spaces[row])
+            )
+            for col in right.row_spaces[row]
+                if !haskey(new_colspaces, col)
+                    new_colspaces[col] = Vector{RKey}()
+                end
+                push!(new_rowspaces[row], col)
+                push!(new_colspaces[col], row)
+                neweblock[i, j] =
+                    left.elementblocks[left.block_map[(row, cols)][1]][
+                        left.block_map[(row, cols)][2], left.block_map[(row, cols)][3]
+                    ] * right.elementblocks[right.block_map[(cols, col)][1]][
+                        right.block_map[(cols, col)][2], right.block_map[(cols, col)][3]
+                    ]
+                newinvblock[i, j] = (row, col)
+                new_block_map[(row, col)] = (length(neweblocks) + 1, i, j)
+                j += 1
+            end
+            i += 1
         end
+        push!(neweblocks, neweblock)
+        push!(new_invmap, newinvblock)
     end
-
-    # =========================================================================
-    # PHASE 3: Inherit Structural Properties and Trees
-    # =========================================================================
-    return R_factor{T,M}(
-        new_dict,
-        new_inverse_map,
-        new_elementblocks,
-        (left.slvl[1], right.slvl[2]), # Row level context from left, Col from right
-        (left.olvl[1], right.olvl[2]),
-        left.rowstree,
-        left.rowotree,
-        right.colstree,
-        right.colotree,
-    )
+    return R_factor{M}(new_rowspaces, new_colspaces, new_block_map, new_invmap, neweblocks)
 end
 
 function mul_factors(

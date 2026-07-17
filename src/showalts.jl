@@ -48,15 +48,14 @@ function show(io::IO, ::MIME"text/plain", p::P_factor{T,M}) where {T,M}
 end
 
 # --- R_factor Display ---
-function show(io::IO, r::R_factor{T,M}) where {T,M}
-    return print(io, "R_factor{$T, $M}(slvl=$(r.slvl), olvl=$(r.olvl))")
+function show(io::IO, r::R_factor{M}) where {M}
+    return print(io, "R_factor{$M}")
 end
 
-function show(io::IO, ::MIME"text/plain", r::R_factor{T,M}) where {T,M}
+function show(io::IO, ::MIME"text/plain", r::R_factor{M}) where {M}
     println(io, "Butterfly R_factor (Middle Level)")
     println(io, "  Matrix Type: ", M)
-    println(io, "  Levels (s/o):", r.slvl, " / ", r.olvl)
-    return print(io, "  Storage:     ", length(r.dict), " top-level block keys")
+    return print(io, "  Storage:     ", length(r.block_map), " blocks mapped in Dict")
 end
 
 # 1. This controls the 1-line display (e.g., when inside arrays)

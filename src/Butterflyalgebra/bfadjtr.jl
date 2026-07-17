@@ -92,7 +92,7 @@ function Base.transpose(t::ButterflyFactorizations.BF_Mats)
     )
 end
 
-function Base.adjoint(R::R_factor{T,M}) where {T,M}
+function Base.adjoint(R::R_factor{M}) where {M}
     # 1. Transform the element blocks (Dual-Layer Transposition)
     new_elementblocks = map(R.elementblocks) do grid
         old_rows, old_cols = size(grid)
@@ -117,13 +117,10 @@ function Base.adjoint(R::R_factor{T,M}) where {T,M}
         for j in 1:old_cols
             for i in 1:old_rows
                 val = imap[i, j]
-                if val === nothing
-                    new_imap[j, i] = nothing
-                else
-                    row_key, col_key = val
-                    # Swap the semantic keys because rows and columns have flipped roles
-                    new_imap[j, i] = (reverse(col_key), reverse(row_key))
-                end
+
+                row_key, col_key = val
+                # Swap the semantic keys because rows and columns have flipped roles
+                new_imap[j, i] = (reverse(col_key), reverse(row_key))
             end
         end
         return new_imap
@@ -131,35 +128,30 @@ function Base.adjoint(R::R_factor{T,M}) where {T,M}
 
     # 3. Transform the semantic lookup dictionary
     # We dynamically infer the key types based on your row/col tuples
-    new_lookup = Dict{Any,Dict{Any,Tuple{Int,Int,Int}}}()
+    new_lookup = Dict{Tuple{RKey,CKey},Tuple{Int,Int,Int}}()
 
-    for (row_key, col_dict) in R.dict
-        for (col_key, (grid_idx, r_idx, c_idx)) in col_dict
-            # Look up or initialize the new outer key (which was the old column key)
-            inner_dict = get!(
-                () -> Dict{Any,Tuple{Int,Int,Int}}(), new_lookup, reverse(col_key)
-            )
+    for ((row_key, col_key), (grid_idx, r_idx, c_idx)) in R.block_map
 
-            # CRUCIAL: Swap r_idx and c_idx because the underlying grid matrix was transposed!
-            inner_dict[reverse(row_key)] = (grid_idx, c_idx, r_idx)
-        end
+        # CRUCIAL: Swap r_idx and c_idx because the underlying grid matrix was transposed!
+        new_lookup[(reverse(col_key), reverse(row_key))] = (grid_idx, c_idx, r_idx)
+    end
+
+    new_colmap = Dict{CKey,Vector{RKey}}()
+    new_rowmap = Dict{RKey,Vector{CKey}}()
+    for (row_key, col_keys) in R.row_spaces
+        new_colmap[reverse(row_key)] = [reverse(col_key) for col_key in col_keys]
+    end
+    for (col_key, row_keys) in R.col_spaces
+        new_rowmap[reverse(col_key)] = [reverse(row_key) for row_key in row_keys]
     end
 
     # Return a brand new, fully valid instance of your struct
-    return R_factor{T,M}(
-        new_lookup,
-        new_inverse_map,
-        new_elementblocks,
-        reverse(R.slvl),
-        reverse(R.olvl),
-        R.colotree,
-        R.colstree,
-        R.rowotree,
-        R.rowstree,
+    return R_factor{M}(
+        new_rowmap, new_colmap, new_lookup, new_inverse_map, new_elementblocks
     )
 end
 
-function Base.transpose(R::R_factor{T,M}) where {T,M}
+function Base.transpose(R::R_factor{M}) where {M}
     # 1. Transform the element blocks (Dual-Layer Transposition)
     new_elementblocks = map(R.elementblocks) do grid
         old_rows, old_cols = size(grid)
@@ -182,13 +174,9 @@ function Base.transpose(R::R_factor{T,M}) where {T,M}
         for j in 1:old_cols
             for i in 1:old_rows
                 val = imap[i, j]
-                if val === nothing
-                    new_imap[j, i] = nothing
-                else
-                    row_key, col_key = val
-                    # Swap the semantic keys because rows and columns have flipped roles
-                    new_imap[j, i] = (reverse(col_key), reverse(row_key))
-                end
+                row_key, col_key = val
+                # Swap the semantic keys because rows and columns have flipped roles
+                new_imap[j, i] = (reverse(col_key), reverse(row_key))
             end
         end
         return new_imap
@@ -196,38 +184,33 @@ function Base.transpose(R::R_factor{T,M}) where {T,M}
 
     # 3. Transform the semantic lookup dictionary
     # We dynamically infer the key types based on your row/col tuples
-    new_lookup = Dict{Any,Dict{Any,Tuple{Int,Int,Int}}}()
+    new_lookup = Dict{Tuple{RKey,CKey},Tuple{Int,Int,Int}}()
 
-    for (row_key, col_dict) in R.dict
-        for (col_key, (grid_idx, r_idx, c_idx)) in col_dict
-            # Look up or initialize the new outer key (which was the old column key)
-            inner_dict = get!(
-                () -> Dict{Any,Tuple{Int,Int,Int}}(), new_lookup, reverse(col_key)
-            )
+    for ((row_key, col_key), (grid_idx, r_idx, c_idx)) in R.block_map
 
-            # CRUCIAL: Swap r_idx and c_idx because the underlying grid matrix was transposed!
-            inner_dict[reverse(row_key)] = (grid_idx, c_idx, r_idx)
-        end
+        # CRUCIAL: Swap r_idx and c_idx because the underlying grid matrix was transposed!
+        new_lookup[(reverse(col_key), reverse(row_key))] = (grid_idx, c_idx, r_idx)
+    end
+
+    new_colmap = Dict{CKey,Vector{RKey}}()
+    new_rowmap = Dict{RKey,Vector{CKey}}()
+    for (row_key, col_keys) in R.row_spaces
+        new_colmap[reverse(row_key)] = [reverse(col_key) for col_key in col_keys]
+    end
+    for (col_key, row_keys) in R.col_spaces
+        new_rowmap[reverse(col_key)] = [reverse(row_key) for row_key in row_keys]
     end
 
     # Return a brand new, fully valid instance of your struct
-    return R_factor{T,M}(
-        new_lookup,
-        new_inverse_map,
-        new_elementblocks,
-        reverse(R.slvl),
-        reverse(R.olvl),
-        R.colotree,
-        R.colstree,
-        R.rowotree,
-        R.rowstree,
+    return R_factor{M}(
+        new_rowmap, new_colmap, new_lookup, new_inverse_map, new_elementblocks
     )
 end
 
-function Base.adjoint(B::ButterflyFactorizations.AlgBF{T,M}) where {T,M} # 1. Added {T,M} here
+function Base.adjoint(B::ButterflyFactorizations.AlgBF{T,M,S}) where {T,M,S} # 1. Added {T,M} here
     lr = length(B.R)
 
-    Rf_adj = Vector{R_factor{T,M}}(undef, lr)
+    Rf_adj = Vector{R_factor{S}}(undef, lr)
 
     for l in eachindex(B.R)
         newl = lr - l + 1
@@ -249,13 +232,13 @@ function Base.adjoint(B::ButterflyFactorizations.AlgBF{T,M}) where {T,M} # 1. Ad
     # 5. Explicitly construct Q_factor with {T}
     Pf_adj = Q_factor{T,M}(P_adj, B.P.otree, B.P.stree)
 
-    return AlgBF(reverse(B.dim), Pf_adj, Rf_adj, Qf_adj)
+    return AlgBF{T,M,S}(reverse(B.dim), Pf_adj, Rf_adj, Qf_adj, B.k, B.τ)
 end
 
-function Base.transpose(B::ButterflyFactorizations.AlgBF{T,M}) where {T,M}
+function Base.transpose(B::ButterflyFactorizations.AlgBF{T,M,S}) where {T,M,S}
     lr = length(B.R)
     R_adj = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(undef, lr)
-    Rf_adj = Vector{R_factor{T,M}}(undef, lr)
+    Rf_adj = Vector{R_factor{S}}(undef, lr)
     for l in eachindex(B.R)
         newl = lr - l + 1
         # 3. Explicitly construct R_factor with {T}
@@ -273,7 +256,7 @@ function Base.transpose(B::ButterflyFactorizations.AlgBF{T,M}) where {T,M}
         P_adj[reverse(k)] = transpose(B.P.dict[k])
     end
     Pf_adj = Q_factor{T,M}(P_adj, B.P.otree, B.P.stree)
-    return AlgBF{T,M}(reverse(B.dim), Pf_adj, Rf_adj, Qf_adj)
+    return AlgBF{T,M,S}(reverse(B.dim), Pf_adj, Rf_adj, Qf_adj, B.k, B.τ)
 end
 
 """

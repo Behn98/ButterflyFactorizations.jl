@@ -1,8 +1,11 @@
 # We introduce a new parameter 'M' for the Matrix/Array type
+const RKey = Tuple{Int,Int}
+const CKey = Tuple{Int,Int}
+
 struct BF{T,M<:AbstractMatrix}
-    Q::Dict{Tuple{Int,Int},M}
-    R::Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},M}}}
-    P::Dict{Tuple{Int,Int},M}
+    Q::Dict{RKey,M}
+    R::Vector{Dict{RKey,Dict{CKey,M}}}
+    P::Dict{CKey,M}
     dim::Tuple{Int,Int}
     NS::Int64
     NO::Int64
@@ -16,38 +19,40 @@ struct BF{T,M<:AbstractMatrix}
         new{T,M}(Q, R, P, dim, NS, NO, k, τ, stree, otree)
 end
 
-struct R_factor{T,M<:AbstractMatrix}
-    dict::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{M}}}#Matrix of Matrices
-    slvl::Tuple{Int,Int}
-    olvl::Tuple{Int,Int}
-    rowstree::T
-    rowotree::T
-    colstree::T
-    colotree::T
+struct R_factor{M<:AbstractMatrix}
+    row_spaces::Dict{RKey,Vector{CKey}}
+    col_spaces::Dict{CKey,Vector{RKey}}
+
+    # 2. The Flat Block Locator (Fast Access)
+    block_map::Dict{Tuple{RKey,CKey},Tuple{Int,Int,Int}}
+
+    # 3. The Data Payload (Unchanged)
+    inverse_map::Vector{Matrix{Tuple{RKey,CKey}}}
+    elementblocks::Vector{Matrix{M}}
 end
 
 struct Q_factor{T,M<:AbstractMatrix}
-    dict::Dict{Tuple{Int,Int},M}
+    dict::Dict{RKey,M}
     stree::T
     otree::T
 end
 
 struct P_factor{T,M<:AbstractMatrix}
-    dict::Dict{Tuple{Int,Int},M}
+    dict::Dict{CKey,M}
     stree::T
     otree::T
 end
 
-struct AlgBF{T,M<:AbstractMatrix}#algebraic butterfly factorization
+struct AlgBF{T,M<:AbstractMatrix,S<:AbstractMatrix}#algebraic butterfly factorization
     dim::Tuple{Int,Int}
     Q::Q_factor{T,M}   # Assumed to internalize M or be generic enough
-    R::Vector{R_factor{T,M}}
+    R::Vector{R_factor{S}}
     P::P_factor{T,M}
     k::Float64
     τ::Float64
 
     # 1. Base inner constructor
-    AlgBF{T,M}(dim, Q, R, P, k, τ) where {T,M} = new{T,M}(dim, Q, R, P, k, τ)
+    AlgBF{T,M,S}(dim, Q, R, P, k, τ) where {T,M,S} = new{T,M,S}(dim, Q, R, P, k, τ)
 end
 
 # En helt platt CSR-nivå för R-faktorerna
@@ -120,3 +125,7 @@ end
 struct StructuralIdentity{T} <: AbstractMatrix{T}
     n::Int
 end
+
+const BlockType = Union{
+    Matrix{ComplexF64},StructuralZero{ComplexF64},StructuralIdentity{ComplexF64}
+}
