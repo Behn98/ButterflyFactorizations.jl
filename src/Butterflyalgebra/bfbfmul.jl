@@ -62,15 +62,7 @@ function mulBFs(BF_1_init::BF, BF_2_init::BF, τ::Float64)
     BF_2_alg = AlgBF(BF_2)
     M_messenger = mul_factors(BF_1.R[1], M_messenger)
     M_messenger = mul_factors(M_messenger, BF_2.R[L])
-    M_messenger = R_factor(
-        M_messenger,
-        (BF_1_alg.R[L].slvl[1], BF_2_alg.R[1].slvl[2]),
-        (BF_1_alg.R[L].olvl[1], BF_2_alg.R[1].olvl[2]),
-        BF_1_alg.R[1].rowstree,
-        BF_2_alg.R[1].rowotree,
-        BF_1_alg.R[L].colstree,
-        BF_2_alg.R[L].colotree,
-    )
+    M_messenger = R_factor(M_messenger)
 
     result = AlgBF(
         (size(BF_1_alg, 1), size(BF_2_alg, 2)),
@@ -105,7 +97,7 @@ function Base.:*(
 )
     return mulBFs(Butterfly1, Butterfly2, max(Butterfly1.τ, Butterfly2.τ))
 end
-
+#=
 function mul_factors(left::R_factor{M}, right::R_factor{M}) where {M}
     neweblocks = Vector{Matrix{M}}()
     new_rowspaces = Dict{RKey,Vector{CKey}}()
@@ -154,6 +146,7 @@ function mul_factors(left::R_factor{M}, right::R_factor{M}) where {M}
     end
     return R_factor{M}(new_rowspaces, new_colspaces, new_block_map, new_invmap, neweblocks)
 end
+=#
 
 function mul_factors(left::R_factor{M}, right::R_factor{M}) where {M}
     neweblocks = Vector{Matrix{M}}()
@@ -196,6 +189,115 @@ function mul_factors(left::R_factor{M}, right::R_factor{M}) where {M}
         push!(new_invmap, newinvblock)
     end
     return R_factor{M}(new_rowspaces, new_colspaces, new_block_map, new_invmap, neweblocks)
+end
+
+Base.:*(left::R_factor{M}, right::R_factor{M}) where {M} = mul_factors(left, right)
+
+function mul_factors(bf::AlgBF, idx::Int)
+    L = length(bf.R)
+    if idx > 1 && idx < (L + 1)
+        leftfactor = bf.R[L + 1 - (idx - 1)]
+        rightfactor = bf.R[L + 1 - idx]
+        product = mul_factors(leftfactor, rightfactor)
+    elseif idx == 1
+        error("Multiplying P and R[1]")
+    else
+        error("Multiplying R[end] and Q")
+    end
+    #product = mul_factors(leftfactor, rightfactor)
+    return AlgBF(
+        bf, bf.Q, vcat(bf.R[1:(L - idx)], [product], bf.R[(L - idx + 3):length(bf.R)]), bf.P
+    )
+end
+
+function browswap(BF::AlgBF, idx::Int)
+    L = length(BF.R)
+    if idx > 1 && idx < (L + 1)
+        leftfactor = BF.R[L + 1 - (idx - 1)]
+        rightfactor = BF.R[L + 1 - idx]
+    elseif idx == 1
+        error("Multiplying P and R[L]")
+
+    else
+        error("Multiplying R[1] and Q")
+    end
+    nlfactor, nrfactor = browswap(leftfactor, rightfactor)
+
+    return AlgBF(
+        (size(BF, 1), size(BF, 2)),
+        BF.Q,
+        vcat(BF.R[1:(L - idx)], [nrfactor, nlfactor], BF.R[(L - idx + 3):length(BF.R)]),
+        BF.P,
+    )
+end
+
+function browswap(LeftFactor::R_factor{M}, RightFactor::R_factor{M}) where {M}
+    lf = (
+        neweblocks    = Vector{Matrix{M}}(),
+        new_rowspaces = Dict{RKey,Vector{CKey}}(),
+        new_colspaces = Dict{CKey,Vector{RKey}}(),
+        new_block_map = Dict{Tuple{RKey,CKey},Tuple{Int,Int,Int}}(),
+        new_invmap    = Vector{Matrix{Tuple{RKey,CKey}}}(),
+    )
+    rf = (
+        neweblocks    = Vector{Matrix{M}}(),
+        new_rowspaces = Dict{RKey,Vector{CKey}}(),
+        new_colspaces = Dict{CKey,Vector{RKey}}(),
+        new_block_map = Dict{Tuple{RKey,CKey},Tuple{Int,Int,Int}}(),
+        new_invmap    = Vector{Matrix{Tuple{RKey,CKey}}}(),
+    )
+
+    prod = mul_factors(LeftFactor, RightFactor)
+    colcounter1 = 1
+    colcounter2 = 1
+    for col in keys(prod.col_spaces)
+        localrowspace = sort!(prod.col_spaces[col])
+        localcolspace = sort!(prod.row_spaces[localcolspace[1]])
+        supeblock = Vector{Vector{Int}}()
+        currenteidx = 0
+        for (i, row) in enumerate(localrowspace)
+            if currenteidx != prod.block_map[(row, localcolspace[end])][1]
+                push!(supeblock, Vector{Int}())
+            end
+            for (j, col) in enumerate(localcolspace)
+                eidx, ei, ej = prod.block_map[(row, col)]
+                if currenteidx != eidx
+                    currenteidx = eidx
+                    push!(supeblock[end], eidx)
+                end
+            end
+        end
+
+        for (n, rowblockids) in enumerate(supeblock)
+            rowdim = size(prod.elementblocks[rowblockids[1]], 1)
+            neweblock = Matrix{M}(undef, rowdim, length(rowblockids))
+            for i in 1:rowdim
+                for (j, blockid) in enumerate(rowblockids)
+                    neweblock[i, j] = hcat(prod.elementblocks[blockid][i, :]...)
+                    newcolidx = (colcounter1, colcounter2)
+                    #update blockmap, invmap, rowspaces, colspaces
+                    colcounter2 += 1
+                end
+            end
+            colcounter1 += 1
+        end
+    end
+    return R_factor(
+        lf.neweblocks, lf.new_rowspaces, lf.new_colspaces, lf.new_block_map, lf.new_invmap
+    ),
+    R_factor(
+        rf.neweblocks, rf.new_rowspaces, rf.new_colspaces, rf.new_block_map, rf.new_invmap
+    )
+end
+
+function LinearAlgebra.mul!(
+    C::ButterflyFactorizations.BF,
+    A::ButterflyFactorizations.BF,
+    B::ButterflyFactorizations.BF,
+)
+    LinearMaps.check_dim_mul(C, A, B)
+    copyto!(C, mulBFs(A, B, max(A.τ, B.τ)))
+    return C
 end
 
 function mul_factors(
@@ -279,167 +381,6 @@ function mul_factors(
     end
 
     return product
-end
-
-function mul_factors(BF::AlgBF, idx::Int)
-    L = length(BF.R)
-    if idx > 1 && idx < (L + 1)
-        leftfactor = BF.R[L + 1 - (idx - 1)].dict
-        rightfactor = BF.R[L + 1 - idx].dict
-        product = R_factor(
-            mul_factors(leftfactor, rightfactor),
-            (BF.R[L + 1 - idx].slvl[1], BF.R[L + 1 - (idx - 1)].slvl[2]),
-            (BF.R[L + 1 - idx].olvl[1], BF.R[L + 1 - (idx - 1)].olvl[2]),
-            BF.R[L + 1 - (idx - 1)].rowstree,
-            BF.R[L + 1 - (idx - 1)].rowotree,
-            BF.R[L + 1 - idx].colstree,
-            BF.R[L + 1 - idx].colotree,
-        )
-    elseif idx == 1
-        @show "Multiplying P and R[1]"
-        leftfactor = BF.P.dict
-        rightfactor = BF.R[L + 1 - idx].dict
-        product = R_factor(
-            mul_factors(leftfactor, rightfactor),
-            (BF.R[L + 1 - idx].slvl[1], BF.R[L + 1 - idx].slvl[2]),
-            (BF.R[L + 1 - idx].olvl[1], BF.R[L + 1 - idx].olvl[2]),
-            BF.R[L + 1 - idx].rowstree,
-            BF.R[L + 1 - idx].rowotree,
-            BF.R[L + 1 - idx].colstree,
-            BF.R[L + 1 - idx].colotree,
-        )
-        #should not occure since we only call this function for idx in 2:(L-1)
-    else
-        @show "Multiplying R[end] and Q"
-        leftfactor = BF.R[L + 1 - idx].dict
-        rightfactor = BF.Q.dict
-        product = R_factor(
-            mul_factors(leftfactor, rightfactor),
-            (BF.R[L + 1 - idx].slvl[1], BF.R[L + 1 - idx].slvl[2]),
-            (BF.R[L + 1 - idx].olvl[1], BF.R[L + 1 - idx].olvl[2]),
-            BF.R[L + 1 - idx].rowstree,
-            BF.R[L + 1 - idx].rowotree,
-            BF.R[L + 1 - idx].colstree,
-            BF.R[L + 1 - idx].colotree,
-        )
-        #should not occure since we only call this function for idx in 2:(L-1)
-    end
-    #product = mul_factors(leftfactor, rightfactor)
-    return AlgBF(
-        (size(BF, 1), size(BF, 2)),
-        BF.Q,
-        vcat(BF.R[1:(L - idx)], [product], BF.R[(L - idx + 3):length(BF.R)]),
-        BF.P,
-    )
-end
-
-function browswap(BF::AlgBF, idx::Int, τ)
-    L = length(BF.R)
-    if idx > 1 && idx < (L + 1)
-        leftfactor = BF.R[L + 1 - (idx - 1)]
-        rightfactor = BF.R[L + 1 - idx]
-    elseif idx == 1
-        @show "Multiplying P and R[L]"
-        leftfactor = BF.P
-        rightfactor = BF.R[L + 1 - idx]
-        #should not happen!
-    else
-        @show "Multiplying R[1] and Q"
-        leftfactor = BF.R[L + 1 - idx]
-        rightfactor = BF.Q
-        #should not happen!
-    end
-    nlfactor, nrfactor = browswap(leftfactor, rightfactor, τ)
-
-    return AlgBF(
-        (size(BF, 1), size(BF, 2)),
-        BF.Q,
-        vcat(BF.R[1:(L - idx)], [nrfactor, nlfactor], BF.R[(L - idx + 3):length(BF.R)]),
-        BF.P,
-    )
-end
-
-function browswap(LeftFactor::R_factor, RightFactor::R_factor, τ)
-    NewLeftFactor = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
-    NewRightFactor = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
-
-    Intermediate = mul_factors(LeftFactor.dict, RightFactor.dict)
-    col_tree = RightFactor.colstree
-    parentkeyscols = Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}()
-    parentkeysrows = Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}()
-    for row in keys(Intermediate)
-        parentgrps = group_by_parents(col_tree, keys(Intermediate[row]), 2)
-        for (parentnodes, localcols) in parentgrps
-            parentkey = (first(keys(LeftFactor.dict[row]))[1], parentnodes) #H2Trees.parent(row_tree, row[1])first(localcols)[1]parentnodeo
-            if !haskey(parentkeysrows, parentkey)
-                parentkeysrows[parentkey] = Vector{Tuple{Int,Int}}()
-            end
-            unique!(push!(parentkeysrows[parentkey], row))
-            if !haskey(parentkeyscols, parentkey)
-                parentkeyscols[parentkey] = Vector{Tuple{Int,Int}}()
-            end
-            for col in localcols
-                unique!(push!(parentkeyscols[parentkey], col))
-            end
-            A_k = hcat([Intermediate[row][col] for col in localcols]...)
-            if !haskey(NewLeftFactor, row)
-                NewLeftFactor[row] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-            end
-            NewLeftFactor[row][parentkey] = A_k
-        end
-    end
-    #=
-    for parentkey in keys(parentkeyscols)
-        sort!(parentkeyscols[parentkey])
-    end
-    =#
-    for parentkey in keys(parentkeyscols)
-        localrows = parentkeysrows[parentkey]
-        localcols = parentkeyscols[parentkey]
-        if !haskey(NewRightFactor, parentkey)
-            NewRightFactor[parentkey] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-        end
-        coltracker = 0
-        colsizeA_k = size(NewLeftFactor[first(localrows)][parentkey], 2)
-        for col in localcols
-            colcurent = size(Intermediate[first(localrows)][col], 2)
-            NewRightFactor[parentkey][col] = vcat(
-                zeros(ComplexF64, coltracker, colcurent),
-                Matrix{ComplexF64}(I, colcurent, colcurent),
-                zeros(ComplexF64, colsizeA_k - coltracker - colcurent, colcurent),
-            )
-            coltracker += colcurent
-        end
-    end
-
-    return R_factor(
-        NewLeftFactor,
-        LeftFactor.slvl,
-        LeftFactor.olvl,
-        LeftFactor.rowstree,
-        LeftFactor.rowotree,
-        LeftFactor.colstree,
-        LeftFactor.colotree,
-    ),
-    R_factor(
-        NewRightFactor,
-        RightFactor.slvl,
-        RightFactor.olvl,
-        RightFactor.rowstree,
-        RightFactor.rowotree,
-        RightFactor.colstree,
-        RightFactor.colotree,
-    )
-end
-
-function LinearAlgebra.mul!(
-    C::ButterflyFactorizations.BF,
-    A::ButterflyFactorizations.BF,
-    B::ButterflyFactorizations.BF,
-)
-    LinearMaps.check_dim_mul(C, A, B)
-    copyto!(C, mulBFs(A, B, max(A.τ, B.τ)))
-    return C
 end
 
 function trivialmul(BF_1_init::BF, BF_2_init::BF)
