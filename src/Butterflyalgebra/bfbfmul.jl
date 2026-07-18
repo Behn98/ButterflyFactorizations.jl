@@ -75,7 +75,7 @@ function mulBFs(BF_1_init::BF, BF_2_init::BF, τ::Float64)
     for m in 1:(L - 1)
         for t in 1:m
             result = browswap(result, L + 2 - t)
-            #print("swap done \n")
+            print("swap done \n")
         end
         result = recompress_BF(mul_factors(result, L + 1 - m), τ)#
     end
@@ -99,56 +99,6 @@ function Base.:*(
 )
     return mulBFs(Butterfly1, Butterfly2, max(Butterfly1.τ, Butterfly2.τ))
 end
-#=
-function mul_factors(left::R_factor{M}, right::R_factor{M}) where {M}
-    neweblocks = Vector{Matrix{M}}()
-    new_rowspaces = Dict{RKey,Vector{CKey}}()
-    new_colspaces = Dict{CKey,Vector{RKey}}()
-    new_block_map = Dict{Tuple{RKey,CKey},Tuple{Int,Int,Int}}()
-    new_invmap = Vector{Matrix{Tuple{RKey,CKey}}}()
-    for (n, leftblock) in enumerate(left.elementblocks)
-        newrowspace = [left.inverse_map[n][:, 1][1]]
-        for i in 1:size(leftblock, 1)
-            if !haskey(new_rowspaces, newrowspace[i])
-                new_rowspaces[newrowspace[i]] = Vector{CKey}()
-            end
-            for j in 1:size(leftblock, 2)
-                localcolspace = left.inverse_map[n][i, j][2]
-                newcolspace = right.row_spaces[localcolspace]
-                push!(new_rowspaces[newrowspace[i]], newcol for newcol in newcolspace)
-                for col in colspaces
-                    if !haskey(new_colspaces, col)
-                        new_colspaces[col] = Vector{RKey}()
-                    end
-                    push!(new_colspaces[col], newrowspace[i])
-                end
-                rightblock = right.elementblocks[right.block_map[(
-                    localcolspace, newcolspace[1]
-                )][1]]
-                if i == 1 && j == 1
-                    neweblock = Matrix{M}(undef, size(newrowspace, 1), size(newcolspace, 1))
-                    newinvblock = Matrix{Tuple{RKey,CKey}}(
-                        undef, size(newrowspace, 1), size(newcolspace, 1)
-                    )
-                    push!(neweblocks, neweblock)
-                    push!(new_invmap, newinvblock)
-                    eidx = length(neweblocks)
-                else
-                    eidx = new_block_map[(newrowspace[1], newcolspace[1])][1]
-                    neweblock = neweblocks[eidx]
-                    newinvblock = new_invmap[eidx]
-                end
-                for k in 1:size(rightblock, 2)
-                    new_block_map[(newrowspace[i], newcolspace[k])] = (eidx, i, k)
-                    neweblock[i, k] = leftblock[i, j] * rightblock[j, k]
-                    newinvblock[i, k] = (newrowspace[i], newcolspace[k])
-                end
-            end
-        end
-    end
-    return R_factor{M}(new_rowspaces, new_colspaces, new_block_map, new_invmap, neweblocks)
-end
-=#
 
 function mul_factors(left::R_factor{M}, right::R_factor{M}) where {M}
     neweblocks = Vector{Matrix{M}}()
@@ -204,7 +154,12 @@ function mul_factors(bf::AlgBF, idx::Int)
     end
     #product = mul_factors(leftfactor, rightfactor)
     return AlgBF(
-        bf, bf.Q, vcat(bf.R[1:(L - idx)], [product], bf.R[(L - idx + 3):length(bf.R)]), bf.P
+        bf.dim,
+        bf.Q,
+        vcat(bf.R[1:(L - idx)], [product], bf.R[(L - idx + 3):length(bf.R)]),
+        bf.P,
+        bf.k,
+        bf.τ,
     )
 end
 
@@ -232,172 +187,158 @@ function browswap(BF::AlgBF, idx::Int)
 end
 
 function browswap(LeftFactor::R_factor{M}, RightFactor::R_factor{M}) where {M}
-    lf = (#newleftfactor with all necessary fields
-        neweblocks    = Vector{Matrix{M}}(),
-        new_rowspaces = Dict{RKey,Vector{CKey}}(),
-        new_colspaces = Dict{CKey,Vector{RKey}}(),
-        new_block_map = Dict{Tuple{RKey,CKey},Tuple{Int,Int,Int}}(),
-        new_invmap    = Vector{Matrix{Tuple{RKey,CKey}}}(),
-    )
-    rf = (#newrightfactor with all necessary fields
-        neweblocks    = Vector{Matrix{M}}(),
-        new_rowspaces = Dict{RKey,Vector{CKey}}(),
-        new_colspaces = Dict{CKey,Vector{RKey}}(),
-        new_block_map = Dict{Tuple{RKey,CKey},Tuple{Int,Int,Int}}(),
-        new_invmap    = Vector{Matrix{Tuple{RKey,CKey}}}(),
-    )
+    # Dynamically extract the underlying scalar type (e.g., ComplexF64 from Matrix{ComplexF64})
+    T = eltype(M)
+
+    # Left factor storage
+    lf_neweblocks    = Vector{Matrix{M}}()
+    lf_new_rowspaces = Dict{RKey,Vector{CKey}}()
+    lf_new_colspaces = Dict{CKey,Vector{RKey}}()
+    lf_new_block_map = Dict{Tuple{RKey,CKey},Tuple{Int,Int,Int}}()
+    lf_new_invmap    = Vector{Matrix{Tuple{RKey,CKey}}}()
+
+    # Right factor storage
+    rf_neweblocks    = Vector{Matrix{M}}()
+    rf_new_rowspaces = Dict{RKey,Vector{CKey}}()
+    rf_new_colspaces = Dict{CKey,Vector{RKey}}()
+    rf_new_block_map = Dict{Tuple{RKey,CKey},Tuple{Int,Int,Int}}()
+    rf_new_invmap    = Vector{Matrix{Tuple{RKey,CKey}}}()
 
     prod = mul_factors(LeftFactor, RightFactor)
-    #we first compute the product of the two factors after absorbing the colspace of the
-    #left factor and the rowspace of the right factor, we need to construct a new one in
-    #between the new factors. Due to the permutations we are gonna perform inconsistently
-    #across multiple rows, and the messenger matrix resulting from multiplication having no
-    #semantic relationship between column and row space, we construct indices that are
-    #completely unrelated to the tree. Note that for the butterfly to still fit into the
-    #matrix world, only the outer rowspace of P and the colspace of Q are relevant!
-    colcounter1 = 1
-    colcounter2 = 1
-    for col in keys(prod.col_spaces)
-        #We first need to find the "4×4" Blocks that Heldring is talking about. He
-        #immediately asserts that we can row and column permute the product we built earlier
-        #into a block diagonal structure of 4×4 blocks. Thus any of those "4×4" blocks must
-        #be occupying a unique column and row space of the product. They could look like
-        #this, for example, with M being a matrix block and _ being a zero block:
-        # [ M M _ _ M M _ _]
-        # [ _ _ M M _ _ M M]
-        # [ M M _ _ M M _ _]
-        # [ _ _ M M _ _ M M]
-        # [ M M _ _ M M _ _]
-        # [ _ _ M M _ _ M M]
-        # [ M M _ _ M M _ _]
-        # [ _ _ M M _ _ M M]
-        # In the arbitrary tree, case these will have different dimensions.
-        #Sort so we dont mix up the order of the blocks M!
-        localrowspace = sort!(prod.col_spaces[col])
-        localcolspace = sort!(prod.row_spaces[localrowspace[1]])
-        #Because due to the messenger matrix, we cant rely on regular semantic relationships
-        #between row and col spaces of a "4×4 block" we cant query relationships between the
-        #rows and columns of the to be found blocks M. That is why our data structure is in
-        #fact saving all the "2×2" blocks, a "4×4" block is composed out of. These subblocks
-        #are automatically implying the dimensions we need to concatenate over in the
-        #colspace. on top of that the decoupling of the 2x2 blocks in the arbitrary tree
-        #case is not restricted by checking on the rowidxs trying to infere tree
-        #relationships, which anyways becomes more and more complicated, and doesnt work for
-        #the Messenger either. However since the block map is addressing the internal blocks
-        #directly, we need to traverse the unique subspaces and collect all unique 2x2
-        #blocks to find our 4x4 block:
-        # [E1 _ E2 _ ]
-        # [__ _ __ _ ]
-        # [E3 _ E4 _ ]
-        # [__ _ __ _ ]
-        #where E = [[M,M];[M,M]]
-        #note that rows dont need to be contiguous in the 2x2 block, but the inside blocks
-        #([M,M]) usually are.
-        supeblock = Vector{Vector{Int}}()
-        currenteidx = 0
-        for (i, row) in enumerate(localrowspace)
-            if currenteidx != prod.block_map[(row, localcolspace[end])][1]
-                push!(supeblock, Vector{Int}())
-            end
-            for (j, col) in enumerate(localcolspace)
-                eidx, ei, ej = prod.block_map[(row, col)]
-                if currenteidx != eidx
-                    currenteidx = eidx
-                    push!(supeblock[end], eidx)
-                end
-            end
-        end
-        #We now have [[E1,E2],[E3,E4]] in terms of their ids
-        #the goal:
-        # [[E1 E2]  _____ ]
-        # [ _____  [E3 E4]]
-        firstn = true
-        neweblocksright = Vector{Matrix{M}}()
-        newinvblocksright = Vector{Matrix{Tuple{RKey,CKey}}}()
-        for (n, rowblockids) in enumerate(supeblock)
-            rowdim = size(prod.elementblocks[rowblockids[1]], 1)
-            neweblock = Matrix{M}(undef, rowdim, length(rowblockids))
-            newinvblock = Matrix{Tuple{RKey,CKey}}(undef, rowdim, length(rowblockids))
-            colcounter2 = 1
-            firsti = true
-            if firstn == true
-                neweblocksright = Vector{Matrix{M}}(undef, length(rowblockids))
-                newinvblocksright = Vector{Matrix{Tuple{RKey,CKey}}}(
-                    undef, length(rowblockids)
-                )
-            end
-            for i in 1:rowdim
-                colcounter2 = 1
-                rowidx = prod.inverse_map[rowblockids[1]][i, 1][1]
-                if !haskey(lf.new_rowspaces, rowidx)
-                    lf.new_rowspaces[rowidx] = Vector{CKey}()
-                end
-                for (j, blockid) in enumerate(rowblockids)
-                    newcolidx = (colcounter1, colcounter2)
-                    if !haskey(lf.new_colspaces, newcolidx)
-                        lf.new_colspaces[newcolidx] = Vector{RKey}()
-                    end
-                    push!(lf.new_rowspaces[rowidx], newcolidx)
-                    push!(lf.new_colspaces[newcolidx], rowidx)
-                    if firstn == true
-                        neweblocksright[j] = Matrix{M}(
-                            undef, length(rowblockids), size(prod.elementblocks[blockid], 2)
-                        )
-                        newinvblocksright[j] = Matrix{Tuple{RKey,CKey}}(
-                            undef, length(rowblockids), size(prod.elementblocks[blockid], 2)
-                        )
-                    end
-                    neweblock[i, j] = hcat(prod.elementblocks[blockid][i, :]...)
-                    rowdimright = size(neweblock[i, j], 2)
-                    if firsti == true
-                        offset = 0
-                        for h in eachindex(prod.elementblocks[blockid][i, :])
-                            blksize = size(prod.elementblocks[blockid][i, h], 2)
-                            colidxright = prod.inverse_map[blockid][i, h][2]
-                            neweblocksright[j][i, h] = vcat(
-                                zeros(ComplexF64, offset, blksize),
-                                Matrix{ComplexF64}(I, blksize, blksize),
-                                zeros(ComplexF64, rowdimright - blksize-offset, blksize),
-                            )
-                            newinvblocksright[j][i, h] = (newcolidx, colidxright)
-                            rf.new_block_map[(newcolidx, colidxright)] = (
-                                length(rf.neweblocks) + j, i, h
-                            )
-                            if !haskey(rf.new_rowspaces, newcolidx)
-                                rf.new_rowspaces[newcolidx] = Vector{RKey}()
-                            end
-                            push!(rf.new_rowspaces[newcolidx], colidxright)
-                            if !haskey(rf.new_colspaces, colidxright)
-                                rf.new_colspaces[colidxright] = Vector{RKey}()
-                            end
-                            push!(rf.new_colspaces[colidxright], newcolidx)
-                            offset += blksize
-                        end
-                        firsti = false
-                    end
-                    row = prod.inverse_map[blockid][i, 1][1]
-                    newinvblock[i, j] = (row, newcolidx)
-                    lf.new_block_map[(row, newcolidx)] = (length(lf.neweblocks) + 1, i, j)
 
-                    colcounter2 += 1
+    colcounter1 = 1
+
+    # Renamed to col_key to avoid inner variable shadowing
+    for col_key in keys(prod.col_spaces)
+        if !haskey(rf_new_colspaces, col_key)
+            localrowspace = sort!(prod.col_spaces[col_key])
+            localcolspace = sort!(prod.row_spaces[localrowspace[1]])
+
+            supeblock = Vector{Vector{Int}}()
+            currenteidx = 0
+
+            for (i, row) in enumerate(localrowspace)
+                if currenteidx != prod.block_map[(row, localcolspace[end])][1]
+                    push!(supeblock, Vector{Int}())
+                end
+                for (j, c_key) in enumerate(localcolspace)
+                    eidx, ei, ej = prod.block_map[(row, c_key)]
+                    if currenteidx != eidx
+                        currenteidx = eidx
+                        push!(supeblock[end], eidx)
+                    end
                 end
             end
-            colcounter1 += 1
-            push!(lf.neweblocks, neweblock)
-            push!(lf.new_invmap, newinvblock)
-            firstn = false
-        end
-        for i in eachindex(neweblocksright)
-            push!(rf.neweblocks, neweblocksright[i])
-            push!(rf.new_invmap, newinvblocksright[i])
+
+            firstn = true
+            neweblocksright = Vector{Matrix{M}}()
+            newinvblocksright = Vector{Matrix{Tuple{RKey,CKey}}}()
+
+            for (n, rowblockids) in enumerate(supeblock)
+                rowdim = size(prod.elementblocks[rowblockids[1]], 1)
+                neweblock = Matrix{M}(undef, rowdim, length(rowblockids))
+                newinvblock = Matrix{Tuple{RKey,CKey}}(undef, rowdim, length(rowblockids))
+
+                if firstn
+                    neweblocksright = Vector{Matrix{M}}(undef, length(rowblockids))
+                    newinvblocksright = Vector{Matrix{Tuple{RKey,CKey}}}(
+                        undef, length(rowblockids)
+                    )
+                end
+
+                firsti = true
+                for i in 1:rowdim
+                    colcounter2 = 1
+                    rowidx = prod.inverse_map[rowblockids[1]][i, 1][1]
+
+                    if !haskey(lf_new_rowspaces, rowidx)
+                        lf_new_rowspaces[rowidx] = Vector{CKey}()
+                    end
+
+                    for (j, blockid) in enumerate(rowblockids)
+                        newcolidx = (colcounter1, colcounter2)
+
+                        if !haskey(lf_new_colspaces, newcolidx)
+                            lf_new_colspaces[newcolidx] = Vector{RKey}()
+                        end
+
+                        push!(lf_new_rowspaces[rowidx], newcolidx)
+                        push!(lf_new_colspaces[newcolidx], rowidx)
+
+                        # FIX 1: Allocated with 'rowdim' to prevent BoundsError
+                        if firstn
+                            num_cols_right = size(prod.elementblocks[blockid], 2)
+                            neweblocksright[j] = Matrix{M}(undef, rowdim, num_cols_right)
+                            newinvblocksright[j] = Matrix{Tuple{RKey,CKey}}(
+                                undef, rowdim, num_cols_right
+                            )
+                        end
+
+                        # OPTIMIZATION 1: Used reduce(hcat, ...) instead of splatting
+                        neweblock[i, j] = reduce(hcat, prod.elementblocks[blockid][i, :])
+                        rowdimright = size(neweblock[i, j], 2)
+
+                        if firsti
+                            offset = 0
+                            for h in eachindex(prod.elementblocks[blockid][i, :])
+                                blksize = size(prod.elementblocks[blockid][i, h], 2)
+                                colidxright = prod.inverse_map[blockid][i, h][2]
+
+                                # OPTIMIZATION 2: Pre-allocate and fill diagonal rather than vcatting zeros/identity
+                                eye_block = zeros(T, rowdimright, blksize)
+                                for d in 1:blksize
+                                    eye_block[offset + d, d] = one(T)
+                                end
+                                neweblocksright[j][i, h] = eye_block
+
+                                newinvblocksright[j][i, h] = (newcolidx, colidxright)
+                                rf_new_block_map[(newcolidx, colidxright)] = (
+                                    length(rf_neweblocks) + j, i, h
+                                )
+
+                                if !haskey(rf_new_rowspaces, newcolidx)
+                                    rf_new_rowspaces[newcolidx] = Vector{CKey}()
+                                end
+                                push!(rf_new_rowspaces[newcolidx], colidxright)
+
+                                if !haskey(rf_new_colspaces, colidxright)
+                                    rf_new_colspaces[colidxright] = Vector{RKey}()
+                                end
+                                push!(rf_new_colspaces[colidxright], newcolidx)
+
+                                offset += blksize
+                            end
+                        end
+
+                        row_val = prod.inverse_map[blockid][i, 1][1]
+                        newinvblock[i, j] = (row_val, newcolidx)
+                        lf_new_block_map[(row_val, newcolidx)] = (
+                            length(lf_neweblocks) + 1, i, j
+                        )
+
+                        colcounter2 += 1
+                    end
+                    # FIX 2: Toggled firsti here so all 'j' blocks inside row 1 are processed
+                    firsti = false
+                end
+                colcounter1 += 1
+                push!(lf_neweblocks, neweblock)
+                push!(lf_new_invmap, newinvblock)
+                firstn = false
+            end
+
+            for i in eachindex(neweblocksright)
+                push!(rf_neweblocks, neweblocksright[i])
+                push!(rf_new_invmap, newinvblocksright[i])
+            end
         end
     end
 
     return R_factor(
-        lf.new_rowspaces, lf.new_colspaces, lf.new_block_map, lf.new_invmap, lf.neweblocks
+        lf_new_rowspaces, lf_new_colspaces, lf_new_block_map, lf_new_invmap, lf_neweblocks
     ),
     R_factor(
-        rf.new_rowspaces, rf.new_colspaces, rf.new_block_map, rf.new_invmap, rf.neweblocks
+        rf_new_rowspaces, rf_new_colspaces, rf_new_block_map, rf_new_invmap, rf_neweblocks
     )
 end
 
@@ -497,11 +438,14 @@ end
 function trivialmul(BF_1_init::BF, BF_2_init::BF)
     @assert length(BF_1_init) == length(BF_2_init) "Both BFs must have the same number of levels"
     @assert BF_1_init.NS == BF_2_init.NO "Source and Observer dimensions must match"
+
     BF_1 = deepcopy(BF_1_init)
     BF_2 = deepcopy(BF_2_init)
+
     M_messenger = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
     for (NO, leaf) in keys(BF_1.Q)
         M_messenger[NO, leaf] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
+        # Initialize as a nested dict to work with browswap
         M_messenger[BF_1.NO, leaf][leaf, BF_2.NS] = BF_1.Q[NO, leaf] * BF_2.P[leaf, BF_2.NS]
     end
 
@@ -510,36 +454,76 @@ function trivialmul(BF_1_init::BF, BF_2_init::BF)
     BF_2_alg = AlgBF(BF_2)
     M_messenger = mul_factors(BF_1.R[1], M_messenger)
     M_messenger = mul_factors(M_messenger, BF_2.R[L])
-    M_messenger = R_factor(
-        M_messenger,
-        (BF_1_alg.R[L].slvl[1], BF_2_alg.R[1].slvl[2]),
-        (BF_1_alg.R[L].olvl[1], BF_2_alg.R[1].olvl[2]),
-        BF_1_alg.R[1].rowstree,
-        BF_2_alg.R[1].rowotree,
-        BF_1_alg.R[L].colstree,
-        BF_2_alg.R[L].colotree,
-    )
+    M_messenger = R_factor(M_messenger)
 
     result = AlgBF(
         (size(BF_1_alg, 1), size(BF_2_alg, 2)),
         BF_2_alg.Q,
         vcat(BF_2_alg.R[1:(L - 1)], [M_messenger], BF_1_alg.R[2:L]),
         BF_1_alg.P,
+        BF_1_alg.k,
+        max(BF_1_alg.τ, BF_2_alg.τ),
     )
     for m in 1:(L - 1)
         result = mul_factors(result, L + 1 - m)#recompress_BF(, τ)
     end
     #@views result = recompress_BF(result, τ, tree)
     return BF(
-        result.Q.dict,         # Q_final = Q_2
-        [r.dict for r in result.R],       # R_final[level][Snode][Onode]
-        result.P.dict,          # Updated P
-        (size(BF_1, 1), size(BF_2, 2)),
-        BF_2.NS,
-        BF_1.NO,
+        result,
         BF_1.k,         # Or recalculated k
         max(BF_1.τ, BF_2.τ),
-        BF_2.stree,
-        BF_1.otree,
     )
 end
+
+#=
+function mul_factors(left::R_factor{M}, right::R_factor{M}) where {M}
+    neweblocks = Vector{Matrix{M}}()
+    new_rowspaces = Dict{RKey,Vector{CKey}}()
+    new_colspaces = Dict{CKey,Vector{RKey}}()
+    new_block_map = Dict{Tuple{RKey,CKey},Tuple{Int,Int,Int}}()
+    new_invmap = Vector{Matrix{Tuple{RKey,CKey}}}()
+    for (n, leftblock) in enumerate(left.elementblocks)
+        newrowspace = [keytuple[1] for keytuple in left.inverse_map[n][:, 1]]
+        for i in 1:size(leftblock, 1)
+            if !haskey(new_rowspaces, newrowspace[i])
+                new_rowspaces[newrowspace[i]] = Vector{CKey}()
+            end
+            for j in 1:size(leftblock, 2)
+                localcolspace = left.inverse_map[n][i, j][2]
+                newcolspace = right.row_spaces[localcolspace]
+                for newcol in newcolspace
+                    push!(new_rowspaces[newrowspace[i]], newcol)
+                end
+                for col in newcolspace
+                    if !haskey(new_colspaces, col)
+                        new_colspaces[col] = Vector{RKey}()
+                    end
+                    push!(new_colspaces[col], newrowspace[i])
+                end
+                rightblock = right.elementblocks[right.block_map[(
+                    localcolspace, newcolspace[1]
+                )][1]]
+                if i == 1
+                    neweblock = Matrix{M}(undef, size(newrowspace, 1), size(newcolspace, 1))
+                    newinvblock = Matrix{Tuple{RKey,CKey}}(
+                        undef, size(newrowspace, 1), size(newcolspace, 1)
+                    )
+                    push!(neweblocks, neweblock)
+                    push!(new_invmap, newinvblock)
+                    eidx = length(neweblocks)
+                else
+                    eidx = new_block_map[(newrowspace[1], newcolspace[1])][1]
+                    neweblock = neweblocks[eidx]
+                    newinvblock = new_invmap[eidx]
+                end
+                for k in 1:size(rightblock, 2)
+                    new_block_map[(newrowspace[i], newcolspace[k])] = (eidx, i, k)
+                    neweblock[i, k] = leftblock[i, j] * rightblock[j, k]
+                    newinvblock[i, k] = (newrowspace[i], newcolspace[k])
+                end
+            end
+        end
+    end
+    return R_factor{M}(new_rowspaces, new_colspaces, new_block_map, new_invmap, neweblocks)
+end
+=#
