@@ -206,13 +206,13 @@ function browswap(LeftFactor::R_factor{M}, RightFactor::R_factor{M}) where {M}
 
     prod = mul_factors(LeftFactor, RightFactor)
 
-    colcounter1 = 1
+    colcounter = 1
 
     # Renamed to col_key to avoid inner variable shadowing
     for col_key in keys(prod.col_spaces)
         if !haskey(rf_new_colspaces, col_key)
-            localrowspace = sort!(prod.col_spaces[col_key])
-            localcolspace = sort!(prod.row_spaces[localrowspace[1]])
+            localrowspace = prod.col_spaces[col_key]# sort!()
+            localcolspace = prod.row_spaces[localrowspace[1]]#sort!()
 
             supeblock = Vector{Vector{Int}}()
             currenteidx = 0
@@ -229,26 +229,14 @@ function browswap(LeftFactor::R_factor{M}, RightFactor::R_factor{M}) where {M}
                     end
                 end
             end
-
-            firstn = true
-            neweblocksright = Vector{Matrix{M}}()
-            newinvblocksright = Vector{Matrix{Tuple{RKey,CKey}}}()
-
+            maxn = 0
             for (n, rowblockids) in enumerate(supeblock)
+                maxn += 1
                 rowdim = size(prod.elementblocks[rowblockids[1]], 1)
                 neweblock = Matrix{M}(undef, rowdim, length(rowblockids))
                 newinvblock = Matrix{Tuple{RKey,CKey}}(undef, rowdim, length(rowblockids))
 
-                if firstn
-                    neweblocksright = Vector{Matrix{M}}(undef, length(rowblockids))
-                    newinvblocksright = Vector{Matrix{Tuple{RKey,CKey}}}(
-                        undef, length(rowblockids)
-                    )
-                end
-
-                firsti = true
                 for i in 1:rowdim
-                    colcounter2 = 1
                     rowidx = prod.inverse_map[rowblockids[1]][i, 1][1]
 
                     if !haskey(lf_new_rowspaces, rowidx)
@@ -256,8 +244,7 @@ function browswap(LeftFactor::R_factor{M}, RightFactor::R_factor{M}) where {M}
                     end
 
                     for (j, blockid) in enumerate(rowblockids)
-                        newcolidx = (colcounter1, colcounter2)
-
+                        newcolidx = (colcounter+n, j)
                         if !haskey(lf_new_colspaces, newcolidx)
                             lf_new_colspaces[newcolidx] = Vector{RKey}()
                         end
@@ -265,72 +252,57 @@ function browswap(LeftFactor::R_factor{M}, RightFactor::R_factor{M}) where {M}
                         push!(lf_new_rowspaces[rowidx], newcolidx)
                         push!(lf_new_colspaces[newcolidx], rowidx)
 
-                        # FIX 1: Allocated with 'rowdim' to prevent BoundsError
-                        if firstn
-                            num_cols_right = size(prod.elementblocks[blockid], 2)
-                            neweblocksright[j] = Matrix{M}(undef, rowdim, num_cols_right)
-                            newinvblocksright[j] = Matrix{Tuple{RKey,CKey}}(
-                                undef, rowdim, num_cols_right
-                            )
-                        end
-
-                        # OPTIMIZATION 1: Used reduce(hcat, ...) instead of splatting
                         neweblock[i, j] = reduce(hcat, prod.elementblocks[blockid][i, :])
-                        rowdimright = size(neweblock[i, j], 2)
-
-                        if firsti
-                            offset = 0
-                            for h in eachindex(prod.elementblocks[blockid][i, :])
-                                blksize = size(prod.elementblocks[blockid][i, h], 2)
-                                colidxright = prod.inverse_map[blockid][i, h][2]
-
-                                # OPTIMIZATION 2: Pre-allocate and fill diagonal rather than vcatting zeros/identity
-                                eye_block = zeros(T, rowdimright, blksize)
-                                for d in 1:blksize
-                                    eye_block[offset + d, d] = one(T)
-                                end
-                                neweblocksright[j][i, h] = eye_block
-
-                                newinvblocksright[j][i, h] = (newcolidx, colidxright)
-                                rf_new_block_map[(newcolidx, colidxright)] = (
-                                    length(rf_neweblocks) + j, i, h
-                                )
-
-                                if !haskey(rf_new_rowspaces, newcolidx)
-                                    rf_new_rowspaces[newcolidx] = Vector{CKey}()
-                                end
-                                push!(rf_new_rowspaces[newcolidx], colidxright)
-
-                                if !haskey(rf_new_colspaces, colidxright)
-                                    rf_new_colspaces[colidxright] = Vector{RKey}()
-                                end
-                                push!(rf_new_colspaces[colidxright], newcolidx)
-
-                                offset += blksize
-                            end
-                        end
 
                         row_val = prod.inverse_map[blockid][i, 1][1]
                         newinvblock[i, j] = (row_val, newcolidx)
                         lf_new_block_map[(row_val, newcolidx)] = (
                             length(lf_neweblocks) + 1, i, j
                         )
-
-                        colcounter2 += 1
                     end
-                    # FIX 2: Toggled firsti here so all 'j' blocks inside row 1 are processed
-                    firsti = false
                 end
-                colcounter1 += 1
                 push!(lf_neweblocks, neweblock)
                 push!(lf_new_invmap, newinvblock)
-                firstn = false
             end
 
-            for i in eachindex(neweblocksright)
-                push!(rf_neweblocks, neweblocksright[i])
-                push!(rf_new_invmap, newinvblocksright[i])
+            for j in 1:length(supeblock[1])
+                neweblock = Matrix{M}(
+                    undef, length(supeblock), size(prod.elementblocks[supeblock[1][j]], 2)
+                )
+                newinvblock = Matrix{Tuple{RKey,CKey}}(
+                    undef, length(supeblock), size(prod.elementblocks[supeblock[1][j]], 2)
+                )
+                rowdimright = sum(size(prod.elementblocks[blk], 2) for blk in supeblock[1])
+                for (n, rowblkids) in enumerate(supeblock)
+                    offset = 0
+                    for k in size(prod.elementblocks[supeblock[1][j]], 2)
+                        blksize = size(prod.elementblocks[rowblkids[j]], 2)
+                        colkey = prod.inverse_map[rowblkids[j]][1, k][2]
+                        rowkey = (colcounter + n, j)
+                        eye_block = zeros(T, rowdimright, blksize)
+                        for d in 1:blksize
+                            eye_block[offset + d, d] = one(T)
+                        end
+                        offset += blksize
+                        neweblock[n, k] = eye_block
+                        newinvblock[n, k] = (rowkey, colkey)
+                        rf_new_block_map[(rowkey, colkey)] = (
+                            length(rf_neweblocks) + 1, n, k
+                        )
+                        if !haskey(rf_new_rowspaces, rowkey)
+                            rf_new_rowspaces[rowkey] = Vector{CKey}()
+                        end
+                        push!(rf_new_rowspaces[rowkey], colkey)
+                        if !haskey(rf_new_colspaces, colkey)
+                            rf_new_colspaces[colkey] = Vector{RKey}()
+                        end
+                        push!(rf_new_colspaces[colkey], rowkey)
+                    end
+                end
+                push!(rf_neweblocks, neweblock)
+                push!(rf_new_invmap, newinvblock)
             end
+            colcounter += maxn
         end
     end
 
