@@ -72,6 +72,7 @@ include("Butterflyalgebra/bfsplit.jl")
 include("intlists.jl")
 include("compressors.jl")
 include("subroutines.jl")
+include("bfassembly.jl")
 
 #Full Matrix Assembly
 include("ButterflyFactorization/matrixstructs.jl")
