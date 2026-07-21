@@ -1,4 +1,3 @@
-import Base: show
 # ==========================================
 # 1. Parameterized Factor Struct Definitions
 # ==========================================
@@ -23,31 +22,6 @@ struct P_factor{T,M<:AbstractMatrix}
     otree::T
 end
 
-# ==========================================
-# 2. Outer Constructors for Type Inference
-# ==========================================
-
-# These helpers allow you to instantiate factors without explicitly typing out {T, M}
-function R_factor(
-    Dict::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},M}},
-    slvl,
-    olvl,
-    rst::T,
-    rot::T,
-    cst::T,
-    cot::T,
-) where {T,M}
-    return R_factor{T,M}(Dict, slvl, olvl, rst, rot, cst, cot)
-end
-
-function Q_factor(Dict::Dict{Tuple{Int,Int},M}, stree::T) where {T,M}
-    return Q_factor{T,M}(Dict, stree)
-end
-
-function P_factor(Dict::Dict{Tuple{Int,Int},M}, otree::T) where {T,M}
-    return P_factor{T,M}(Dict, otree)
-end
-
 # We introduce a new parameter 'M' for the Matrix/Array type
 struct BF{T,M<:AbstractMatrix}
     Q::Dict{Tuple{Int,Int},M}
@@ -64,13 +38,6 @@ struct BF{T,M<:AbstractMatrix}
     # Inner constructor updated with both parameters
     BF{T,M}(Q, R, P, dim, NS, NO, k, τ, stree::T, otree::T) where {T,M} =
         new{T,M}(Q, R, P, dim, NS, NO, k, τ, stree, otree)
-end
-
-# An outer constructor helper so you don't always have to pass T and M explicitly
-function BF(
-    Q::Dict{Tuple{Int,Int},M}, R, P, dim, NS, NO, k, τ, stree::T, otree::T
-) where {T,M}
-    return BF{T,M}(Q, R, P, dim, NS, NO, k, τ, stree, otree)
 end
 
 struct AlgBF{T,M<:AbstractMatrix}
@@ -125,30 +92,6 @@ struct AlgBF{T,M<:AbstractMatrix}
         P_f = P_factor(P, BFalg.P.otree)
         return new{T,M}(BFalg.dim, Q_f, R_factors, P_f)
     end
-end
-
-# --- Updated Companion Outer Constructors & Helpers ---
-
-function AlgBF(dim, Q::Q_factor{T}, R::AbstractVector, P::P_factor{T}) where {T}
-    # Fallback to standard dense Matrix if type M can't be inferred directly here
-    # (Though usually you'll want to pass the type explicitly or rely on the BF converter)
-    return AlgBF{T,Matrix{ComplexF64}}(dim, Q, R, P)
-end
-
-# Conversion back from AlgBF to BF
-function BF(algBF::AlgBF{T,M}, NS, NO, k, τ, stree::T, otree::T) where {T,M}
-    return BF{T,M}(
-        algBF.Q.Dict,
-        [r.Dict for r in algBF.R],
-        algBF.P.Dict,
-        algBF.dim,
-        NS,
-        NO,
-        k,
-        τ,
-        stree,
-        otree,
-    )
 end
 
 struct BF_Mats
@@ -208,80 +151,46 @@ struct BFSTAT
     R_ratios::Vector{Vector{Tuple{Int,Float64}}}
 end
 
-# 1-line summary
-function show(io::IO, alg::AlgBF{T,M}) where {T,M}
-    return print(io, "AlgBF{$T, $M}(dim=$(alg.dim))")
+# A single block in the butterfly factorization
+struct ButterflyBlock{T}
+    # CODOMAIN (Output / Row-equivalent)
+    # The skeleton this block maps TO
+    obs_out::Int  # e.g., Ochild
+    src_out::Int  # e.g., Svert
+
+    # DOMAIN (Input / Column-equivalent)
+    # The skeleton this block maps FROM
+    obs_in::Int   # e.g., Overt
+    src_in::Int   # e.g., Schild
+
+    data::Union{Matrix{T},UniformScaling{Bool}}
 end
 
-# Multi-line REPL presentation
-function show(io::IO, mime::MIME"text/plain", alg::AlgBF{T,M}) where {T,M}
-    println(io, "Algorithmic Butterfly Factorization (AlgBF)")
-    println(io, "  Tree Type:   ", T)
-    println(io, "  Matrix Type: ", M)
-    println(io, "  Dimension:   ", alg.dim)
-    return print(
-        io,
-        "  Structure:   Q (",
-        typeof(alg.Q),
-        "), R (",
-        length(alg.R),
-        " levels), P (",
-        typeof(alg.P),
-        ")",
-    )
+ButterflyBlock(
+    obs_out::Int, src_out::Int, obs_in::Int, src_in::Int, data::Matrix{T}
+) where {T} = ButterflyBlock{T}(obs_out, src_out, obs_in, src_in, data)
+
+ButterflyBlock(
+    obs_out::Int, src_out::Int, obs_in::Int, src_in::Int, data::UniformScaling{Bool}
+) = ButterflyBlock{ComplexF64}(obs_out, src_out, obs_in, src_in, data)
+
+# An entire level l of the R factors
+struct ButterflyLevel{T}
+    blocks::Vector{ButterflyBlock{T}}
 end
 
-# --- Q_factor Display ---
-function show(io::IO, q::Q_factor{T,M}) where {T,M}
-    return print(io, "Q_factor{$T, $M}(keys=$(length(q.Dict)))")
+# The complete factorization
+struct ButterflyFactorization{T,M}
+    Q::Vector{ButterflyBlock{T}}       # Leaf level
+    R::Vector{ButterflyLevel{T}}       # Levels 1 to L-1
+    P::Vector{ButterflyBlock{T}}       # Root/Observer leaf level
+    tree::M
+    k::Float64
+    τ::Float64
 end
 
-function show(io::IO, ::MIME"text/plain", q::Q_factor{T,M}) where {T,M}
-    println(io, "Butterfly Q_factor")
-    println(io, "  Matrix Type: ", M)
-    println(io, "  Tree Type:   ", T)
-    return print(io, "  Storage:     ", length(q.Dict), " blocks mapped in Dict")
-end
-
-# --- P_factor Display ---
-function show(io::IO, p::P_factor{T,M}) where {T,M}
-    return print(io, "P_factor{$T, $M}(keys=$(length(p.Dict)))")
-end
-
-function show(io::IO, ::MIME"text/plain", p::P_factor{T,M}) where {T,M}
-    println(io, "Butterfly P_factor")
-    println(io, "  Matrix Type: ", M)
-    println(io, "  Tree Type:   ", T)
-    return print(io, "  Storage:     ", length(p.Dict), " blocks mapped in Dict")
-end
-
-# --- R_factor Display ---
-function show(io::IO, r::R_factor{T,M}) where {T,M}
-    return print(io, "R_factor{$T, $M}(slvl=$(r.slvl), olvl=$(r.olvl))")
-end
-
-function show(io::IO, ::MIME"text/plain", r::R_factor{T,M}) where {T,M}
-    println(io, "Butterfly R_factor (Middle Level)")
-    println(io, "  Matrix Type: ", M)
-    println(io, "  Levels (s/o):", r.slvl, " / ", r.olvl)
-    return print(io, "  Storage:     ", length(r.Dict), " top-level block keys")
-end
-
-# 1. This controls the 1-line display (e.g., when inside arrays)
-function show(io::IO, bf::BF{T,M}) where {T,M}
-    return print(io, "BF{$T, $M}(dim=$(bf.dim), k=$(bf.k))")
-end
-
-# 2. This controls the multi-line display when a BF object is returned in the REPL
-function show(io::IO, mime::MIME"text/plain", bf::BF{T,M}) where {T,M}
-    println(io, "Butterfly Factorization (BF)")
-    println(io, "  Tree Type:   ", T)
-    println(io, "  Matrix Type: ", M)
-    println(io, "  Dimension:   ", bf.dim)
-    println(io, "  NS / NO:     ", bf.NS, " / ", bf.NO)
-    println(io, "  k / τ:       ", bf.k, " / ", bf.τ)
-    return print(
-        io,
-        "  Storage:     Q ($(length(bf.Q)) keys), R ($(length(bf.R)) levels), P ($(length(bf.P)) keys)",
-    )
+struct ButterflyWorkspace{T}
+    # Pre-allocated vector buffers for intermediate skeleton states at each level.
+    # Indexed as: levels[l][(obs_node, src_node)]
+    level_buffers::Vector{Dict{Tuple{Int,Int},Vector{T}}}
 end

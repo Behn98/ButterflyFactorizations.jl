@@ -27,5 +27,6 @@ add_eqbfs
 recompress_BF
 apply_BF
 splitmulbf
+flattenmatrix
 ```
 

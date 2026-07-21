@@ -17,6 +17,26 @@ struct PetrovGalerkinBF{
     end
 end
 
+# Define the new PetrovGalerkinBF type that holds the flat ButterflyFactorizations
+struct FlatPGBF2{
+    T,NearInteractionsType,treetype,LType<:SparseArrays.SparseMatrixCSC{Int,Int}
+} <: LinearMaps.LinearMap{T}
+    nearinteractions::NearInteractionsType
+    dim::Tuple{Int,Int}
+    tree::treetype
+    BFs::Vector{ButterflyFactorization{T,treetype}}
+    near_lookup::LType
+    far_lookup::LType
+
+    function FlatPGBF2{T}(
+        nearinteractions, tree, BFs, dim, near_lookup, far_lookup
+    ) where {T}
+        return new{T,typeof(nearinteractions),typeof(tree),typeof(near_lookup)}(
+            nearinteractions, dim, tree, BFs, near_lookup, far_lookup
+        )
+    end
+end
+
 struct FlatPGBF{T,NearInteractionsType} <: LinearMaps.LinearMap{T}
     nearinteractions::NearInteractionsType
     dim::Tuple{Int,Int}
@@ -89,4 +109,15 @@ struct CompositeBlockView{
             nearinteractions, dim, BFs, near_lookup, far_lookup
         )
     end
+end
+
+function farmatrix(mat::FlatPGBF2{T}; scheduler=OhMyThreads.SerialScheduler()) where {T}
+    return FlatPGBF2{T}(
+        BlockSparseMatrix(Matrix{ComplexF64}[], Int[], Int[], mat.dim; scheduler=scheduler),
+        mat.tree,
+        mat.BFs,
+        mat.dim,
+        mat.near_lookup,
+        mat.far_lookup,
+    )
 end

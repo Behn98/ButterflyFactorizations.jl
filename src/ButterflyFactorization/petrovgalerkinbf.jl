@@ -121,6 +121,107 @@ function PetrovGalerkinBF(
 end
 
 """
+    FlatPGBF2(operator, testspace, trialspace, tree, k; kwargs...)
+
+Overloaded constructor that builds the Petrov-Galerkin operator using the refactored,
+flat-array `ButterflyFactorization` structure for far-field blocks.
+"""
+function FlatPGBF2(
+    operator,
+    testspace,
+    trialspace,
+    tree::BlockTree,
+    k::Float64;
+    compressor=ButterflyFactorizations.PartialQR(),
+    tol=1e-3,
+    α=2.0,
+    scheduler=OhMyThreads.DynamicScheduler(),
+    acctype=ComplexF64,
+)
+    # --- NEAR INTERACTIONS ---
+    nearmatrix_near = AbstractKernelMatrix(operator, testspace, trialspace; type=:near)
+    farints, nearints = nearandfar(tree, α)
+
+    blocks = Vector{Matrix{acctype}}(undef, length(nearints))
+    test_indices = Vector{Vector{Int64}}(undef, length(nearints))
+    trial_indices = Vector{Vector{Int64}}(undef, length(nearints))
+
+    near_rows = Vector{Int}(undef, length(nearints))
+    near_cols = Vector{Int}(undef, length(nearints))
+    near_vals = Vector{Int}(undef, length(nearints))
+
+    let nearmatrix_near = nearmatrix_near
+        @tasks for i in eachindex(nearints)
+            @set scheduler = scheduler
+            (node_o, node_s) = nearints[i]
+
+            near_rows[i] = node_o
+            near_cols[i] = node_s
+            near_vals[i] = i
+
+            test_indices[i] = H2Trees.values(tree.testcluster, node_o)
+            trial_indices[i] = H2Trees.values(tree.trialcluster, node_s)
+
+            blk = zeros(acctype, length(test_indices[i]), length(trial_indices[i]))
+            nearmatrix_near(blk, test_indices[i], trial_indices[i])
+            blocks[i] = blk
+        end
+    end
+
+    nears = if !isempty(nearints)
+        BlockSparseMatrix(
+            blocks,
+            test_indices,
+            trial_indices,
+            size(nearmatrix_near);
+            scheduler=scheduler,
+        )
+    else
+        sparse(zeros(acctype, size(nearmatrix_near)...))
+    end
+
+    # --- FAR INTERACTIONS (FLAT BUTTERFLIES) ---
+    nearmatrix_far = AbstractKernelMatrix(operator, testspace, trialspace; type=:far)
+    fly = Vector{ButterflyFactorization{acctype,typeof(tree)}}(undef, length(farints))
+
+    far_rows = Vector{Int}(undef, length(farints))
+    far_cols = Vector{Int}(undef, length(farints))
+    far_vals = Vector{Int}(undef, length(farints))
+
+    let nearmatrix_far = nearmatrix_far
+        @tasks for i in eachindex(farints)
+            @set scheduler = scheduler
+            (NO, NS) = farints[i]
+
+            far_rows[i] = NO
+            far_cols[i] = NS
+            far_vals[i] = i
+
+            fly[i] = assemble_BF(
+                nearmatrix_far,
+                tree,
+                NO,
+                NS,
+                k,
+                tol;
+                compressor=compressor,
+                scheduler=scheduler,
+            )
+        end
+    end
+
+    num_test_nodes  = sum(length(lvl) for lvl in h2treelevels(tree.testcluster, 1))
+    num_trial_nodes = sum(length(lvl) for lvl in h2treelevels(tree.trialcluster, 1))
+
+    near_lookup = sparse(near_rows, near_cols, near_vals, num_test_nodes, num_trial_nodes)
+    far_lookup  = sparse(far_rows, far_cols, far_vals, num_test_nodes, num_trial_nodes)
+
+    return FlatPGBF2{acctype}(
+        nears, tree, fly, size(nearmatrix_far), near_lookup, far_lookup
+    )
+end
+
+"""
     PetrovGalerkinBF_mats(operator, testspace, trialspace, tree, k; kwargs...)
 
 Constructs the complete Butterfly Factorization for a Petrov-Galerkin boundary element

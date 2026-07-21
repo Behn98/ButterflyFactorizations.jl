@@ -44,8 +44,6 @@ function (t::PartialQR)(
     n_obs = length(obs_index)
     n_src = length(src_index)
 
-    old_blas = BLAS.get_num_threads()
-    BLAS.set_num_threads(1)
     # 1. Starta med den geometriska gissningen, men garantera minst t.ex. 10 rader
     n_otilde = min(max(n_otilde_guess, 10), n_obs)
 
@@ -94,7 +92,6 @@ function (t::PartialQR)(
         ldiv!(R11, tmp)
 
         k = src_index[P[1:r]]
-        BLAS.set_num_threads(old_blas)
         return tmp, k, r
     end
 end

@@ -47,7 +47,7 @@ using LowRankApprox
 using SparseArrays
 
 export PetrovGalerkinBF, PetrovGalerkinBF_mats, subroutine_BF, subroutine_BF_mats, PartialQR
-export mulBFs, add_eqbfs, recompress_BF, apply_BF, FlatBF, splitmulbf
+export mulBFs, add_eqbfs, recompress_BF, apply_BF, FlatBF, flattenmatrix, splitmulbf
 
 #Helper funcitons
 include("auxillaries.jl")
@@ -58,6 +58,7 @@ include("kernelmatrix/beastkernelmatrix.jl")
 
 #Butterfly algebra --> any Block related functions
 include("Butterflyalgebra/bfstructs.jl")
+include("Butterflyalgebra/bfstructfcts.jl")
 include("Butterflyalgebra/flatbf.jl")
 include("Butterflyalgebra/bfadjtr.jl")
 include("Butterflyalgebra/bfdims.jl")
@@ -66,6 +67,7 @@ include("Butterflyalgebra/bfmatrix.jl")
 include("Butterflyalgebra/algrecomp.jl")
 include("Butterflyalgebra/bfbfadd.jl")
 include("Butterflyalgebra/bfbfmul.jl")
+include("Butterflyalgebra/bfsplitmul.jl")
 include("Butterflyalgebra/bfsplit.jl")
 
 #Tree traversale and Butterfly construction
@@ -83,5 +85,7 @@ include("matrixalgebra/csrmatrix.jl")
 include("matrixalgebra/indexing.jl")
 include("matrixalgebra/matrixvector.jl")
 include("matrixalgebra/matrixmatrix.jl")
+
+include("showfcts.jl")
 
 end
