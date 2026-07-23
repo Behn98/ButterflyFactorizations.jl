@@ -11,10 +11,10 @@ Documentation for [ButterflyFactorizations](https://github.com/Behn98/ButterflyF
 ```@docs
 ButterflyFactorizations
 PetrovGalerkinBF
-PetrovGalerkinBF_mats
+PetrovGalerkinBF_Mat
 FlatBF
-subroutine_BF
-subroutine_BF_mats
+assemble_BF
+assemble_ButterflyFactorization_Mat
 PartialQR
 BEASTKernelMatrix
 ```

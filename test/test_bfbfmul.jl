@@ -62,8 +62,8 @@
     =========================================================================
     =========================================================================#
 
-    Bfly1 = ButterflyFactorizations.subroutine_BF(farassembler1, tree1, 1, 1, k, 10^(-4))
-    Bfly2 = ButterflyFactorizations.subroutine_BF(farassembler2, tree2, 1, 1, k, 10^(-4))
+    Bfly1 = ButterflyFactorizations.assemble_BF(farassembler1, tree1, 1, 1, k, 10^(-4))
+    Bfly2 = ButterflyFactorizations.assemble_BF(farassembler2, tree2, 1, 1, k, 10^(-4))
 
     Bfly1A = ButterflyFactorizations.mulBFs(Bfly1, Bfly2, 10^-4)
 
@@ -115,10 +115,10 @@ end
     gsc = sort!(H2Trees.values(tree1.trialcluster, parent2))
     ochildren = collect(H2Trees.children(tree1.testcluster, parent2))
     goc = sort!(H2Trees.values(tree1.testcluster, parent2))
-    Bfcluster = Matrix{ButterflyFactorizations.BF}(
+    Bfcluster = Matrix{ButterflyFactorizations.ButterflyFactorization}(
         undef, length(ochildren), length(schildren)
     )
-    higherkBF = ButterflyFactorizations.subroutine_BF(
+    higherkBF = ButterflyFactorizations.assemble_BF(
         kernelmatrix1,
         tree1,
         parent2,
@@ -132,7 +132,7 @@ end
     gok = sort!(H2Trees.values(tree1.testcluster, 73))
     for (i, oc) in enumerate(ochildren)
         for (j, sc) in enumerate(schildren)
-            Bfcluster[i, j] = ButterflyFactorizations.subroutine_BF(
+            Bfcluster[i, j] = ButterflyFactorizations.assemble_BF(
                 kernelmatrix1,
                 tree1,
                 oc,

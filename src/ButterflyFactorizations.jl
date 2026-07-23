@@ -46,7 +46,8 @@ using OhMyThreads
 using LowRankApprox
 using SparseArrays
 
-export PetrovGalerkinBF, PetrovGalerkinBF_mats, subroutine_BF, subroutine_BF_mats, PartialQR
+export PetrovGalerkinBF,
+    PetrovGalerkinBF_Mat, assemble_BF, assemble_ButterflyFactorization_Mat, PartialQR
 export mulBFs, add_eqbfs, recompress_BF, apply_BF, FlatBF, flattenmatrix, splitmulbf
 
 #Helper funcitons
@@ -59,7 +60,6 @@ include("kernelmatrix/beastkernelmatrix.jl")
 #Butterfly algebra --> any Block related functions
 include("Butterflyalgebra/bfstructs.jl")
 include("Butterflyalgebra/bfstructfcts.jl")
-include("Butterflyalgebra/flatbf.jl")
 include("Butterflyalgebra/bfadjtr.jl")
 include("Butterflyalgebra/bfdims.jl")
 include("Butterflyalgebra/bfvector.jl")
@@ -73,15 +73,14 @@ include("Butterflyalgebra/bfsplit.jl")
 #Tree traversale and Butterfly construction
 include("intlists.jl")
 include("compressors.jl")
-include("subroutines.jl")
 include("bfassembly.jl")
 
 #Full Matrix Assembly
 include("ButterflyFactorization/matrixstructs.jl")
 include("ButterflyFactorization/petrovgalerkinbf.jl")
 
+include("matrixalgebra/matrix_adj_tr.jl")
 include("matrixalgebra/dims.jl")
-include("matrixalgebra/csrmatrix.jl")
 include("matrixalgebra/indexing.jl")
 include("matrixalgebra/matrixvector.jl")
 include("matrixalgebra/matrixmatrix.jl")

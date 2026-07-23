@@ -1,7 +1,7 @@
 import H2Trees: values, center, halfsize, children, isleaf, trialtree, testtree
 
 """
-    mulBFs(BF_1_init::BF, BF_2_init::BF, τ::Float64) -> BF
+    mulBFs(BF_1_init ::ButterflyFactorization, BF_2_init ::ButterflyFactorization, τ::Float64) -> BF
 
 Compute the operator product of two Butterfly Factorizations (`BF`) and compress the
 resulting representation to a specified accuracy tolerance.
@@ -13,8 +13,8 @@ matrix, and then sequentially alternates row-swapping (`browswap`) and low-rank 
 
 # Arguments
 
-  - `BF_1_init::BF`: The left butterfly factorization operator.
-  - `BF_2_init::BF`: The right butterfly factorization operator.
+  - `BF_1_init ::ButterflyFactorization`: The left butterfly factorization operator.
+  - `BF_2_init ::ButterflyFactorization`: The right butterfly factorization operator.
   - `τ::Float64`: The accuracy tolerance parameter used during internal row-swaps and factor
     recompressions.
 
@@ -43,7 +43,9 @@ matrix, and then sequentially alternates row-swapping (`browswap`) and low-rank 
  4. **Trimming:** Truncates redundant rank dimensions via `recompress_BF` at each step to
     maintain the strict \$O(N \\log N)\$ butterfly complexity.
 """
-function mulBFs(BF_1_init::BF, BF_2_init::BF, τ::Float64)
+function mulBFs(
+    BF_1_init::ButterflyFactorization, BF_2_init::ButterflyFactorization, τ::Float64
+)
     @assert length(BF_1_init) == length(BF_2_init) "Both BFs must have the same number of levels"
     @assert BF_1_init.NS == BF_2_init.NO "Source and Observer dimensions must match"
 
@@ -58,11 +60,11 @@ function mulBFs(BF_1_init::BF, BF_2_init::BF, τ::Float64)
     end
 
     L = length(BF_1.R) # Number of R-levels
-    BF_1_alg = AlgBF(BF_1)
-    BF_2_alg = AlgBF(BF_2)
+    BF_1_alg = ButterflyFactorization(BF_1)
+    BF_2_alg = ButterflyFactorization(BF_2)
     M_messenger = mul_factors(BF_1.R[1], M_messenger)
     M_messenger = mul_factors(M_messenger, BF_2.R[L])
-    M_messenger = R_factor(
+    M_messenger = ButterflyLevel(
         M_messenger,
         (BF_1_alg.R[L].slvl[1], BF_2_alg.R[1].slvl[2]),
         (BF_1_alg.R[L].olvl[1], BF_2_alg.R[1].olvl[2]),
@@ -72,7 +74,7 @@ function mulBFs(BF_1_init::BF, BF_2_init::BF, τ::Float64)
         BF_2_alg.R[L].colotree,
     )
 
-    result = AlgBF(
+    result = ButterflyFactorization(
         (size(BF_1_alg, 1), size(BF_2_alg, 2)),
         BF_2_alg.Q,
         vcat(BF_2_alg.R[1:(L - 1)], [M_messenger], BF_1_alg.R[2:L]),
@@ -101,7 +103,8 @@ function mulBFs(BF_1_init::BF, BF_2_init::BF, τ::Float64)
 end
 
 function Base.:*(
-    Butterfly1::ButterflyFactorizations.BF, Butterfly2::ButterflyFactorizations.BF
+    Butterfly1::ButterflyFactorizations.ButterflyFactorization,
+    Butterfly2::ButterflyFactorizations.ButterflyFactorization,
 )
     return mulBFs(Butterfly1, Butterfly2, max(Butterfly1.τ, Butterfly2.τ))
 end
@@ -189,12 +192,12 @@ function mul_factors(
     return product
 end
 
-function mul_factors(BF::AlgBF, idx::Int)
+function mul_factors(BF::ButterflyFactorization, idx::Int)
     L = length(BF.R)
     if idx > 1 && idx < (L + 1)
         leftfactor = BF.R[L + 1 - (idx - 1)].Dict
         rightfactor = BF.R[L + 1 - idx].Dict
-        product = R_factor(
+        product = ButterflyLevel(
             mul_factors(leftfactor, rightfactor),
             (BF.R[L + 1 - idx].slvl[1], BF.R[L + 1 - (idx - 1)].slvl[2]),
             (BF.R[L + 1 - idx].olvl[1], BF.R[L + 1 - (idx - 1)].olvl[2]),
@@ -207,7 +210,7 @@ function mul_factors(BF::AlgBF, idx::Int)
         @show "Multiplying P and R[1]"
         leftfactor = BF.P.Dict
         rightfactor = BF.R[L + 1 - idx].Dict
-        product = R_factor(
+        product = ButterflyLevel(
             mul_factors(leftfactor, rightfactor),
             (BF.R[L + 1 - idx].slvl[1], BF.R[L + 1 - idx].slvl[2]),
             (BF.R[L + 1 - idx].olvl[1], BF.R[L + 1 - idx].olvl[2]),
@@ -221,7 +224,7 @@ function mul_factors(BF::AlgBF, idx::Int)
         @show "Multiplying R[end] and Q"
         leftfactor = BF.R[L + 1 - idx].Dict
         rightfactor = BF.Q.Dict
-        product = R_factor(
+        product = ButterflyLevel(
             mul_factors(leftfactor, rightfactor),
             (BF.R[L + 1 - idx].slvl[1], BF.R[L + 1 - idx].slvl[2]),
             (BF.R[L + 1 - idx].olvl[1], BF.R[L + 1 - idx].olvl[2]),
@@ -233,7 +236,7 @@ function mul_factors(BF::AlgBF, idx::Int)
         #should not occure since we only call this function for idx in 2:(L-1)
     end
     #product = mul_factors(leftfactor, rightfactor)
-    return AlgBF(
+    return ButterflyFactorization(
         (size(BF, 1), size(BF, 2)),
         BF.Q,
         vcat(BF.R[1:(L - idx)], [product], BF.R[(L - idx + 3):length(BF.R)]),
@@ -241,7 +244,7 @@ function mul_factors(BF::AlgBF, idx::Int)
     )
 end
 
-function browswap(BF::AlgBF, idx::Int, τ)
+function browswap(BF::ButterflyFactorization, idx::Int, τ)
     L = length(BF.R)
     if idx > 1 && idx < (L + 1)
         leftfactor = BF.R[L + 1 - (idx - 1)]
@@ -259,7 +262,7 @@ function browswap(BF::AlgBF, idx::Int, τ)
     end
     nlfactor, nrfactor = browswap(leftfactor, rightfactor, τ)
 
-    return AlgBF(
+    return ButterflyFactorization(
         (size(BF, 1), size(BF, 2)),
         BF.Q,
         vcat(BF.R[1:(L - idx)], [nrfactor, nlfactor], BF.R[(L - idx + 3):length(BF.R)]),
@@ -267,7 +270,7 @@ function browswap(BF::AlgBF, idx::Int, τ)
     )
 end
 
-function browswap(LeftFactor::R_factor, RightFactor::R_factor, τ)
+function browswap(LeftFactor::ButterflyLevel, RightFactor::ButterflyLevel, τ)
     NewLeftFactor = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
     NewRightFactor = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
 
@@ -320,7 +323,7 @@ function browswap(LeftFactor::R_factor, RightFactor::R_factor, τ)
         end
     end
 
-    return R_factor(
+    return ButterflyLevel(
         NewLeftFactor,
         LeftFactor.slvl,
         LeftFactor.olvl,
@@ -329,7 +332,7 @@ function browswap(LeftFactor::R_factor, RightFactor::R_factor, τ)
         LeftFactor.colstree,
         LeftFactor.colotree,
     ),
-    R_factor(
+    ButterflyLevel(
         NewRightFactor,
         RightFactor.slvl,
         RightFactor.olvl,
@@ -341,16 +344,16 @@ function browswap(LeftFactor::R_factor, RightFactor::R_factor, τ)
 end
 
 function LinearAlgebra.mul!(
-    C::ButterflyFactorizations.BF,
-    A::ButterflyFactorizations.BF,
-    B::ButterflyFactorizations.BF,
+    C::ButterflyFactorizations.ButterflyFactorization,
+    A::ButterflyFactorizations.ButterflyFactorization,
+    B::ButterflyFactorizations.ButterflyFactorization,
 )
     LinearMaps.check_dim_mul(C, A, B)
     copyto!(C, mulBFs(A, B, max(A.τ, B.τ)))
     return C
 end
 
-function trivialmul(BF_1_init::BF, BF_2_init::BF)
+function trivialmul(BF_1_init::ButterflyFactorization, BF_2_init::ButterflyFactorization)
     @assert length(BF_1_init) == length(BF_2_init) "Both BFs must have the same number of levels"
     @assert BF_1_init.NS == BF_2_init.NO "Source and Observer dimensions must match"
     BF_1 = deepcopy(BF_1_init)
@@ -362,11 +365,11 @@ function trivialmul(BF_1_init::BF, BF_2_init::BF)
     end
 
     L = length(BF_1.R) # Number of R-levels
-    BF_1_alg = AlgBF(BF_1)
-    BF_2_alg = AlgBF(BF_2)
+    BF_1_alg = ButterflyFactorization(BF_1)
+    BF_2_alg = ButterflyFactorization(BF_2)
     M_messenger = mul_factors(BF_1.R[1], M_messenger)
     M_messenger = mul_factors(M_messenger, BF_2.R[L])
-    M_messenger = R_factor(
+    M_messenger = ButterflyLevel(
         M_messenger,
         (BF_1_alg.R[L].slvl[1], BF_2_alg.R[1].slvl[2]),
         (BF_1_alg.R[L].olvl[1], BF_2_alg.R[1].olvl[2]),
@@ -376,7 +379,7 @@ function trivialmul(BF_1_init::BF, BF_2_init::BF)
         BF_2_alg.R[L].colotree,
     )
 
-    result = AlgBF(
+    result = ButterflyFactorization(
         (size(BF_1_alg, 1), size(BF_2_alg, 2)),
         BF_2_alg.Q,
         vcat(BF_2_alg.R[1:(L - 1)], [M_messenger], BF_1_alg.R[2:L]),

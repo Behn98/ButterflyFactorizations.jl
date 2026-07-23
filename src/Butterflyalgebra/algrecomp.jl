@@ -1,14 +1,7 @@
 import H2Trees: values, center, halfsize, children, isleaf, trialtree, testtree
-function recompress_BF_left(Butterfly::AlgBF, τ)
-    return recompress_BF_right(Butterfly', τ)'
-end
-
-function recompress_BF(Butterfly::AlgBF, τ)
-    return recompress_BF_left(recompress_BF_right(Butterfly, τ), τ)
-end
 
 """
-    recompress_BF(Butterfly::BF, τ)
+    recompress_BF(Butterfly ::ButterflyFactorization, τ)
 
 Recompresses a structural Butterfly Factorization (`BF`) by extracting its algebraic
 factors, recompressing them with tolerance `τ`, and restructuring the output back into a
@@ -22,24 +15,15 @@ operations is only supported for the Dictionary versions of the Butterflies, as 
 matrix-based format is not designed for algebraic manipulations and would require a complete
 restructuring of the underlying data representation to support such operations effectively.
 """
-function recompress_BF(Butterfly::BF, τ)
-    Q = Butterfly.Q
-    R = Butterfly.R
-    P = Butterfly.P
-    BFalg = AlgBF(Butterfly)
-    BFalg = recompress_BF(BFalg, τ)
-    return BF(
-        BFalg,
-        Butterfly.NS,
-        Butterfly.NO,
-        Butterfly.k,
-        Butterfly.τ,
-        Butterfly.stree,
-        Butterfly.otree,
-    )
+function recompress_BF(Butterfly::ButterflyFactorization, τ)
+    return recompress_BF_left(recompress_BF_right(Butterfly, τ), τ)
 end
 
-function recompress_BF_right(Butterfly_init::AlgBF, τ)
+function recompress_BF_left(Butterfly::ButterflyFactorization, τ)
+    return recompress_BF_right(Butterfly', τ)'
+end
+
+function recompress_BF_right(Butterfly_init::ButterflyFactorization, τ)
     Butterfly = deepcopy(Butterfly_init)
     Q = Butterfly.Q.Dict
     R = [Butterfly.R[r].Dict for r in eachindex(Butterfly.R)]
@@ -101,7 +85,7 @@ function recompress_BF_right(Butterfly_init::AlgBF, τ)
         #end
     end
 
-    return AlgBF(Butterfly, Q, R, P)
+    return ButterflyFactorization(Butterfly, Q, R, P)
 end
 
 # Overload 1: Updating intermediate R factors (Clean 1:1 matching)

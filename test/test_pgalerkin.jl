@@ -100,7 +100,7 @@
     =========================================================================#
 
     Bfly1 = ButterflyFactorizations.PetrovGalerkinBF(op, T, T, tree1, k; tol=1e-3, α=2)
-    Bfly2 = ButterflyFactorizations.PetrovGalerkinBF_mats(op, T, T, tree1, k; tol=1e-3, α=2)
+    Bfly2 = ButterflyFactorizations.PetrovGalerkinBF_Mat(op, T, T, tree1, k; tol=1e-3, α=2)
 
     @test estimate_reldifference(Bfly1, A1; tol=1e-4) < 1e-2
     @test estimate_reldifference(Bfly2, A1; tol=1e-4) < 1e-2

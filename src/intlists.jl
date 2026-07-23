@@ -102,7 +102,7 @@ It uses the admissibility condition (`isFarFunctor`) to separate interactions.
   - `farinteractions`: A `Dict` mapping an observer node ID to a list of source node
     IDs that are well-separated from it.
 """
-function nearandfar(tree::H2Trees.BlockTree, α)
+function nearandfar(tree::H2Trees.BlockTree, α; unbalancedints=true, leafcom=true)
     admissible = isFarFunctor(α)
     srctree = trialtree(tree)
     tsttree = testtree(tree)
@@ -111,13 +111,31 @@ function nearandfar(tree::H2Trees.BlockTree, α)
     nearinteractions = Vector{Tuple{Int64,Int64}}()         #observernodeid --> sourcenodeid
     farinteractions = Vector{Tuple{Int64,Int64}}()          #observernodeid --> sourcenodeid
     process_nodes!(
-        srctree, tsttree, node_o, node_s, admissible, farinteractions, nearinteractions
+        srctree,
+        tsttree,
+        node_o,
+        node_s,
+        admissible,
+        farinteractions,
+        nearinteractions;
+        allowunbalancedfints=unbalancedints,
+        allowleafcompression=leafcom,
     )
     return farinteractions, nearinteractions
 end
 
+function largernode(tsttree::H2Trees.TwoNTree, srctree::H2Trees.TwoNTree, node_o, node_s)
+    return H2Trees.halfsize(tsttree, node_o) >= H2Trees.halfsize(srctree, node_s)
+end
+
+function largernode(
+    tsttree::H2Trees.BoundingBallTree, srctree::H2Trees.BoundingBallTree, node_o, node_s
+)
+    return H2Trees.radius(tsttree, node_o) >= H2Trees.radius(srctree, node_s)
+end
+
 """
-    process_nodes!(srctree, tsttree, node_o, node_s, admissible, far, nearsv, nearov)
+    process_nodes!(srctree, tsttree, node_o, node_s, admissible, far, nearsv, nearov; allowleafcompression=true, allowunbalancedfints=true)
 
 Recursively analyzes the interaction between a source node and an observer node.
 
@@ -130,22 +148,31 @@ Recursively analyzes the interaction between a source node and an observer node.
 **Arguments:**
 
   - `srctree`, `tsttree`: The tree hierarchies.
+
   - `node_o`, `node_s`: Current observer and source node IDs.
+
   - `admissible`: The `isFarFunctor` used to check geometric separation.
+
   - `farinteractions`: Accumulator dictionary for far-field node pairs.
+
   - `nearsv`, `nearov`: Accumulator vectors for near-field global indices.
+
+      + `allowleafcompression`: If `false`, leaf nodes will not be compressed even if admissible.
+      + `allowunbalancedfints`: If `false`, both nodes must be split simultaneously, even if one is larger.
 """
 function process_nodes!(
-    srctree::H2Trees.TwoNTree,
-    tsttree::H2Trees.TwoNTree,
+    srctree::T,
+    tsttree::T,
     node_o,
     node_s,
     admissible::isFarFunctor,
     farinteractions,
-    nearinteractions,
-)
-    if admissible(srctree, tsttree, node_s, node_o) #&&
-        #!(isleaf(tsttree, node_o) && isleaf(srctree, node_s))
+    nearinteractions;
+    allowleafcompression=true,
+    allowunbalancedfints=true,
+) where {T}
+    if admissible(srctree, tsttree, node_s, node_o) &&
+        (!(isleaf(tsttree, node_o) && isleaf(srctree, node_s) && !allowleafcompression))
         push!(farinteractions, (node_o, node_s))
         return nothing
     elseif isleaf(tsttree, node_o) && isleaf(srctree, node_s)
@@ -155,11 +182,9 @@ function process_nodes!(
         return nothing
     end
     # split the larger node
-    #=
-        if (
-            H2Trees.halfsize(tsttree, node_o) >= H2Trees.halfsize(srctree, node_s) &&
-            !isleaf(tsttree, node_o)
-        ) || isleaf(srctree, node_s)
+    if allowunbalancedfints
+        if (largernode(tsttree, srctree, node_o, node_s) && !isleaf(tsttree, node_o)) ||
+            isleaf(srctree, node_s)
             for child_o in collect(children(tsttree, node_o))
                 process_nodes!(
                     srctree,
@@ -168,7 +193,9 @@ function process_nodes!(
                     node_s,
                     admissible,
                     farinteractions,
-                    nearinteractions,
+                    nearinteractions;
+                    allowleafcompression=allowleafcompression,
+                    allowunbalancedfints=allowunbalancedfints,
                 )
             end
         else
@@ -180,137 +207,57 @@ function process_nodes!(
                     child_s,
                     admissible,
                     farinteractions,
-                    nearinteractions,
+                    nearinteractions;
+                    allowleafcompression=allowleafcompression,
+                    allowunbalancedfints=allowunbalancedfints,
                 )
             end
         end
-    =#
-    if !isleaf(tsttree, node_o) && !isleaf(srctree, node_s)
-        for child_o in collect(children(tsttree, node_o))
-            for child_s in collect(children(srctree, node_s))
+    else
+        if !isleaf(tsttree, node_o) && !isleaf(srctree, node_s)
+            for child_o in collect(children(tsttree, node_o))
+                for child_s in collect(children(srctree, node_s))
+                    process_nodes!(
+                        srctree,
+                        tsttree,
+                        child_o,
+                        child_s,
+                        admissible,
+                        farinteractions,
+                        nearinteractions;
+                        allowleafcompression=allowleafcompression,
+                        allowunbalancedfints=allowunbalancedfints,
+                    )
+                end
+            end
+        elseif !isleaf(tsttree, node_o)
+            for child_o in collect(children(tsttree, node_o))
                 process_nodes!(
                     srctree,
                     tsttree,
                     child_o,
-                    child_s,
+                    node_s,
                     admissible,
                     farinteractions,
-                    nearinteractions,
+                    nearinteractions;
+                    allowleafcompression=allowleafcompression,
+                    allowunbalancedfints=allowunbalancedfints,
                 )
             end
-        end
-    elseif !isleaf(tsttree, node_o)
-        for child_o in collect(children(tsttree, node_o))
-            process_nodes!(
-                srctree,
-                tsttree,
-                child_o,
-                node_s,
-                admissible,
-                farinteractions,
-                nearinteractions,
-            )
-        end
-    else
-        for child_s in collect(children(srctree, node_s))
-            process_nodes!(
-                srctree,
-                tsttree,
-                node_o,
-                child_s,
-                admissible,
-                farinteractions,
-                nearinteractions,
-            )
-        end
-    end
-end
-
-function process_nodes!(
-    srctree::H2Trees.BoundingBallTree,
-    tsttree::H2Trees.BoundingBallTree,
-    node_o,
-    node_s,
-    admissible::isFarFunctor,
-    farinteractions,
-    nearinteractions,
-)
-    if admissible(srctree, tsttree, node_s, node_o) #&&
-        #!(isleaf(tsttree, node_o) && isleaf(srctree, node_s))
-        push!(farinteractions, (node_o, node_s))
-        return nothing
-    elseif isleaf(tsttree, node_o) && isleaf(srctree, node_s)
-        push!(nearinteractions, (node_o, node_s))
-        return nothing
-    end
-    # split the larger node
-    #=
-    if (
-        H2Trees.radius(tsttree, node_o) >= H2Trees.radius(srctree, node_s) &&
-        !isleaf(tsttree, node_o)
-    ) || isleaf(srctree, node_s)
-        for child_o in collect(children(tsttree, node_o))
-            process_nodes!(
-                srctree,
-                tsttree,
-                child_o,
-                node_s,
-                admissible,
-                farinteractions,
-                nearinteractions,
-            )
-        end
-    else
-        for child_s in collect(children(srctree, node_s))
-            process_nodes!(
-                srctree,
-                tsttree,
-                node_o,
-                child_s,
-                admissible,
-                farinteractions,
-                nearinteractions,
-            )
-        end
-    end
-    =#
-    if !isleaf(tsttree, node_o) && !isleaf(srctree, node_s)
-        for child_o in collect(children(tsttree, node_o))
+        else
             for child_s in collect(children(srctree, node_s))
                 process_nodes!(
                     srctree,
                     tsttree,
-                    child_o,
+                    node_o,
                     child_s,
                     admissible,
                     farinteractions,
-                    nearinteractions,
+                    nearinteractions;
+                    allowleafcompression=allowleafcompression,
+                    allowunbalancedfints=allowunbalancedfints,
                 )
             end
-        end
-    elseif !isleaf(tsttree, node_o)
-        for child_o in collect(children(tsttree, node_o))
-            process_nodes!(
-                srctree,
-                tsttree,
-                child_o,
-                node_s,
-                admissible,
-                farinteractions,
-                nearinteractions,
-            )
-        end
-    else
-        for child_s in collect(children(srctree, node_s))
-            process_nodes!(
-                srctree,
-                tsttree,
-                node_o,
-                child_s,
-                admissible,
-                farinteractions,
-                nearinteractions,
-            )
         end
     end
 end

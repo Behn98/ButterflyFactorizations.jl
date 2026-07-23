@@ -44,51 +44,51 @@ function (t::PartialQR)(
     n_obs = length(obs_index)
     n_src = length(src_index)
 
-    # 1. Starta med den geometriska gissningen, men garantera minst t.ex. 10 rader
     n_otilde = min(max(n_otilde_guess, 10), n_obs)
 
+    # 1. Shuffle ONCE outside the loop
+    shuffled_obs = obs_index[randperm(n_obs)]
+
+    # 2. Allocate a buffer that can grow, or allocate max needed
+    # (Since we only do this if rank is bad, doing a vcat isn't the end of the world,
+    # but pre-allocating is better).
+    Z = Matrix{ComplexF64}(undef, n_otilde, n_src)
+
+    # Assemble initial block
+    current_rows = @view shuffled_obs[1:n_otilde]
+    farassembler(Z, current_rows, src_index)
+
+    rows_evaluated = n_otilde
+
     while true
-        # --- random row sampling ---
-        idx = randperm(n_obs)
-        row = @view obs_index[idx[1:n_otilde]]
-        #idx = [1 + round(Int, (i - 1) * (n_obs - 1) / (n_otilde - 1)) for i in 1:n_otilde]
-        #row = @view obs_index[idx]
-        col = src_index  # full view, no copy
-
-        # --- assemble Z ---
-        Z = zeros(ComplexF64, n_otilde, n_src)
-        farassembler(Z, row, col)
-
-        # --- pivoted QR (LAPACK-backed) ---
+        # --- pivoted QR ---
         Fqr = pqr(Z; rtol=ε)
-
-        Q = Fqr[1]
-        R = Fqr[2]
-        P = Fqr[3]
-
+        Q, R, P = Fqr[1], Fqr[2], Fqr[3]
         r = size(Q, 2)
 
-        # ==========================================================
-        # ADAPTIV KOLL: Om ranken maxade ut vårt sample (eller är
-        # väldigt nära), har vi antagligen för lite rader testade!
-        # ==========================================================
-        if r > Int(floor(0.8*n_otilde)) && n_otilde < n_obs
-            # Dubbla antalet rader vi samplar och försök igen
-            n_otilde = min(n_otilde * 2, n_obs)
+        # Adaptive check
+        if r > floor(Int, 0.8 * rows_evaluated) && rows_evaluated < n_obs
+            new_target = min(rows_evaluated * 2, n_obs)
+            new_rows_count = new_target - rows_evaluated
 
+            # Allocate space just for the new rows
+            Z_new = Matrix{ComplexF64}(undef, new_rows_count, n_src)
+            new_rows_idx = @view shuffled_obs[(rows_evaluated + 1):new_target]
+
+            # Assemble ONLY the new rows
+            farassembler(Z_new, new_rows_idx, src_index)
+
+            # Concatenate to previous Z to save data
+            Z = vcat(Z, Z_new)
+            rows_evaluated = new_target
             continue
         end
 
-        # Om r < n_otilde är vi ganska säkra på att vi fångat hela ranken.
-        # --- views to avoid allocations ---
         Q1 = @view Q[:, 1:r]
         R11 = UpperTriangular(@view R[1:r, 1:r])
 
-        # --- compute q_ks without inv ---
         tmp = Matrix{ComplexF64}(undef, r, n_src)
-        mul!(tmp, adjoint(Q1), Z)
-
-        # q_ks = R11 \ tmp
+        mul!(tmp, Q1', Z)
         ldiv!(R11, tmp)
 
         k = src_index[P[1:r]]

@@ -1,64 +1,31 @@
-struct PetrovGalerkinBF{
-    T,NearInteractionsType,LType<:SparseArrays.SparseMatrixCSC{Int,Int}
-} <: LinearMaps.LinearMap{T}
+struct PetrovGalerkinBF{T,NearInteractionsType,LType<:AbstractMatrix{Int},BFType,WSType} <:
+       LinearMaps.LinearMap{T}
     nearinteractions::NearInteractionsType
     dim::Tuple{Int,Int}
     tree::H2Trees.BlockTree
-    BFs::Vector{BF}
+    BFs::Vector{BFType}
+    workspaces::Vector{WSType}   # 🚀 Added to hold pre-allocated workspaces
     near_lookup::LType
     far_lookup::LType
 
     function PetrovGalerkinBF{T}(
-        nearinteractions, tree, BFs, dim, near_lookup, far_lookup
+        nearinteractions, tree, BFs, workspaces, dim, near_lookup, far_lookup
     ) where {T}
-        return new{T,typeof(nearinteractions),typeof(near_lookup)}(
-            nearinteractions, dim, tree, BFs, near_lookup, far_lookup
+        return new{
+            T,typeof(nearinteractions),typeof(near_lookup),eltype(BFs),eltype(workspaces)
+        }(
+            nearinteractions, dim, tree, BFs, workspaces, near_lookup, far_lookup
         )
     end
 end
 
-# Define the new PetrovGalerkinBF type that holds the flat ButterflyFactorizations
-struct FlatPGBF2{
-    T,NearInteractionsType,treetype,LType<:SparseArrays.SparseMatrixCSC{Int,Int}
-} <: LinearMaps.LinearMap{T}
-    nearinteractions::NearInteractionsType
-    dim::Tuple{Int,Int}
-    tree::treetype
-    BFs::Vector{ButterflyFactorization{T,treetype}}
-    near_lookup::LType
-    far_lookup::LType
-
-    function FlatPGBF2{T}(
-        nearinteractions, tree, BFs, dim, near_lookup, far_lookup
-    ) where {T}
-        return new{T,typeof(nearinteractions),typeof(tree),typeof(near_lookup)}(
-            nearinteractions, dim, tree, BFs, near_lookup, far_lookup
-        )
-    end
-end
-
-struct FlatPGBF{T,NearInteractionsType} <: LinearMaps.LinearMap{T}
-    nearinteractions::NearInteractionsType
-    dim::Tuple{Int,Int}
-    tree::H2Trees.BlockTree
-    BFs::Vector{FlatBF}
-    function FlatPGBF{T}(nearinteractions, dim, tree, BFs) where {T}
-        return new{T,typeof(nearinteractions)}(
-            nearinteractions,
-            dim,
-            tree,#::H2Trees.BlockTree
-            BFs,#::Vector{FlatBF}
-        )
-    end
-end
-
-struct PetrovGalerkinBF_mats{T,NearInteractionsType} <: LinearMaps.LinearMap{T}
+struct PetrovGalerkinBF_Mat{T,NearInteractionsType} <: LinearMaps.LinearMap{T}
     nearinteractions::NearInteractionsType
     dim::Tuple{Int,Int}
     #tree::H2Trees.BlockTree
     farinteractions::Vector{Tuple{Int,Int}}           #observernodeid --> sourcenodeid
-    BFs::Vector{BF_Mats}
-    function PetrovGalerkinBF_mats{T}(
+    BFs::Vector{ButterflyFactorization_Mat}
+    function PetrovGalerkinBF_Mat{T}(
         nearinteractions,
         #tree,
         farinteractions,
@@ -99,7 +66,7 @@ struct CompositeBlockView{
 } <: AbstractBlockView{T}
     nearinteractions::NearInteractionsType
     dim::Tuple{Int,Int}
-    BFs::Vector{BF}
+    BFs::Vector{ButterflyFactorization{T}}
     near_lookup::LType
     far_lookup::LType
     function CompositeBlockView{T}(
@@ -111,8 +78,10 @@ struct CompositeBlockView{
     end
 end
 
-function farmatrix(mat::FlatPGBF2{T}; scheduler=OhMyThreads.SerialScheduler()) where {T}
-    return FlatPGBF2{T}(
+function farmatrix(
+    mat::PetrovGalerkinBF{T}; scheduler=OhMyThreads.SerialScheduler()
+) where {T}
+    return PetrovGalerkinBF{T}(
         BlockSparseMatrix(Matrix{ComplexF64}[], Int[], Int[], mat.dim; scheduler=scheduler),
         mat.tree,
         mat.BFs,

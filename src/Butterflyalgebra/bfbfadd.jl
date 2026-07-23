@@ -1,5 +1,5 @@
 """
-    add_eqbfs(BF_1_init::BF, BF_2_init::BF, τ) -> BF
+    add_eqbfs(BF_1_init ::ButterflyFactorization, BF_2_init ::ButterflyFactorization, τ) -> BF
 
 Add two Butterfly Factorization (`BF`) representations together and recompress the result.
 
@@ -9,8 +9,8 @@ the resulting operator to a desired accuracy tolerance.
 
 # Arguments
 
-  - `BF_1_init::BF`: The first butterfly factorization operand.
-  - `BF_2_init::BF`: The second butterfly factorization operand. Must share the same number of source (`NS`) and output (`NO`) nodes as `BF_1_init`.
+  - `BF_1_init ::ButterflyFactorization`: The first butterfly factorization operand.
+  - `BF_2_init ::ButterflyFactorization`: The second butterfly factorization operand. Must share the same number of source (`NS`) and output (`NO`) nodes as `BF_1_init`.
   - `τ`: The tolerance threshold used for the final recompression step.
 
 # Returns
@@ -24,7 +24,7 @@ the resulting operator to a desired accuracy tolerance.
   - **R Matrices:** Intersecting block keys across layers are combined via block-diagonalization (`blockdiag`). Unmatched keys are safely padded with zeros to preserve structural dimensions before block-diagonalization.
   - **Recompression:** The final structural configuration is passed to `recompress_BF` with the parameter `τ` to optimize memory and rank efficiency.
 """
-function add_eqbfs(BF_1_init::BF, BF_2_init::BF, τ)
+function add_eqbfs(BF_1_init::ButterflyFactorization, BF_2_init::ButterflyFactorization, τ)
     @assert BF_1_init.NS == BF_2_init.NS && BF_1_init.NO == BF_2_init.NO "rootids must match for addition."
     BF_1 = deepcopy(BF_1_init)
     BF_2 = deepcopy(BF_2_init)
@@ -166,6 +166,6 @@ function add_eqbfs(BF_1_init::BF, BF_2_init::BF, τ)
     )
 end
 
-function add_neqbfs(BF_1::BF, BF_2::BF)
+function add_neqbfs(BF_1::ButterflyFactorization, BF_2::ButterflyFactorization)
     return (BF_1, BF_2)   #insert struct here if needed
 end

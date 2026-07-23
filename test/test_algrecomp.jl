@@ -86,19 +86,19 @@
     =========================================================================
     =========================================================================#
 
-    Bfly1 = ButterflyFactorizations.subroutine_BF(
+    Bfly1 = ButterflyFactorizations.assemble_BF(
         farassembler1, tree1, 1, 1, k, 10^(-4); scheduler=OhMyThreads.DynamicScheduler()
     )
     size1 = Base.summarysize(Bfly1)
-    Bfly2 = ButterflyFactorizations.subroutine_BF(
+    Bfly2 = ButterflyFactorizations.assemble_BF(
         farassembler2, tree2, 1, 1, k, 10^(-4); scheduler=OhMyThreads.DynamicScheduler()
     )
     size2 = Base.summarysize(Bfly2)
-    Bfly3 = ButterflyFactorizations.subroutine_BF(
+    Bfly3 = ButterflyFactorizations.assemble_BF(
         farassembler3, tree3, 1, 1, k, 10^(-4); scheduler=OhMyThreads.DynamicScheduler()
     )
     size3 = Base.summarysize(Bfly3)
-    Bfly4 = ButterflyFactorizations.subroutine_BF(
+    Bfly4 = ButterflyFactorizations.assemble_BF(
         farassembler4, tree4, 1, 1, k, 10^(-4); scheduler=OhMyThreads.DynamicScheduler()
     )
     size4 = Base.summarysize(Bfly4)

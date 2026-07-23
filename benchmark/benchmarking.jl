@@ -12,23 +12,31 @@ using PlotlyJS
 using Random
 using SparseArrays
 
-# Hjälpfunktion för att räkna ut exakt hur mycket minne själva matriserna
-# inuti BF-dictionarierna tar upp (exkluderar träd och metadata)
 function bf_matrix_memory(Bfmat)
     num_elements = 0
 
-    # Räkna element i Far-field (Butterfly blocks)
+    # Butterfly matrices
     for bf in Bfmat.BFs
-        for q in values(bf.Q)
-            num_elements += length(q)
+
+        # Q factors
+        for block in bf.Q
+            if block.data isa AbstractMatrix
+                num_elements += length(block.data)
+            end
         end
-        for p in values(bf.P)
-            num_elements += length(p)
+
+        # P factors
+        for block in bf.P
+            if block.data isa AbstractMatrix
+                num_elements += length(block.data)
+            end
         end
-        for r_level in bf.R
-            for row in values(r_level)
-                for mat in values(row)
-                    num_elements += length(mat)
+
+        # R factors
+        for level in bf.R
+            for block in level.blocks
+                if block.data isa AbstractMatrix
+                    num_elements += length(block.data)
                 end
             end
         end
@@ -42,12 +50,23 @@ function bf_matrix_memory(Bfmat)
     # Räkna element i Near-field (SparseMatrixCSC)
     num_elements += SparseArrays.nnz(Bfmat.nearinteractions)
 
-    # 16 bytes per ComplexF64 (2 * 8 bytes)
-    mem_bytes = num_elements * 16
-    return mem_bytes / 1024^2 # Returnera i MB
+    # ComplexF64 = 16 bytes
+    mem_bytes = num_elements * sizeof(ComplexF64)
+
+    return mem_bytes / 1024^2
 end
 
-function run_benchmarks(h_values)
+function farfieldaccuracy(hmatinit, Bmatinit)
+    hmat = farmatrix(hmatinit)
+    Bmat = farmatrix(Bmatinit)
+    xtest = randn(ComplexF64, size(Bmat, 2))
+    y_exact = hmat * xtest
+    y_bf = Bmat * xtest
+    err_bf = norm(y_exact - y_bf) / norm(y_exact)
+    return err_bf
+end
+
+function run_benchmarks(h_values; checkfarfieldaccuracy=false)
     BLAS.set_num_threads(1)
 
     # Arrayer för att spara data till plottarna
@@ -56,7 +75,7 @@ function run_benchmarks(h_values)
     t_bf_vals = Float64[]
     mem_aca_vals = Float64[]
     mem_bf_total_vals = Float64[]
-    mem_bf_mats_vals = Float64[]
+    mem_ButterflyFactorization_Mat_vals = Float64[]
     err_bf_vals = Float64[]
     t_mv_aca_vals = Float64[]
     t_mv_bf_vals = Float64[]
@@ -73,7 +92,7 @@ function run_benchmarks(h_values)
     log_file = open("benchmark_log.txt", "w")
     write(log_file, "Starting benchmarks...\n")
     flush(log_file)
-
+    α=1.5
     i = 1
     for h in h_values
         round_str = @sprintf(
@@ -96,20 +115,40 @@ function run_benchmarks(h_values)
         blktree = H2Trees.BlockTree(tree, tree)
 
         # 1. HMatrix (ACA)
-        println("\nStarting ACA...\n")
-        t_aca = @elapsed begin
-            hmat = HMatrix(
-                op,
-                X,
-                X,
-                blktree;
-                tol=1e-3,
-                spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
-                scheduler=DynamicScheduler(),
-                maxrank=60,
-            )
+        if !checkfarfieldaccuracy
+            println("\nStarting ACA...\n")
+            t_aca = @elapsed begin
+                hmat = HMatrix(
+                    op,
+                    X,
+                    X,
+                    blktree;
+                    tol=1e-3,
+                    spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
+                    scheduler=DynamicScheduler(),
+                    maxrank=60,
+                )
+            end
+            time_aca_str = @sprintf("\nTime for HMatrix (ACA): %.3f seconds \n", t_aca)
+        else
+            println("\nStarting ACA...\n")
+            t_aca = @elapsed begin
+                hmat = AdaptiveCrossApproximation.farmatrix(
+                    HMatrix(
+                        op,
+                        X,
+                        X,
+                        blktree;
+                        tol=1e-3,
+                        spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
+                        scheduler=DynamicScheduler(),
+                        maxrank=60,
+                        isnear=(!(ButterflyFactorizations.isFarFunctor(α))),
+                    ),
+                )
+            end
+            time_aca_str = @sprintf("\nTime for HMatrix (ACA): %.3f seconds \n", t_aca)
         end
-        time_aca_str = @sprintf("\nTime for HMatrix (ACA): %.3f seconds \n", t_aca)
         println(time_aca_str)
         write(log_file, time_aca_str * "\n")
         mem_aca = Base.summarysize(hmat) / 1024^2
@@ -118,50 +157,92 @@ function run_benchmarks(h_values)
         write(log_file, mem_aca_str * "\n")
 
         # 2. Butterfly (BF)
-        println("\nStarting ButterflyFactorization...\n")
-        t_bf = @elapsed begin
-            Bfmat = ButterflyFactorizations.PetrovGalerkinBF(
-                op,
-                X,
-                X,
-                blktree,
-                k;
-                compressor=ButterflyFactorizations.PartialQR(),
-                tol=1e-3,
-                α=1.5,
+        if !checkfarfieldaccuracy
+            println("\nStarting ButterflyFactorization...\n")
+            t_bf = @elapsed begin
+                Bfmat = ButterflyFactorizations.PetrovGalerkinBF(
+                    op,
+                    X,
+                    X,
+                    blktree,
+                    k;#PetrovGalerkinBF
+                    compressor=ButterflyFactorizations.PartialQR(),
+                    tol=1e-3,
+                    α=α,
+                )
+            end
+            #println("\nFlattening Butterfly Structures...\n")
+            #Bfmat2 = ButterflyFactorizations.flattenmatrix(Bfmat)
+            time_bf_str = @sprintf(
+                "\nTime for ButterflyFactorization: %.3f seconds \n", t_bf
             )
+            println(time_bf_str)
+        else
+            println("\nStarting ButterflyFactorization...\n")
+            t_bf = @elapsed begin
+                Bfmat = ButterflyFactorizations.farmatrix(
+                    ButterflyFactorizations.PetrovGalerkinBF(
+                        op,
+                        X,
+                        X,
+                        blktree,
+                        k;#PetrovGalerkinBF
+                        compressor=ButterflyFactorizations.PartialQR(),
+                        tol=1e-3,
+                        α=α,
+                    ),
+                )
+            end
+            #println("\nFlattening Butterfly Structures...\n")
+            #Bfmat2 = ButterflyFactorizations.flattenmatrix(Bfmat)
+            time_bf_str = @sprintf(
+                "\nTime for ButterflyFactorization: %.3f seconds \n", t_bf
+            )
+            println(time_bf_str)
         end
-        println("\nFlattening Butterfly Structures...\n")
-        Bfmat2 = ButterflyFactorizations.flattenmatrix(Bfmat)
-        time_bf_str = @sprintf("\nTime for ButterflyFactorization: %.3f seconds \n", t_bf)
-        println(time_bf_str)
         write(log_file, time_bf_str * "\n")
         mem_bf_total = Base.summarysize(Bfmat) / 1024^2
-        mem_bf_mats = bf_matrix_memory(Bfmat)
+        mem_ButterflyFactorization_Mat = bf_matrix_memory(Bfmat)
         mem_bf_str = @sprintf(
             "\nTotal memory for ButterflyFactorization: %.2f MB\n\nMemory for Butterfly matrix entries only: %.2f MB \n",
             mem_bf_total,
-            mem_bf_mats
+            mem_ButterflyFactorization_Mat
         )
         println(mem_bf_str)
         write(log_file, mem_bf_str * "\n")
 
         # 3. Dense matrix & Accuracy
         println("\nComputing reference Matrix with ACA for a lower tolerance...\n")
-        refmat = HMatrix(
-            op,
-            X,
-            X,
-            blktree;
-            tol=1e-5,
-            spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
-            scheduler=DynamicScheduler(),
-            maxrank=100,
-        )
+        if !checkfarfieldaccuracy
+            refmat = HMatrix(
+                op,
+                X,
+                X,
+                blktree;
+                tol=1e-5,
+                spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
+                scheduler=DynamicScheduler(),
+                maxrank=100,
+            )
+        else
+            refmat = AdaptiveCrossApproximation.farmatrix(
+                HMatrix(
+                    op,
+                    X,
+                    X,
+                    blktree;
+                    tol=1e-5,
+                    spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
+                    scheduler=DynamicScheduler(),
+                    maxrank=100,
+                    isnear=(!(ButterflyFactorizations.isFarFunctor(α))),
+                ),
+            )
+        end
         xtest = randn(ComplexF64, size(Bfmat, 2))
 
         y_exact = refmat * xtest
-        y_bf = Bfmat2 * xtest
+        y_bf = Bfmat * xtest
         err_bf = norm(y_exact - y_bf) / norm(y_exact)
         err_str = @sprintf(
             "Relative error of ButterflyFactorization mat-vec: %.2e\n", err_bf
@@ -177,7 +258,7 @@ function run_benchmarks(h_values)
         write(log_file, mv_aca_str * "\n")
 
         println("Benchmarking MV product for ButterflyFactorization...\n")
-        t_mv_bf = @belapsed $Bfmat2 * $xtest
+        t_mv_bf = @belapsed $Bfmat * $xtest
         mv_bf_str = @sprintf("Time for Butterfly mat-vec: %.5f seconds\n", t_mv_bf)
         println(mv_bf_str)
         write(log_file, mv_bf_str * "\n")
@@ -188,7 +269,7 @@ function run_benchmarks(h_values)
         push!(t_bf_vals, t_bf)
         push!(mem_aca_vals, mem_aca)
         push!(mem_bf_total_vals, mem_bf_total)
-        push!(mem_bf_mats_vals, mem_bf_mats)
+        push!(mem_ButterflyFactorization_Mat_vals, mem_ButterflyFactorization_Mat)
         push!(err_bf_vals, err_bf)
         push!(t_mv_aca_vals, t_mv_aca)
         push!(t_mv_bf_vals, t_mv_bf)
@@ -273,7 +354,7 @@ function run_benchmarks(h_values)
             ),
             scatter(;
                 x=N_vals,
-                y=mem_bf_mats_vals,
+                y=mem_ButterflyFactorization_Mat_vals,
                 name="Butterfly Dictionaries Only",
                 mode="lines+markers",
                 line_dash="dash",
@@ -328,5 +409,9 @@ function run_benchmarks(h_values)
     return p_time, p_mem, p_mv, p_err
 end
 
-h_values = [0.10, 0.08, 0.06, 0.03, 0.02, 0.01, 0.005]
+h_values = [0.10, 0.08, 0.06] #, 0.03, 0.02, 0.01, 0.005
 p_time, p_mem, p_mv, p_err = run_benchmarks(h_values);
+display(p_time)
+display(p_mem)
+display(p_mv)
+display(p_err)

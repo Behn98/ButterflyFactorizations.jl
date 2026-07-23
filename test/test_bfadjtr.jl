@@ -93,29 +93,29 @@
     =========================================================================
     =========================================================================#
 
-    Bfly1 = ButterflyFactorizations.subroutine_BF(
+    Bfly1 = ButterflyFactorizations.assemble_BF(
         farassembler1, tree1, 1, 1, k, 10^(-3); scheduler=OhMyThreads.DynamicScheduler()
     )
-    Bfly2 = ButterflyFactorizations.subroutine_BF(
+    Bfly2 = ButterflyFactorizations.assemble_BF(
         farassembler2, tree2, 1, 1, k, 10^(-3); scheduler=OhMyThreads.DynamicScheduler()
     )
-    Bfly3 = ButterflyFactorizations.subroutine_BF(
+    Bfly3 = ButterflyFactorizations.assemble_BF(
         farassembler3, tree3, 1, 1, k, 10^(-3); scheduler=OhMyThreads.DynamicScheduler()
     )
-    Bfly4 = ButterflyFactorizations.subroutine_BF(
+    Bfly4 = ButterflyFactorizations.assemble_BF(
         farassembler4, tree4, 1, 1, k, 10^(-3); scheduler=OhMyThreads.DynamicScheduler()
     )
 
-    Bfly1m = ButterflyFactorizations.subroutine_BF_mats(
+    Bfly1m = ButterflyFactorizations.assemble_ButterflyFactorization_Mat(
         farassembler1, tree1, 1, 1, k, 10^(-3)
     )
-    Bfly2m = ButterflyFactorizations.subroutine_BF_mats(
+    Bfly2m = ButterflyFactorizations.assemble_ButterflyFactorization_Mat(
         farassembler2, tree2, 1, 1, k, 10^(-3)
     )
-    Bfly3m = ButterflyFactorizations.subroutine_BF_mats(
+    Bfly3m = ButterflyFactorizations.assemble_ButterflyFactorization_Mat(
         farassembler3, tree3, 1, 1, k, 10^(-3)
     )
-    Bfly4m = ButterflyFactorizations.subroutine_BF_mats(
+    Bfly4m = ButterflyFactorizations.assemble_ButterflyFactorization_Mat(
         farassembler4, tree4, 1, 1, k, 10^(-3)
     )
 
