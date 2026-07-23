@@ -148,7 +148,6 @@ function assemble_BF(
         Oleaf = treeO[end][idx]
         col = K[(NS, Oleaf)]
         row = values(testT, Oleaf)
-
         Z = zeros(ComplexF64, length(row), length(col))
         kernelmatrix(Z, row, col)
 

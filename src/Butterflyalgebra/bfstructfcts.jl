@@ -7,6 +7,16 @@ function getNSNO(BFactorization::ButterflyFactorization)
     return block_key(BFactorization.P[1])[4], block_key(BFactorization.Q[1])[1]
 end
 
+function clear!(logger::RankLogger)
+    for buf in logger.buffers
+        empty!(buf)
+    end
+end
+
+# Extract the integer guess seamlessly
+get_n_otilde(e::RankEstimate) = e.n_otilde
+get_n_otilde(n::Int) = n
+
 # ------------------------------------------------------------------
 # Helpers for memory & rank analysis
 # ------------------------------------------------------------------

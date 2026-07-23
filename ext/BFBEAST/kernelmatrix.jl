@@ -28,6 +28,10 @@ function (f::BlockStoreFunctor)(v, m, n)
 end
 
 function (blk::ButterflyFactorizations.BEASTKernelMatrix)(matrixblock, tdata, sdata)
+    if isempty(tdata) || isempty(sdata)
+        fill!(matrixblock, zero(eltype(matrixblock)))
+        return nothing
+    end
     blk.nearassembler(tdata, sdata, BlockStoreFunctor(matrixblock))
     return nothing
 end

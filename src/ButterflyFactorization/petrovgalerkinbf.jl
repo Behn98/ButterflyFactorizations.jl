@@ -111,7 +111,7 @@ function PetrovGalerkinBF(
                 k,
                 tol;
                 compressor=compressor,
-                scheduler=OhMyThreads.DynamicScheduler(),#SerialScheduler()
+                scheduler=OhMyThreads.SerialScheduler(),#SerialScheduler()DynamicScheduler()
             )
         end
     end

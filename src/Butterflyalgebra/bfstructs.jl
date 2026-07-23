@@ -55,3 +55,17 @@ struct ButterflyFactorization_Mat
     ButterflyFactorization_Mat(Q, R, P, NS, NO, k, τ, PermP, PermQ) =
         new(Q, R, P, NS, NO, k, τ, PermP, PermQ)
 end
+
+# Lightweight container holding the initial guess and the raw predictor variables
+struct RankEstimate
+    n_otilde::Int
+    x1::Float64   # (k * a_s * a_o / dmin)^2
+    x2::Float64   # log(1 / ε)
+end
+
+# Thread-safe logger for parallel block assembly
+struct RankLogger
+    buffers::Vector{Vector{Tuple{Float64,Float64,Int}}}
+    RankLogger() =
+        new([Vector{Tuple{Float64,Float64,Int}}() for _ in 1:(Threads.nthreads() + 1)])
+end
