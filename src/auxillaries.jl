@@ -1,4 +1,3 @@
-import H2Trees: values, center, halfsize, children, isleaf, trialtree, testtree
 """
     blockdiag(blocks::AbstractMatrix...)
 
@@ -241,9 +240,9 @@ function find_rows_for_column(R::Dict{T,Dict{T,U}}, col_idx::T) where {T,U}
 end
 
 """
-    h2treelevels(tree, root)
+    treelevels(tree, root)
 
-Computes the breath-first hierarchical levels of an `H2Trees.TwoNTree`.
+Computes the breath-first hierarchical levels of an tree.
 
 Starting from a specified `root` node, it traverses the tree level by level,
 collecting the nodes at each depth.
@@ -252,10 +251,7 @@ collecting the nodes at each depth.
 
   - A `Vector{Vector{Int}}` where each inner vector represents the node IDs at that level.
 """
-function h2treelevels(tree::T, root::Int64) where {T}
-    isleaf = H2Trees.isleaf
-    getchildren = H2Trees.children
-
+function treelevels(tree::T, root::Int64) where {T}
     levels = Vector{Vector{Int}}()
     current = [root]
 
@@ -264,8 +260,8 @@ function h2treelevels(tree::T, root::Int64) where {T}
         next = Int[]
 
         for node in current
-            if !isleaf(tree, node)
-                append!(next, getchildren(tree, node))
+            if !cluster_isleaf(tree, node)
+                append!(next, cluster_children(tree, node))
             end
         end
 
@@ -275,10 +271,7 @@ function h2treelevels(tree::T, root::Int64) where {T}
     return levels
 end
 
-function h2emptynodes(tree::T, root::Int64) where {T}
-    isleaf = H2Trees.isleaf
-    getchildren = H2Trees.children
-    getvalues = H2Trees.values
+function emptynodes(tree::T, root::Int64) where {T}
 
     # Stores the empty nodes per level
     empty_levels = Vector{Vector{Int}}()
@@ -287,14 +280,14 @@ function h2emptynodes(tree::T, root::Int64) where {T}
 
     while !isempty(current)
         # Hitta alla tomma noder på den aktuella nivån
-        empty_current = filter(node -> isempty(getvalues(tree, node)), current)
+        empty_current = filter(node -> isempty(cluster_values(tree, node)), current)
         push!(empty_levels, empty_current)
 
         next = Int[]
         # Bygg upp nästa nivå genom att samla alla barn från den nuvarande nivån
         for node in current
-            if !isleaf(tree, node)
-                append!(next, getchildren(tree, node))
+            if !cluster_isleaf(tree, node)
+                append!(next, cluster_children(tree, node))
             end
         end
 
@@ -305,7 +298,7 @@ function h2emptynodes(tree::T, root::Int64) where {T}
 end
 
 """
-    traverseandpad(H2tree, root)
+    traverseandpad(tree, root)
 
 Extracts the hierarchical levels of a tree and generates "virtual" ghost nodes.
 
@@ -316,76 +309,29 @@ shallow leaf nodes down to the maximum depth of the tree block.
 
 **Arguments:**
 
-  - `H2tree`: The hierarchical block tree.
+  - `tree`: The hierarchical block tree.
   - `root`: The ID of the root node to traverse from.
 
 **Returns:**
 
   - A `Vector{Vector{Int}}` representing the padded tree nodes per level.
 """
-function traverseandpad(H2tree::T, root::Int64) where {T}
-    isleaf = H2Trees.isleaf
-    tree = h2treelevels(H2tree, root)
-    for l in 2:(length(tree) - 1)
-        for node in tree[l]
-            if isleaf(H2tree, node)
-                push!(tree[l + 1], node)
+function traverseandpad(tree::T, root::Int64) where {T}
+    treelvls = treelevels(tree, root)
+    for l in 2:(length(treelvls) - 1)
+        for node in treelvls[l]
+            if cluster_isleaf(tree, node)
+                push!(treelvls[l + 1], node)
             end
         end
     end
-    return tree
-end
-
-"""
-Abstract base type defining how physical spaces inside the `H2Trees` are ordered.
-"""
-permute(space, perm) = permute!(copy(space), perm)
-
-abstract type SpaceOrderingStyle end
-
-"""
-    PermuteSpaceInPlace()
-
-A `SpaceOrderingStyle` that permutes the test and trial spaces in place
-according to the permutation derived from the tree leaf structure.
-"""
-struct PermuteSpaceInPlace <: SpaceOrderingStyle end
-function (::PermuteSpaceInPlace)(tree, testspace, trialspace)
-    testperm = permutation(testtree(tree))
-    permute!(testspace, testperm)
-
-    if testspace === trialspace && testtree(tree) === trialtree(tree)
-        return nothing
-    elseif !(testspace === trialspace) && !(testtree(tree) === trialtree(tree))
-        trialperm = permutation(trialtree(tree))
-        permute!(trialspace, trialperm)
-        return nothing
-    else
-        @warn "Risky territory: Permuting trialtree not trialspace."
-        trialperm = permutation(trialtree(tree))
-        return nothing
-    end
-end
-struct PreserveSpaceOrder <: SpaceOrderingStyle end
-function (::PreserveSpaceOrder)(tree, testspace, trialspace)
-    return nothing
-end
-
-function permutation(tree::H2Trees.H2ClusterTree)
-    perm = zeros(Int, H2Trees.numberofvalues(tree))
-    n = 1
-    for leaf in H2Trees.leaves(tree)
-        perm[n:(n + length(H2Trees.values(tree, leaf)) - 1)] = H2Trees.values(tree, leaf)
-        tree.nodes[leaf].data.values .= n:(n + length(H2Trees.values(tree, leaf)) - 1)
-        n += length(H2Trees.values(tree, leaf))
-    end
-    return perm
+    return treelvls
 end
 
 function group_by_parents(tree, childkeys, s_o::Int) #s_o = 1 for observer, 2 for source
     parentedgrps = Dict{Int,Vector{Tuple{Int,Int}}}()
     for childkey in childkeys
-        parentnode = H2Trees.parent(tree, childkey[s_o])
+        parentnode = cluster_parent(tree, childkey[s_o])
         if !haskey(parentedgrps, parentnode)
             parentedgrps[parentnode] = Vector{Tuple{Int,Int}}()
         end
@@ -398,16 +344,16 @@ function group_by_parents(tree, childkeys, s_o::Int) #s_o = 1 for observer, 2 fo
 end
 
 function checkequality(trees, treeo)
-    trialt = ButterflyFactorizations.h2treelevels(trees, 1)
-    tstt = ButterflyFactorizations.h2treelevels(treeo, 1)
+    trialt = ButterflyFactorizations.treelevels(trees, 1)
+    tstt = ButterflyFactorizations.treelevels(treeo, 1)
     if trialt != tstt
         return false
     end
     commont = trialt
     for lvl in commont
         for node in lvl
-            trialcluster = H2Trees.values(trees, node)
-            tstcluster = H2Trees.values(treeo, node)
+            trialcluster = cluster_values(trees, node)
+            tstcluster = cluster_values(treeo, node)
             if trialcluster != tstcluster
                 return false
             end

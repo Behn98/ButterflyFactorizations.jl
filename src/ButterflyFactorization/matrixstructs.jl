@@ -1,8 +1,9 @@
-struct PetrovGalerkinBF{T,NearInteractionsType,LType<:AbstractMatrix{Int},BFType,WSType} <:
-       LinearMaps.LinearMap{T}
+struct PetrovGalerkinBF{
+    T,NearInteractionsType,LType<:AbstractMatrix{Int},BFType,WSType,treetype
+} <: LinearMaps.LinearMap{T}
     nearinteractions::NearInteractionsType
     dim::Tuple{Int,Int}
-    tree::H2Trees.BlockTree
+    tree::treetype
     BFs::Vector{BFType}
     workspaces::Vector{WSType}   # 🚀 Added to hold pre-allocated workspaces
     near_lookup::LType
@@ -12,7 +13,12 @@ struct PetrovGalerkinBF{T,NearInteractionsType,LType<:AbstractMatrix{Int},BFType
         nearinteractions, tree, BFs, workspaces, dim, near_lookup, far_lookup
     ) where {T}
         return new{
-            T,typeof(nearinteractions),typeof(near_lookup),eltype(BFs),eltype(workspaces)
+            T,
+            typeof(nearinteractions),
+            typeof(near_lookup),
+            eltype(BFs),
+            eltype(workspaces),
+            typeof(tree),
         }(
             nearinteractions, dim, tree, BFs, workspaces, near_lookup, far_lookup
         )

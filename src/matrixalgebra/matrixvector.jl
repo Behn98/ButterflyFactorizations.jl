@@ -5,7 +5,10 @@ using LinearMaps: LinearMaps
 # Forward Matrix-Vector Product (Used for A, A', and transpose(A))
 # ------------------------------------------------------------------
 @views function LinearAlgebra.mul!(
-    y::AbstractVecOrMat, A::PetrovGalerkinBF{T}, x::AbstractVector{T}
+    y::AbstractVecOrMat,
+    A::PetrovGalerkinBF{T},
+    x::AbstractVector{T};
+    scheduler=OhMyThreads.DynamicScheduler(),
 ) where {T}
     LinearMaps.check_dim_mul(y, A, x)
     fill!(y, zero(T))
@@ -19,7 +22,7 @@ using LinearMaps: LinearMaps
     y_locals = Vector{Vector{T}}(undef, n_chunks)
 
     @tasks for c in 1:n_chunks
-        @set scheduler = DynamicScheduler()
+        @set scheduler = scheduler
         y_local = zeros(T, length(y))
         start_idx = (c - 1) * chunk_size + 1
         end_idx = min(c * chunk_size, length(A.BFs))

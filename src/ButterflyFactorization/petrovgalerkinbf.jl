@@ -35,7 +35,7 @@ function PetrovGalerkinBF(
     operator,
     testspace,
     trialspace,
-    tree::BlockTree,
+    tree,
     k::Float64;
     compressor=ButterflyFactorizations.PartialQR(),
     tol=1e-3,
@@ -66,8 +66,8 @@ function PetrovGalerkinBF(
             near_cols[i] = node_s
             near_vals[i] = i
 
-            test_indices[i] = H2Trees.values(tree.testcluster, node_o)
-            trial_indices[i] = H2Trees.values(tree.trialcluster, node_s)
+            test_indices[i] = cluster_values(tree.testcluster, node_o)
+            trial_indices[i] = cluster_values(tree.trialcluster, node_s)
 
             blk = zeros(acctype, length(test_indices[i]), length(trial_indices[i]))
             nearmatrix_near(blk, test_indices[i], trial_indices[i])
@@ -116,8 +116,8 @@ function PetrovGalerkinBF(
         end
     end
 
-    num_test_nodes  = sum(length(lvl) for lvl in h2treelevels(tree.testcluster, 1))
-    num_trial_nodes = sum(length(lvl) for lvl in h2treelevels(tree.trialcluster, 1))
+    num_test_nodes  = sum(length(lvl) for lvl in treelevels(tree.testcluster, 1))
+    num_trial_nodes = sum(length(lvl) for lvl in treelevels(tree.trialcluster, 1))
 
     near_lookup = sparse(near_rows, near_cols, near_vals, num_test_nodes, num_trial_nodes)
     far_lookup  = sparse(far_rows, far_cols, far_vals, num_test_nodes, num_trial_nodes)
@@ -165,7 +165,7 @@ function PetrovGalerkinBF_Mat(
     operator,
     testspace,
     trialspace,
-    tree::BlockTree,
+    tree,
     k::Float64;
     compressor=ButterflyFactorizations.PartialQR(),
     tol=1e-3,
@@ -182,8 +182,8 @@ function PetrovGalerkinBF_Mat(
         @tasks for i in eachindex(nearints)
             (node_o, node_s) = nearints[i]
             @set scheduler = scheduler #DynamicScheduler() #SerialScheduler
-            values[i] = H2Trees.values(tree.testcluster, node_o)
-            nearvalues[i] = H2Trees.values(tree.trialcluster, node_s)
+            values[i] = cluster_values(tree.testcluster, node_o)
+            nearvalues[i] = cluster_values(tree.trialcluster, node_s)
             blk = zeros(acctype, length(values[i]), length(nearvalues[i]))
             nearmatrix(blk, values[i], nearvalues[i])
             blocks[i] = blk

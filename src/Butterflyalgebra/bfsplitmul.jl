@@ -1,4 +1,3 @@
-
 """
     splitmulbf(butterflycluster_init::Matrix{BF}, higherkBF_init ::ButterflyFactorization, τ::Float64) -> BF
 
@@ -60,9 +59,9 @@ function splitmulbf(
     l = length(higherkBF.R) # Number of R-levels in the higher k BF
     #Step 1: subdividing the higher k BF into numchildren BFs of lvl k-1
     lowerkBFs = Vector{ButterflyFactorization}(undef, numchildren)
-    ssubtree = h2treelevels(higherkBF.stree, higherkBF.NS)
+    ssubtree = treelevels(higherkBF.stree, higherkBF.NS)
     for i in 1:numchildren
-        osubtree = h2treelevels(higherkBF.otree, children[i])
+        osubtree = treelevels(higherkBF.otree, children[i])
         new_P = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
         for leaf in osubtree[end]
             new_P[leaf, higherkBF.NS] = copy(higherkBF.P[leaf, higherkBF.NS])
@@ -203,7 +202,7 @@ function splitmulbf(
             new_P,
             (
                 length(
-                    H2Trees.values(
+                    cluster_cluster_values(
                         butterflycluster[1, 1].otree,
                         H2Trees.parent(
                             butterflycluster[1, 1].otree, butterflycluster[1, 1].NO

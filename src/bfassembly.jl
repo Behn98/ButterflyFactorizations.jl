@@ -1,5 +1,3 @@
-import H2Trees: values, center, halfsize, children, isleaf, trialtree, testtree
-
 # ------------------------------------------------------------------
 # Main Assembly Routine
 # ------------------------------------------------------------------
@@ -42,8 +40,8 @@ function assemble_BF(
     scheduler=OhMyThreads.SerialScheduler(),
 )
     # --- Trees & Helpers ---
-    trialT = trialtree(H2Blocktree)
-    testT = testtree(H2Blocktree)
+    trialT = cluster_trialtree(H2Blocktree)
+    testT = cluster_testtree(H2Blocktree)
     treeS = traverseandpad(trialT, NS)
     treeO = traverseandpad(testT, NO)
 
@@ -62,8 +60,8 @@ function assemble_BF(
 
     leaf_q_results = tmap(1:lS; scheduler=scheduler) do blockidx
         Sleaf = treeS[end][blockidx]
-        srcindex = values(trialT, Sleaf)
-        obsindex = values(testT, NO)
+        srcindex = cluster_values(trialT, Sleaf)
+        obsindex = cluster_values(testT, NO)
 
         n_otilde = estimate_rank_3d(k, trialT, testT, Sleaf, NO, τ)
         q_ks, k_l, _ = compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
@@ -147,7 +145,7 @@ function assemble_BF(
     tmap(1:lO; scheduler=scheduler) do idx
         Oleaf = treeO[end][idx]
         col = K[(NS, Oleaf)]
-        row = values(testT, Oleaf)
+        row = cluster_values(testT, Oleaf)
         Z = zeros(ComplexF64, length(row), length(col))
         kernelmatrix(Z, row, col)
 
@@ -166,12 +164,12 @@ function build_U_skeletons(treeS_level, treeO_level, K, trialT, scheduler)
     interactions_U = vec(collect(Iterators.product(treeS_level, treeO_level)))
 
     results_U = tmap(interactions_U; scheduler=scheduler) do (Svert, Overt)
-        if !isleaf(trialT, Svert)
+        if !cluster_isleaf(trialT, Svert)
             temp_size = sum(
-                length(K[(Schild, Overt)]) for Schild in children(trialT, Svert)
+                length(K[(Schild, Overt)]) for Schild in cluster_children(trialT, Svert)
             )
             temp = sizehint!(Int[], temp_size)
-            for Schild in children(trialT, Svert)
+            for Schild in cluster_children(trialT, Svert)
                 append!(temp, K[(Schild, Overt)])
             end
         else
@@ -200,8 +198,16 @@ function build_nonfrozen_R_blocks(
     update_counts = zeros(Int, n_ints)
     for i in 1:n_ints
         Overt, Svert = interactions[i]
-        num_O = isleaf(testT, Overt) ? 1 : length(collect(children(testT, Overt)))
-        num_S = isleaf(trialT, Svert) ? 1 : length(collect(children(trialT, Svert)))
+        num_O = if cluster_isleaf(testT, Overt)
+            1
+        else
+            length(collect(cluster_children(testT, Overt)))
+        end
+        num_S = if cluster_isleaf(trialT, Svert)
+            1
+        else
+            length(collect(cluster_children(trialT, Svert)))
+        end
         block_counts[i] = num_O * num_S
         update_counts[i] = num_O
     end
@@ -222,9 +228,9 @@ function build_nonfrozen_R_blocks(
         b_idx = 0
         u_idx = 0
 
-        if !isleaf(testT, Overt)
-            for Ochild in children(testT, Overt)
-                obsindex = values(testT, Ochild)
+        if !cluster_isleaf(testT, Overt)
+            for Ochild in cluster_children(testT, Overt)
+                obsindex = cluster_values(testT, Ochild)
                 srcindex = U[(Svert, Overt)]
                 n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Ochild, τ)
                 q_ks, k_l, _ = compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
@@ -232,9 +238,9 @@ function build_nonfrozen_R_blocks(
                 u_idx += 1
                 all_k_updates[u_off + u_idx] = (Svert, Ochild, k_l)
 
-                if !isleaf(trialT, Svert)
+                if !cluster_isleaf(trialT, Svert)
                     last_idx = 0
-                    for Schild in children(trialT, Svert)
+                    for Schild in cluster_children(trialT, Svert)
                         ks = length(K[(Schild, Overt)])
                         block_data = Matrix(view(q_ks, :, (last_idx + 1):(last_idx + ks)))
 
@@ -252,14 +258,14 @@ function build_nonfrozen_R_blocks(
                 end
             end
         else
-            obsindex = values(testT, Overt)
-            if !isleaf(trialT, Svert)
+            obsindex = cluster_values(testT, Overt)
+            if !cluster_isleaf(trialT, Svert)
                 srcindex = U[(Svert, Overt)]
                 n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Overt, τ)
                 q_ks, k_l, _ = compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
 
                 last_idx = 0
-                for Schild in children(trialT, Svert)
+                for Schild in cluster_children(trialT, Svert)
                     ks = length(K[(Schild, Overt)])
                     block_data = Matrix(view(q_ks, :, (last_idx + 1):(last_idx + ks)))
 
@@ -295,7 +301,11 @@ function build_sourcefrozen_R_blocks(
     block_counts = zeros(Int, n_ints)
     for i in 1:n_ints
         Overt = treeO_level[i]
-        block_counts[i] = isleaf(testT, Overt) ? 1 : length(collect(children(testT, Overt)))
+        block_counts[i] = if cluster_isleaf(testT, Overt)
+            1
+        else
+            length(collect(cluster_children(testT, Overt)))
+        end
     end
 
     block_offsets = cumsum(vcat(1, block_counts[1:(end - 1)]))
@@ -308,9 +318,9 @@ function build_sourcefrozen_R_blocks(
         b_off = block_offsets[i] - 1
         b_idx = 0
 
-        if !isleaf(testT, Overt)
-            for Ochild in children(testT, Overt)
-                obsindex = values(testT, Ochild)
+        if !cluster_isleaf(testT, Overt)
+            for Ochild in cluster_children(testT, Overt)
+                obsindex = cluster_values(testT, Ochild)
                 srcindex = K[(Svert, Overt)]
                 n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Ochild, τ)
                 q_ks, k_l, _ = compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
@@ -341,8 +351,11 @@ function build_observerfrozen_R_blocks(
     block_counts = zeros(Int, n_ints)
     for i in 1:n_ints
         Overt, Svert = interactions[i]
-        block_counts[i] =
-            isleaf(trialT, Svert) ? 1 : length(collect(children(trialT, Svert)))
+        block_counts[i] = if cluster_isleaf(trialT, Svert)
+            1
+        else
+            length(collect(cluster_children(trialT, Svert)))
+        end
     end
 
     block_offsets = cumsum(vcat(1, block_counts[1:(end - 1)]))
@@ -354,15 +367,15 @@ function build_observerfrozen_R_blocks(
         (Overt, Svert) = interactions[i]
         b_off = block_offsets[i] - 1
         b_idx = 0
-        obsindex = values(testT, Overt)
+        obsindex = cluster_values(testT, Overt)
 
-        if !isleaf(trialT, Svert)
+        if !cluster_isleaf(trialT, Svert)
             srcindex = U[(Svert, Overt)]
             n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Overt, τ)
             q_ks, k_l, _ = compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
 
             last_idx = 0
-            for Schild in children(trialT, Svert)
+            for Schild in cluster_children(trialT, Svert)
                 ks = length(K[(Schild, Overt)])
                 block_data = Matrix(view(q_ks, :, (last_idx + 1):(last_idx + ks)))
 
@@ -421,8 +434,8 @@ function assemble_ButterflyFactorization_Mat(
     PermP = Vector{Int}()
 
     # --- trees & helpers ---
-    trialT = H2Trees.trialtree(H2Blocktree)
-    testT = H2Trees.testtree(H2Blocktree)
+    trialT = H2Trees.cluster_trialtree(H2Blocktree)
+    testT = H2Trees.cluster_testtree(H2Blocktree)
 
     treeS = traverseandpad(trialT, NS)
     treeO = traverseandpad(testT, NO)
@@ -435,9 +448,9 @@ function assemble_ButterflyFactorization_Mat(
     # Leaf-level Q
     # ------------------------------------------------------------------
     for Sleaf in treeS[LS]
-        srcindex = values(trialT, Sleaf)
+        srcindex = cluster_values(trialT, Sleaf)
         push!(PermQ, srcindex...)
-        obsindex = values(testT, NO)
+        obsindex = cluster_values(testT, NO)
         n_otilde = estimate_rank_3d(k, trialT, testT, Sleaf, NO, τ;)
         q_ks, k_l, r_l = compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
         Q = sparse_blockdiag(Q, q_ks)               #SPARSITY: sparse_ or blocksparse_
@@ -463,7 +476,7 @@ function assemble_ButterflyFactorization_Mat(
                 for Overt in treeO[min(l, LO)]
                     temp = Int[]
 
-                    for Schild in children(trialT, Svert)
+                    for Schild in cluster_children(trialT, Svert)
                         Ks = getsubdict!(K, Schild)
                         ks = get(Ks, Overt, nothing)
                         append!(temp, ks)
@@ -481,9 +494,9 @@ function assemble_ButterflyFactorization_Mat(
             R_temp1 = Matrix{ComplexF64}(undef, 0, 0)
             for Overt in treeO[l]
                 R_temp2 = Vector{AbstractMatrix{ComplexF64}}()
-                for Ochild in children(testT, Overt)
+                for Ochild in cluster_children(testT, Overt)
                     R_temp3 = Matrix{ComplexF64}(undef, 0, 0)
-                    obsindex = values(testT, Ochild)
+                    obsindex = cluster_values(testT, Ochild)
                     for Svert in treeS[LS - l]
                         srcindex = U[Svert][Overt]
 
@@ -507,9 +520,9 @@ function assemble_ButterflyFactorization_Mat(
             R_temp1 = Matrix{ComplexF64}(undef, 0, 0)
             for Overt in treeO[l]
                 R_temp2 = Vector{AbstractMatrix{ComplexF64}}()
-                for Ochild in children(testT, Overt)
+                for Ochild in cluster_children(testT, Overt)
                     R_temp3 = Matrix{ComplexF64}(undef, 0, 0)
-                    obsindex = values(testT, Ochild)
+                    obsindex = cluster_values(testT, Ochild)
                     for Svert in treeS[1]
                         srcindex = K[Svert][Overt]
                         n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Ochild, τ;)
@@ -531,7 +544,7 @@ function assemble_ButterflyFactorization_Mat(
         elseif !source_is_frozen && obs_is_frozen
             R_temp1 = Matrix{ComplexF64}(undef, 0, 0)
             for Overt in treeO[LO]
-                obsindex = values(testT, Overt)
+                obsindex = cluster_values(testT, Overt)
                 R_temp2 = Matrix{ComplexF64}(undef, 0, 0)
                 for Svert in treeS[LS - l]
                     srcindex = U[Svert][Overt]
@@ -558,7 +571,7 @@ function assemble_ButterflyFactorization_Mat(
 
     for Oleaf in treeO[LO]
         col = K[NS][Oleaf]
-        row = values(testT, Oleaf)
+        row = cluster_values(testT, Oleaf)
         push!(PermP, row...)
         Z = zeros(ComplexF64, length(row), length(col))
         kernelmatrix(Z, row, col)

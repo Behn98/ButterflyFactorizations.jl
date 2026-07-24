@@ -120,48 +120,48 @@ end
     tree3 = TwoNTree(T, T, lambda / 10)
     for i in eachindex(tree1.testcluster.nodesatlevel)
         @test issetequal(
-            ButterflyFactorizations.h2treelevels(
-                tree1.testcluster, H2Trees.root(tree1.testcluster)
+            ButterflyFactorizations.treelevels(
+                tree1.testcluster, ButterflyFactorizations.cluster_root(tree1.testcluster)
             )[i],
             tree1.testcluster.nodesatlevel[i],
         )
     end
     for i in eachindex(tree1.trialcluster.nodesatlevel)
         @test issetequal(
-            ButterflyFactorizations.h2treelevels(
-                tree1.trialcluster, H2Trees.root(tree1.trialcluster)
+            ButterflyFactorizations.treelevels(
+                tree1.trialcluster, ButterflyFactorizations.cluster_root(tree1.trialcluster)
             )[i],
             tree1.trialcluster.nodesatlevel[i],
         )
     end
     for i in eachindex(tree2.testcluster.nodesatlevel)
         @test issetequal(
-            ButterflyFactorizations.h2treelevels(
-                tree2.testcluster, H2Trees.root(tree2.testcluster)
+            ButterflyFactorizations.treelevels(
+                tree2.testcluster, ButterflyFactorizations.cluster_root(tree2.testcluster)
             )[i],
             tree2.testcluster.nodesatlevel[i],
         )
     end
     for i in eachindex(tree2.trialcluster.nodesatlevel)
         @test issetequal(
-            ButterflyFactorizations.h2treelevels(
-                tree2.trialcluster, H2Trees.root(tree2.trialcluster)
+            ButterflyFactorizations.treelevels(
+                tree2.trialcluster, ButterflyFactorizations.cluster_root(tree2.trialcluster)
             )[i],
             tree2.trialcluster.nodesatlevel[i],
         )
     end
     for i in eachindex(tree3.testcluster.nodesatlevel)
         @test issetequal(
-            ButterflyFactorizations.h2treelevels(
-                tree3.testcluster, H2Trees.root(tree3.testcluster)
+            ButterflyFactorizations.treelevels(
+                tree3.testcluster, ButterflyFactorizations.cluster_root(tree3.testcluster)
             )[i],
             tree3.testcluster.nodesatlevel[i],
         )
     end
     for i in eachindex(tree3.trialcluster.nodesatlevel)
         @test issetequal(
-            ButterflyFactorizations.h2treelevels(
-                tree3.trialcluster, H2Trees.root(tree3.trialcluster)
+            ButterflyFactorizations.treelevels(
+                tree3.trialcluster, ButterflyFactorizations.cluster_root(tree3.trialcluster)
             )[i],
             tree3.trialcluster.nodesatlevel[i],
         )
@@ -169,7 +169,7 @@ end
 
     leaves = H2Trees.leaves
     paddedtlvls = ButterflyFactorizations.traverseandpad(
-        tree1.testcluster, H2Trees.root(tree1.testcluster)
+        tree1.testcluster, ButterflyFactorizations.cluster_root(tree1.testcluster)
     )
     ml = length(paddedtlvls)
     @test issetequal(paddedtlvls[ml], leaves(tree1.testcluster))

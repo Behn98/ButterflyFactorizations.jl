@@ -1,5 +1,3 @@
-import H2Trees: values, center, halfsize, children, isleaf, trialtree, testtree
-
 """
     recompress_BF(Butterfly ::ButterflyFactorization, τ)
 
@@ -49,7 +47,7 @@ function recompress_BF_right(Butterfly_init::ButterflyFactorization, τ)
 
         # 2. Process each unique column space
         for (col_idx, rows_with_col) in col_to_rows
-            #parent_groups = group_by_parents(testtree(tree), rows_with_col, 1)
+            #parent_groups = group_by_parents(cluster_testtree(tree), rows_with_col, 1)
 
             #for (parent_node, local_rows) in parent_groups
             R_k = Vector{Matrix{ComplexF64}}()

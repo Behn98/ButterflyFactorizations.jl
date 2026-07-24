@@ -1,5 +1,3 @@
-import H2Trees: values, center, halfsize, children, isleaf, trialtree, testtree
-
 """
     mulBFs(BF_1_init ::ButterflyFactorization, BF_2_init ::ButterflyFactorization, τ::Float64) -> BF
 

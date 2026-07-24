@@ -37,7 +37,6 @@ check the test folder/Readme.md for example usage of the API, including how to c
 module ButterflyFactorizations
 
 using BlockSparseMatrices
-using H2Trees
 using LinearAlgebra
 using LinearMaps
 using StaticArrays
@@ -46,10 +45,10 @@ using OhMyThreads
 using LowRankApprox
 using SparseArrays
 
-export PetrovGalerkinBF,
-    PetrovGalerkinBF_Mat, assemble_BF, assemble_ButterflyFactorization_Mat, PartialQR
-export mulBFs, add_eqbfs, recompress_BF, apply_BF, FlatBF, flattenmatrix, splitmulbf
+export PetrovGalerkinBF, PetrovGalerkinBF_Mat, assemble_BF, assemble_BF_Mat, PartialQR
+export mulBFs, add_eqbfs, recompress_BF, apply_BF, splitmulbf
 
+include("treeinterface.jl")
 #Helper funcitons
 include("auxillaries.jl")
 
@@ -81,7 +80,6 @@ include("ButterflyFactorization/petrovgalerkinbf.jl")
 
 include("matrixalgebra/matrix_adj_tr.jl")
 include("matrixalgebra/dims.jl")
-include("matrixalgebra/indexing.jl")
 include("matrixalgebra/matrixvector.jl")
 include("matrixalgebra/matrixmatrix.jl")
 

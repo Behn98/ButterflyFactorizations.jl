@@ -211,74 +211,15 @@ function estimate_rank_3d(
 end
 
 function estimate_rank_3d(
-    k,
-    trialT::H2Trees.TwoNTree,
-    testT::H2Trees.TwoNTree,
-    Snode::Int,
-    Onode::Int,
-    ε::Float64;
-    C=73.4706,
-    Cε=0.6361,
-    Rmin=3,
+    k, trialT, testT, Snode::Int, Onode::Int, ε::Float64; C=73.4706, Cε=0.6361, Rmin=3
 )
-    center = H2Trees.center
-    halfsize = H2Trees.halfsize
-
-    c_s = center(trialT, Snode)
-    c_o = center(testT, Onode)
-    a_s = halfsize(trialT, Snode)
-    a_o = halfsize(testT, Onode)
+    c_s = cluster_center(trialT, Snode)
+    c_o = cluster_center(testT, Onode)
+    a_s = cluster_radius(trialT, Snode)
+    a_o = cluster_radius(testT, Onode)
 
     d = norm(c_s .- c_o)
     dmin = max(d - 0.5 * (a_s + a_o), 1e-4)
-
-    # Isolated predictor variables
-    x1 = (k * (a_s * a_o) / dmin)^2
-    x2 = log(1 / ε)
-
-    R = ceil(Int, C * x1 + Cε * x2)
-    n_otilde = max(R, Rmin)
-
-    return RankEstimate(n_otilde, x1, x2)
-end
-
-function estimate_rank_3d(
-    k,
-    trialT::H2Trees.BoundingBallTree,
-    testT::H2Trees.BoundingBallTree,
-    Snode::Int,
-    Onode::Int,
-    ε::Float64;
-
-    C=0.8237,
-
-    Cε=1.7178,
-
-    Rmin=3,
-)
-    center = H2Trees.center
-
-    radius = H2Trees.radius
-
-    # Extract geometric information from the tree nodes
-
-    c_s = center(trialT, Snode)
-
-    c_o = center(testT, Onode)
-
-    a_s = radius(trialT, Snode)
-
-    a_o = radius(testT, Onode)
-
-    # Center separation
-
-    d = norm(c_s .- c_o)
-
-    # Minimum separation: Radierna MÅSTE subtraheras i sin helhet!
-
-    # Bytt ut 1e-12 mot 1e-4 för att förhindra IntegerOverflow vid överlappande löv
-
-    dmin = max(d - (a_s + a_o), 1e-4)
 
     # Isolated predictor variables
     x1 = (k * (a_s * a_o) / dmin)^2

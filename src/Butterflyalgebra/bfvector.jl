@@ -11,10 +11,11 @@ function LinearAlgebra.mul!(
     BF::ButterflyFactorization,
     x::AbstractVector,
     α::Number=1,
-    β::Number=0,
+    β::Number=0;
+    scheduler=OhMyThreads.DynamicScheduler(),
 )
-    trialT = trialtree(BF.tree)
-    testT  = testtree(BF.tree)
+    trialT = cluster_trialtree(BF.tree)
+    testT  = cluster_testtree(BF.tree)
 
     # Scale the initial y vector
     if β != 1
@@ -30,7 +31,7 @@ function LinearAlgebra.mul!(
     # 1. Forward Q: Leaf Sources -> Source Skeletons
     # -----------------------------------------------------------
     for block in BF.Q
-        src_idx = values(trialT, block.src_in)
+        src_idx = cluster_values(trialT, block.src_in)
         v_in = x[src_idx]
 
         # block.data is either a dense Matrix or UniformScaling (I)
@@ -65,7 +66,7 @@ function LinearAlgebra.mul!(
     x_curr = x_next
     for block in BF.P
         in_key  = (block.obs_in, block.src_in)
-        obs_idx = values(testT, block.obs_out)
+        obs_idx = cluster_values(testT, block.obs_out)
 
         v_in = x_curr[in_key]
 
@@ -114,10 +115,11 @@ function LinearAlgebra.mul!(
     x::AbstractVector{T},
     ws::ButterflyWorkspace{T},
     α::Number=1,
-    β::Number=0,
+    β::Number=0;
+    scheduler=OhMyThreads.DynamicScheduler(),
 ) where {T,M}
-    trialT = trialtree(BF.tree)
-    testT  = testtree(BF.tree)
+    trialT = cluster_trialtree(BF.tree)
+    testT  = cluster_testtree(BF.tree)
 
     # Initialize y
     if β != 1
@@ -129,7 +131,7 @@ function LinearAlgebra.mul!(
     # -----------------------------------------------------------
     buf_Q = ws.level_buffers[1]
     for block in BF.Q
-        src_idx = values(trialT, block.src_in)
+        src_idx = cluster_values(trialT, block.src_in)
         v_out   = buf_Q[(block.obs_out, block.src_out)]
 
         v_in = view(x, src_idx)
@@ -172,7 +174,7 @@ function LinearAlgebra.mul!(
     last_buf = ws.level_buffers[end]
     for block in BF.P
         v_in    = last_buf[(block.obs_in, block.src_in)]
-        obs_idx = values(testT, block.obs_out)
+        obs_idx = cluster_values(testT, block.obs_out)
 
         y_view = view(y, obs_idx)
 

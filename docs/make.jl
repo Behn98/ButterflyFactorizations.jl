@@ -1,6 +1,6 @@
 using Documenter
 using ButterflyFactorizations
-using BEAST # Optional: Include this so the BFBEAST extension is loaded for docs
+using BEAST
 
 makedocs(;
     modules=[ButterflyFactorizations],
