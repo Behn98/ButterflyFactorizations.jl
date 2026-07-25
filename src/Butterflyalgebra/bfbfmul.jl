@@ -1,402 +1,236 @@
 """
-    mulBFs(BF_1_init ::ButterflyFactorization, BF_2_init ::ButterflyFactorization, τ::Float64) -> BF
+    mulBFs(BF_1::ButterflyFactorization, BF_2::ButterflyFactorization, τ::Float64) -> BF
 
 Compute the operator product of two Butterfly Factorizations (`BF`) and compress the
 resulting representation to a specified accuracy tolerance.
-
-This function implements hierarchical butterfly-butterfly multiplication. It merges the
-internal factors of both trees by initializing an intermediate structural "messenger"
-matrix, and then sequentially alternates row-swapping (`browswap`) and low-rank truncation
-(`recompress_BF`) to prevent rank explosion.
-
-# Arguments
-
-  - `BF_1_init ::ButterflyFactorization`: The left butterfly factorization operator.
-  - `BF_2_init ::ButterflyFactorization`: The right butterfly factorization operator.
-  - `τ::Float64`: The accuracy tolerance parameter used during internal row-swaps and factor
-    recompressions.
-
-# Constraints & Assumed Invariants
-
-  - **Level Matching:** Both butterfly factorizations must possess the exact same number of
-    hierarchical levels (`length`).
-  - **Dimensional Compatibility:** The source dimension of the left operator
-    (`BF_1_init.NS`) must match the observer dimension of the right operator
-    (`BF_2_init.NO`).
-
-# Returns
-
-  - `BF`: A new, optimized, and recompressed `BF` object representing the combined operator
-    product.
-
-# Core Algorithm Steps
-
- 1. **Messenger Initialization:** Creates an initial central block mapping by multiplying
-    `BF_1.Q` and `BF_2.P`.
- 2. **Layer Intertwining:** Absorbs the outermost structural remainder levels (`BF_1.R[1]`
-    and `BF_2.R[end]`) into the messenger.
- 3. **Iterative Row Swapping:** Loops through the internal tree layers, executing a series
-    of butterfly row-swaps (`browswap`) to correctly align the hierarchical
-    spatial/frequency boxes.
- 4. **Trimming:** Truncates redundant rank dimensions via `recompress_BF` at each step to
-    maintain the strict \$O(N \\log N)\$ butterfly complexity.
 """
 function mulBFs(
-    BF_1_init::ButterflyFactorization, BF_2_init::ButterflyFactorization, τ::Float64
-)
-    @assert length(BF_1_init) == length(BF_2_init) "Both BFs must have the same number of levels"
-    @assert BF_1_init.NS == BF_2_init.NO "Source and Observer dimensions must match"
+    BF_1::ButterflyFactorization{T,M}, BF_2::ButterflyFactorization{T,M}, τ::Float64
+) where {T,M}
+    @assert length(BF_1.R) == length(BF_2.R) "Both BFs must have the same number of levels"
 
-    BF_1 = deepcopy(BF_1_init)
-    BF_2 = deepcopy(BF_2_init)
+    L = length(BF_1.R)
 
-    M_messenger = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
-    for (NO, leaf) in keys(BF_1.Q)
-        M_messenger[NO, leaf] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-        # Initialize as a nested dict to work with browswap
-        M_messenger[BF_1.NO, leaf][leaf, BF_2.NS] = BF_1.Q[NO, leaf] * BF_2.P[leaf, BF_2.NS]
-    end
+    # 1. Messenger Initialization
+    # We natively multiply the leaf factor mappings assuming Q and P are ButterflyLevels
+    M_leaf = multiply_levels(BF_1.Q, BF_2.P)
 
-    L = length(BF_1.R) # Number of R-levels
-    BF_1_alg = ButterflyFactorization(BF_1)
-    BF_2_alg = ButterflyFactorization(BF_2)
-    M_messenger = mul_factors(BF_1.R[1], M_messenger)
-    M_messenger = mul_factors(M_messenger, BF_2.R[L])
-    M_messenger = ButterflyLevel(
-        M_messenger,
-        (BF_1_alg.R[L].slvl[1], BF_2_alg.R[1].slvl[2]),
-        (BF_1_alg.R[L].olvl[1], BF_2_alg.R[1].olvl[2]),
-        BF_1_alg.R[1].rowstree,
-        BF_2_alg.R[1].rowotree,
-        BF_1_alg.R[L].colstree,
-        BF_2_alg.R[L].colotree,
-    )
+    # 2. Layer Intertwining
+    # M = R_1[1] * Q_1 * P_2 * R_2[L]
+    M_mid = multiply_levels(BF_1.R[1], multiply_levels(M_leaf, BF_2.R[L]))
 
-    result = ButterflyFactorization(
-        (size(BF_1_alg, 1), size(BF_2_alg, 2)),
-        BF_2_alg.Q,
-        vcat(BF_2_alg.R[1:(L - 1)], [M_messenger], BF_1_alg.R[2:L]),
-        BF_1_alg.P,
-    )
+    # Assemble the active levels flat array: [R2_1 ... R2_L-1, M, R1_2 ... R1_L]
+    active_levels = Vector{ButterflyLevel{T}}()
+    append!(active_levels, BF_2.R[1:(L - 1)])
+    push!(active_levels, M_mid)
+    append!(active_levels, BF_1.R[2:L])
+
+    # 3. Iterative Row Swapping and Trimming
     for m in 1:(L - 1)
+        # Push the messenger level through the tree via row-swaps
         for t in 1:m
-            result = browswap(result, L + 2 - t, τ)
-            #print("swap done \n")
+            idx = L + 1 - t
+            swap_adjacent!(active_levels, idx, BF_1.tree)
         end
-        result = recompress_BF(mul_factors(result, L + 1 - m), τ)#
+
+        # Multiply the aligned levels
+        idx_mul = L - m
+        multiply_adjacent!(active_levels, idx_mul)
+
+        # 4. Trimming / Recompression
+        # Construct a temporary BF to utilize your existing recompress_BF function
+        temp_BF = ButterflyFactorization{T,M}(
+            BF_2.Q, copy(active_levels), BF_1.P, BF_1.tree, BF_1.k, τ
+        )
+        temp_BF = recompress_BF(temp_BF, τ)
+        active_levels = temp_BF.R
     end
-    #@views result = recompress_BF(result, τ)
-    return BF(
-        result.Q.Dict,         # Q_final = Q_2
-        [r.Dict for r in result.R],       # R_final[level][Snode][Onode]
-        result.P.Dict,          # Updated P
-        (size(BF_1, 1), size(BF_2, 2)),
-        BF_2.NS,
-        BF_1.NO,
-        BF_1.k,         # Or recalculated k
-        τ,
-        BF_2.stree,
-        BF_1.otree,
+
+    # Return the newly assembled, fully compressed BF
+    return ButterflyFactorization{T,M}(BF_2.Q, active_levels, BF_1.P, BF_1.tree, BF_1.k, τ)
+end
+
+function trivialmul(
+    BF_1::ButterflyFactorization{T,M}, BF_2::ButterflyFactorization{T,M}
+) where {T,M}
+    @assert length(BF_1.R) == length(BF_2.R) "Both BFs must have the same number of levels"
+
+    L = length(BF_1.R)
+    M_leaf = multiply_levels(BF_1.Q, BF_2.P)
+    M_mid = multiply_levels(BF_1.R[1], multiply_levels(M_leaf, BF_2.R[L]))
+
+    active_levels = Vector{ButterflyLevel{T}}()
+    append!(active_levels, BF_2.R[1:(L - 1)])
+    push!(active_levels, M_mid)
+    append!(active_levels, BF_1.R[2:L])
+
+    for m in 1:(L - 1)
+        multiply_adjacent!(active_levels, L - m)
+    end
+
+    return ButterflyFactorization{T,M}(
+        BF_2.Q, active_levels, BF_1.P, BF_1.tree, BF_1.k, max(BF_1.τ, BF_2.τ)
     )
 end
 
-function Base.:*(
-    Butterfly1::ButterflyFactorizations.ButterflyFactorization,
-    Butterfly2::ButterflyFactorizations.ButterflyFactorization,
-)
-    return mulBFs(Butterfly1, Butterfly2, max(Butterfly1.τ, Butterfly2.τ))
+# --- Array Manipulators ---
+
+function multiply_adjacent!(levels::Vector{ButterflyLevel{T}}, idx::Int) where {T}
+    merged = multiply_levels(levels[idx], levels[idx + 1])
+    splice!(levels, idx:(idx + 1), [merged])
+    return levels
 end
 
-function mul_factors(
-    leftfactor::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}},
-    rightfactor::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}},
-)
-    product = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
-    for row in keys(leftfactor)
-        if !haskey(product, row)
-            product[row] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
+function swap_adjacent!(levels::Vector{ButterflyLevel{T}}, idx::Int, tree) where {T}
+    merged = multiply_levels(levels[idx], levels[idx + 1])
+    L_new, R_new = browswap_split(merged, tree)
+    splice!(levels, idx:(idx + 1), [L_new, R_new])
+    return levels
+end
+
+# --- Core Matrix Operations ---
+
+# Overloads to allow native multiplication of Q and P vectors
+function multiply_levels(A::Vector{<:ButterflyBlock}, B::Vector{<:ButterflyBlock})
+    return multiply_levels(ButterflyLevel(A), ButterflyLevel(B))
+end
+
+function multiply_levels(A::ButterflyLevel, B::Vector{<:ButterflyBlock})
+    return multiply_levels(A, ButterflyLevel(B))
+end
+
+function multiply_levels(A::Vector{<:ButterflyBlock}, B::ButterflyLevel)
+    return multiply_levels(ButterflyLevel(A), B)
+end
+
+function multiply_levels(A::ButterflyLevel{T}, B::ButterflyLevel{T}) where {T}
+    B_grouped = Dict{Tuple{Int,Int},Vector{ButterflyBlock{T}}}()
+    for b in B.blocks
+        r_key = (b.obs_out, b.src_out)
+        if !haskey(B_grouped, r_key)
+            B_grouped[r_key] = ButterflyBlock{T}[]
         end
-        for inner in keys(leftfactor[row])
-            for col in keys(rightfactor[inner])
-                if !haskey(product[row], col)
-                    # First time seeing this block, allocate and multiply
-                    product[row][col] = leftfactor[row][inner] * rightfactor[inner][col]
+        push!(B_grouped[r_key], b)
+    end
+
+    P_dict = Dict{Tuple{Tuple{Int,Int},Tuple{Int,Int}},Matrix{T}}()
+
+    for a in A.blocks
+        a_col_key = (a.obs_in, a.src_in)
+        if haskey(B_grouped, a_col_key)
+            for b in B_grouped[a_col_key]
+                product_key = ((a.obs_out, a.src_out), (b.obs_in, b.src_in))
+                mat_prod = a.data * b.data
+                if haskey(P_dict, product_key)
+                    P_dict[product_key] .+= mat_prod
                 else
-                    # In-place accumulation: C = 1.0 * A * B + 1.0 * C
-                    mul!(
-                        product[row][col],
-                        leftfactor[row][inner],
-                        rightfactor[inner][col],
-                        1.0,
-                        1.0,
-                    )
+                    P_dict[product_key] = mat_prod
                 end
             end
         end
     end
 
-    return product
+    return ButterflyLevel([
+        ButterflyBlock(row[1], row[2], col[1], col[2], data) for
+        ((row, col), data) in P_dict
+    ])
 end
 
-function mul_factors(
-    leftfactor::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
-    rightfactor::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}},
-)
-    product = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
-    for row in keys(leftfactor)
-        if !haskey(product, row)
-            product[row] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-        end
-        for col in keys(rightfactor[inner])
-            if !haskey(product[row], col)
-                # First time seeing this block, allocate and multiply
-                product[row][col] = leftfactor[row] * rightfactor[row][col]
-            else
-                # In-place accumulation: C = 1.0 * A * B + 1.0 * C
-                mul!(product[row][col], leftfactor[row], rightfactor[row][col], 1.0, 1.0)
-            end
-        end
+function browswap_split(P::ButterflyLevel{T}, tree) where {T}
+    parent_id(node) = cluster_parent(tree, node)
+
+    # Helper: returns 1 if node is the first child, 2 if second child
+    function child_parity(node, parent)
+        parent == 0 && return 1 # Failsafe for root
+        ch = tree(parent).children
+        isempty(ch) && return 1 # Failsafe for leaves
+        return node == ch[1] ? 1 : 2
     end
 
-    return product
-end
-
-function mul_factors(
-    leftfactor::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}},
-    rightfactor::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
-)
-    product = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
-    for row in keys(leftfactor)
-        if !haskey(product, row)
-            product[row] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
+    # 1. Group by Parent Spaces
+    clusters = Dict{Tuple{Tuple{Int,Int},Tuple{Int,Int}},Vector{ButterflyBlock{T}}}()
+    for b in P.blocks
+        cluster_key = (
+            (parent_id(b.obs_out), parent_id(b.src_out)),
+            (parent_id(b.obs_in), parent_id(b.src_in)),
+        )
+        if !haskey(clusters, cluster_key)
+            clusters[cluster_key] = ButterflyBlock{T}[]
         end
-        for inner in keys(leftfactor[row])
-            if !haskey(product[row], inner)
-                # First time seeing this block, allocate and multiply
-                product[row][inner] = leftfactor[row][inner] * rightfactor[inner]
+        push!(clusters[cluster_key], b)
+    end
+
+    B_blocks = ButterflyBlock{T}[]
+    C_blocks = ButterflyBlock{T}[]
+
+    # 2. Process clusters using exact tree parity
+    for (cluster_key, blocks) in clusters
+        parent_row, _ = cluster_key
+
+        # We only need to route the column spaces that actually survived compression
+        unique_cols = unique([(b.obs_in, b.src_in) for b in blocks])
+
+        for b in blocks
+            # Determine exactly which of the 4 row quadrants this block belongs to
+            r1 = child_parity(b.obs_out, parent_row[1])
+            r2 = child_parity(b.src_out, parent_row[2])
+            r_quadrant = (r1 - 1) * 2 + r2  # Maps to 1, 2, 3, or 4
+
+            c_idx = findfirst(==((b.obs_in, b.src_in)), unique_cols)
+            new_inner_col = unique_cols[c_idx]
+
+            if r_quadrant <= 2
+                # Top-left block diagonal (Rows 1 & 2)
+                push!(
+                    B_blocks,
+                    ButterflyBlock(
+                        b.obs_out, b.src_out, new_inner_col[1], new_inner_col[2], b.data
+                    ),
+                )
             else
-                # In-place accumulation: C = 1.0 * A * B + 1.0 * C
-                mul!(
-                    product[row][inner],
-                    leftfactor[row][inner],
-                    rightfactor[inner],
-                    1.0,
-                    1.0,
+                # Bottom-right block diagonal (Rows 3 & 4)
+                push!(
+                    B_blocks,
+                    ButterflyBlock(
+                        b.obs_out, b.src_out, new_inner_col[1], new_inner_col[2], b.data
+                    ),
                 )
             end
         end
-    end
 
-    return product
-end
-
-function mul_factors(BF::ButterflyFactorization, idx::Int)
-    L = length(BF.R)
-    if idx > 1 && idx < (L + 1)
-        leftfactor = BF.R[L + 1 - (idx - 1)].Dict
-        rightfactor = BF.R[L + 1 - idx].Dict
-        product = ButterflyLevel(
-            mul_factors(leftfactor, rightfactor),
-            (BF.R[L + 1 - idx].slvl[1], BF.R[L + 1 - (idx - 1)].slvl[2]),
-            (BF.R[L + 1 - idx].olvl[1], BF.R[L + 1 - (idx - 1)].olvl[2]),
-            BF.R[L + 1 - (idx - 1)].rowstree,
-            BF.R[L + 1 - (idx - 1)].rowotree,
-            BF.R[L + 1 - idx].colstree,
-            BF.R[L + 1 - idx].colotree,
-        )
-    elseif idx == 1
-        @show "Multiplying P and R[1]"
-        leftfactor = BF.P.Dict
-        rightfactor = BF.R[L + 1 - idx].Dict
-        product = ButterflyLevel(
-            mul_factors(leftfactor, rightfactor),
-            (BF.R[L + 1 - idx].slvl[1], BF.R[L + 1 - idx].slvl[2]),
-            (BF.R[L + 1 - idx].olvl[1], BF.R[L + 1 - idx].olvl[2]),
-            BF.R[L + 1 - idx].rowstree,
-            BF.R[L + 1 - idx].rowotree,
-            BF.R[L + 1 - idx].colstree,
-            BF.R[L + 1 - idx].colotree,
-        )
-        #should not occure since we only call this function for idx in 2:(L-1)
-    else
-        @show "Multiplying R[end] and Q"
-        leftfactor = BF.R[L + 1 - idx].Dict
-        rightfactor = BF.Q.Dict
-        product = ButterflyLevel(
-            mul_factors(leftfactor, rightfactor),
-            (BF.R[L + 1 - idx].slvl[1], BF.R[L + 1 - idx].slvl[2]),
-            (BF.R[L + 1 - idx].olvl[1], BF.R[L + 1 - idx].olvl[2]),
-            BF.R[L + 1 - idx].rowstree,
-            BF.R[L + 1 - idx].rowotree,
-            BF.R[L + 1 - idx].colstree,
-            BF.R[L + 1 - idx].colotree,
-        )
-        #should not occure since we only call this function for idx in 2:(L-1)
-    end
-    #product = mul_factors(leftfactor, rightfactor)
-    return ButterflyFactorization(
-        (size(BF, 1), size(BF, 2)),
-        BF.Q,
-        vcat(BF.R[1:(L - idx)], [product], BF.R[(L - idx + 3):length(BF.R)]),
-        BF.P,
-    )
-end
-
-function browswap(BF::ButterflyFactorization, idx::Int, τ)
-    L = length(BF.R)
-    if idx > 1 && idx < (L + 1)
-        leftfactor = BF.R[L + 1 - (idx - 1)]
-        rightfactor = BF.R[L + 1 - idx]
-    elseif idx == 1
-        @show "Multiplying P and R[L]"
-        leftfactor = BF.P
-        rightfactor = BF.R[L + 1 - idx]
-        #should not happen!
-    else
-        @show "Multiplying R[1] and Q"
-        leftfactor = BF.R[L + 1 - idx]
-        rightfactor = BF.Q
-        #should not happen!
-    end
-    nlfactor, nrfactor = browswap(leftfactor, rightfactor, τ)
-
-    return ButterflyFactorization(
-        (size(BF, 1), size(BF, 2)),
-        BF.Q,
-        vcat(BF.R[1:(L - idx)], [nrfactor, nlfactor], BF.R[(L - idx + 3):length(BF.R)]),
-        BF.P,
-    )
-end
-
-function browswap(LeftFactor::ButterflyLevel, RightFactor::ButterflyLevel, τ)
-    NewLeftFactor = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
-    NewRightFactor = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
-
-    Intermediate = mul_factors(LeftFactor.Dict, RightFactor.Dict)
-    col_tree = RightFactor.colstree
-    parentkeyscols = Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}()
-    parentkeysrows = Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}()
-    for row in keys(Intermediate)
-        parentgrps = group_by_parents(col_tree, keys(Intermediate[row]), 2)
-        for (parentnodes, localcols) in parentgrps
-            parentkey = (first(keys(LeftFactor.Dict[row]))[1], parentnodes) #H2Trees.parent(row_tree, row[1])first(localcols)[1]parentnodeo
-            if !haskey(parentkeysrows, parentkey)
-                parentkeysrows[parentkey] = Vector{Tuple{Int,Int}}()
-            end
-            unique!(push!(parentkeysrows[parentkey], row))
-            if !haskey(parentkeyscols, parentkey)
-                parentkeyscols[parentkey] = Vector{Tuple{Int,Int}}()
-            end
-            for col in localcols
-                unique!(push!(parentkeyscols[parentkey], col))
-            end
-            A_k = hcat([Intermediate[row][col] for col in localcols]...)
-            if !haskey(NewLeftFactor, row)
-                NewLeftFactor[row] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-            end
-            NewLeftFactor[row][parentkey] = A_k
-        end
-    end
-    #=
-    for parentkey in keys(parentkeyscols)
-        sort!(parentkeyscols[parentkey])
-    end
-    =#
-    for parentkey in keys(parentkeyscols)
-        localrows = parentkeysrows[parentkey]
-        localcols = parentkeyscols[parentkey]
-        if !haskey(NewRightFactor, parentkey)
-            NewRightFactor[parentkey] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-        end
-        coltracker = 0
-        colsizeA_k = size(NewLeftFactor[first(localrows)][parentkey], 2)
-        for col in localcols
-            colcurent = size(Intermediate[first(localrows)][col], 2)
-            NewRightFactor[parentkey][col] = vcat(
-                zeros(ComplexF64, coltracker, colcurent),
-                Matrix{ComplexF64}(I, colcurent, colcurent),
-                zeros(ComplexF64, colsizeA_k - coltracker - colcurent, colcurent),
+        # Factor C (Right) - Identity routing for the surviving inner columns
+        for c_val in unique_cols
+            # Extract size dynamically from the first block that references this column
+            col_size = size(
+                blocks[findfirst(b -> (b.obs_in, b.src_in) == c_val, blocks)].data, 2
             )
-            coltracker += colcurent
+
+            push!(
+                C_blocks,
+                ButterflyBlock(
+                    c_val[1], c_val[2], c_val[1], c_val[2], Matrix{T}(I, col_size, col_size)
+                ),
+            )
         end
     end
 
-    return ButterflyLevel(
-        NewLeftFactor,
-        LeftFactor.slvl,
-        LeftFactor.olvl,
-        LeftFactor.rowstree,
-        LeftFactor.rowotree,
-        LeftFactor.colstree,
-        LeftFactor.colotree,
-    ),
-    ButterflyLevel(
-        NewRightFactor,
-        RightFactor.slvl,
-        RightFactor.olvl,
-        RightFactor.rowstree,
-        RightFactor.rowotree,
-        RightFactor.colstree,
-        RightFactor.colotree,
-    )
+    return ButterflyLevel(B_blocks), ButterflyLevel(C_blocks)
+end
+
+# --- Overloads ---
+
+function Base.:*(BF_1::ButterflyFactorization, BF_2::ButterflyFactorization)
+    return mulBFs(BF_1, BF_2, max(BF_1.τ, BF_2.τ))
 end
 
 function LinearAlgebra.mul!(
-    C::ButterflyFactorizations.ButterflyFactorization,
-    A::ButterflyFactorizations.ButterflyFactorization,
-    B::ButterflyFactorizations.ButterflyFactorization,
+    C::ButterflyFactorization, A::ButterflyFactorization, B::ButterflyFactorization
 )
-    LinearMaps.check_dim_mul(C, A, B)
-    copyto!(C, mulBFs(A, B, max(A.τ, B.τ)))
+    # Replaces the internal fields of C with the newly computed product
+    res = mulBFs(A, B, max(A.τ, B.τ))
+    C.Q = res.Q
+    C.R = res.R
+    C.P = res.P
+    C.τ = res.τ
     return C
-end
-
-function trivialmul(BF_1_init::ButterflyFactorization, BF_2_init::ButterflyFactorization)
-    @assert length(BF_1_init) == length(BF_2_init) "Both BFs must have the same number of levels"
-    @assert BF_1_init.NS == BF_2_init.NO "Source and Observer dimensions must match"
-    BF_1 = deepcopy(BF_1_init)
-    BF_2 = deepcopy(BF_2_init)
-    M_messenger = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
-    for (NO, leaf) in keys(BF_1.Q)
-        M_messenger[NO, leaf] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-        M_messenger[BF_1.NO, leaf][leaf, BF_2.NS] = BF_1.Q[NO, leaf] * BF_2.P[leaf, BF_2.NS]
-    end
-
-    L = length(BF_1.R) # Number of R-levels
-    BF_1_alg = ButterflyFactorization(BF_1)
-    BF_2_alg = ButterflyFactorization(BF_2)
-    M_messenger = mul_factors(BF_1.R[1], M_messenger)
-    M_messenger = mul_factors(M_messenger, BF_2.R[L])
-    M_messenger = ButterflyLevel(
-        M_messenger,
-        (BF_1_alg.R[L].slvl[1], BF_2_alg.R[1].slvl[2]),
-        (BF_1_alg.R[L].olvl[1], BF_2_alg.R[1].olvl[2]),
-        BF_1_alg.R[1].rowstree,
-        BF_2_alg.R[1].rowotree,
-        BF_1_alg.R[L].colstree,
-        BF_2_alg.R[L].colotree,
-    )
-
-    result = ButterflyFactorization(
-        (size(BF_1_alg, 1), size(BF_2_alg, 2)),
-        BF_2_alg.Q,
-        vcat(BF_2_alg.R[1:(L - 1)], [M_messenger], BF_1_alg.R[2:L]),
-        BF_1_alg.P,
-    )
-    for m in 1:(L - 1)
-        result = mul_factors(result, L + 1 - m)#recompress_BF(, τ)
-    end
-    #@views result = recompress_BF(result, τ, tree)
-    return BF(
-        result.Q.Dict,         # Q_final = Q_2
-        [r.Dict for r in result.R],       # R_final[level][Snode][Onode]
-        result.P.Dict,          # Updated P
-        (size(BF_1, 1), size(BF_2, 2)),
-        BF_2.NS,
-        BF_1.NO,
-        BF_1.k,         # Or recalculated k
-        max(BF_1.τ, BF_2.τ),
-        BF_2.stree,
-        BF_1.otree,
-    )
 end
