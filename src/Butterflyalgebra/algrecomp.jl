@@ -20,70 +20,115 @@ end
 function recompress_BF_left(Butterfly::ButterflyFactorization, τ)
     return recompress_BF_right(Butterfly', τ)'
 end
+# Helper functions to extract domains (columns) and codomains (rows)
+_col_key(b::ButterflyBlock) = (b.obs_in, b.src_in)
+_row_key(b::ButterflyBlock) = (b.obs_out, b.src_out)
 
-function recompress_BF_right(Butterfly_init::ButterflyFactorization, τ)
-    Butterfly = deepcopy(Butterfly_init)
-    Q = Butterfly.Q.Dict
-    R = [Butterfly.R[r].Dict for r in eachindex(Butterfly.R)]
-    P = Butterfly.P.Dict
-    lr = length(R)
+function recompress_BF_right(
+    Butterfly_init::ButterflyFactorization{T,M},
+    τ::Float64;
+    scheduler=OhMyThreads.SerialScheduler(),
+) where {T,M}
 
-    for l in eachindex(R[1:(lr - 1)])
+    # 1. Deepcopy the R factors so we can safely mutate them
+    R_factors = [
+        ButterflyLevel([
+            ButterflyBlock(b.obs_out, b.src_out, b.obs_in, b.src_in, copy(b.data)) for
+            b in lvl.blocks
+        ]) for lvl in Butterfly_init.R
+    ]
+
+    lr = length(R_factors)
+
+    for l in 1:(lr - 1)
         lold = lr - l + 1
+        current_blocks = R_factors[lold].blocks
 
-        # Bulletproof: Flatten R_u to map the full col_idx tuple directly to its matrix
-        R_u = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()#Dict{Tuple{Int,Int},}
+        # 2. Sort to group by column space
+        sort!(current_blocks; by=_col_key)
 
-        # 1. Map column skeletons to all associated row skeletons at this level
-        col_to_rows = Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}()
-        for row_skel in keys(R[lold])
-            for col_idx in keys(R[lold][row_skel])
-                if !haskey(col_to_rows, col_idx)
-                    col_to_rows[col_idx] = Vector{Tuple{Int,Int}}()
-                end
-                push!(col_to_rows[col_idx], row_skel)
+        # 3. Identify chunk boundaries sequentially (very fast O(N) pass)
+        chunks = Tuple{Int,Int,Tuple{Int,Int}}[]
+        n_blocks = length(current_blocks)
+        i = 1
+        while i <= n_blocks
+            start_idx = i
+            c_key = _col_key(current_blocks[i])
+            while i <= n_blocks && _col_key(current_blocks[i]) == c_key
+                i += 1
             end
+            push!(chunks, (start_idx, i - 1, c_key))
         end
 
-        # 2. Process each unique column space
-        for (col_idx, rows_with_col) in col_to_rows
-            #parent_groups = group_by_parents(cluster_testtree(tree), rows_with_col, 1)
+        # 4. Process chunks in parallel using OhMyThreads
+        chunk_results = tmap(chunks; scheduler=scheduler) do (start_idx, end_idx, c_key)
+            # Extract matrices
+            blocks_to_compress = [current_blocks[k].data for k in start_idx:end_idx]
+            row_sizes = [size(mat, 1) for mat in blocks_to_compress]
 
-            #for (parent_node, local_rows) in parent_groups
-            R_k = Vector{Matrix{ComplexF64}}()
-            row_spc = Vector{Int}()
+            # Concatenate and QR
+            A_k = vcat(blocks_to_compress...)
+            Q_mat, R_mat, p = pqr(A_k; rtol=τ)
 
-            for row_skel in rows_with_col #local_rows
-                block = R[lold][row_skel][col_idx]
-                push!(R_k, block)
-                push!(row_spc, size(block, 1))
-            end
-            A_k = vcat(R_k...)
-            QRA = pqr(A_k; rtol=τ)
+            # Local transfer matrix
+            T_mat = R_mat[:, invperm(p)]
 
-            # Extract the local transfer matrix
-            T_mat = QRA[2][:, invperm(QRA[3])]
-            R_u[col_idx] = T_mat
-            last_idx = 0
-            for (j, row_skel) in enumerate(rows_with_col) #local_rows
-                #delete!(R[lold][row_skel], col_idx) # Remove the old column entry
-                R[lold][row_skel][col_idx] = Matrix(    #(parent_node, col_idx[2])
-                    QRA[1][(last_idx + 1):(last_idx + row_spc[j]), :],
+            # Construct updated blocks
+            new_blocks = Vector{ButterflyBlock{T}}(undef, end_idx - start_idx + 1)
+            last_row = 0
+            for (j, k) in enumerate(start_idx:end_idx)
+                slice_rows = row_sizes[j]
+                old_b = current_blocks[k]
+                new_data = Matrix(Q_mat[(last_row + 1):(last_row + slice_rows), :])
+
+                new_blocks[j] = ButterflyBlock(
+                    old_b.obs_out, old_b.src_out, old_b.obs_in, old_b.src_in, new_data
                 )
-                last_idx += row_spc[j]
+                last_row += slice_rows
             end
-            #end
+
+            return (c_key, T_mat, start_idx, new_blocks)
         end
 
-        # 3. Propagate the accumulated R_u transformations
-        #if l < lr
-        R[lold - 1] = update_next_level_R_right(R_u, R[lold - 1])
-        #else
-        #    Q = update_next_level_R_right(R_u, Q)
-        #end
+        # 5. Gather results sequentially
+        R_u = Dict{Tuple{Int,Int},Matrix{T}}()
+        for (c_key, T_mat, start_idx, new_blocks) in chunk_results
+            R_u[c_key] = T_mat
+            for (j, b) in enumerate(new_blocks)
+                current_blocks[start_idx + j - 1] = b
+            end
+        end
+
+        # 6. Apply R_u to the next level (lold - 1) in parallel
+        # We can map over the next level's blocks independently!
+        next_blocks = R_factors[lold - 1].blocks
+
+        tmap!(next_blocks, next_blocks; scheduler=scheduler) do block
+            r_key = _row_key(block)
+            if haskey(R_u, r_key)
+                # Apply transfer matrix update
+                return ButterflyBlock(
+                    block.obs_out,
+                    block.src_out,
+                    block.obs_in,
+                    block.src_in,
+                    R_u[r_key] * block.data,
+                )
+            else
+                return block
+            end
+        end
     end
 
-    return ButterflyFactorization(Butterfly, Q, R, P)
+    # Return new factorisation
+    return ButterflyFactorization{T,M}(
+        Butterfly_init.Q,
+        R_factors,
+        Butterfly_init.P,
+        Butterfly_init.tree,
+        Butterfly_init.k,
+        Butterfly_init.τ,
+    )
 end
 
 # Overload 1: Updating intermediate R factors (Clean 1:1 matching)

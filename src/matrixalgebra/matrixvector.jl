@@ -17,28 +17,30 @@ using LinearMaps: LinearMaps
     y .+= A.nearinteractions * x
 
     # 2. Far Interactions
-    n_chunks = min(length(A.BFs), Threads.nthreads() * 4)
-    chunk_size = cld(length(A.BFs), n_chunks)
-    y_locals = Vector{Vector{T}}(undef, n_chunks)
+    if !isempty(A.BFs)
+        n_chunks = min(length(A.BFs), Threads.nthreads() * 4)
+        chunk_size = cld(length(A.BFs), n_chunks)
+        y_locals = Vector{Vector{T}}(undef, n_chunks)
 
-    @tasks for c in 1:n_chunks
-        @set scheduler = scheduler
-        y_local = zeros(T, length(y))
-        start_idx = (c - 1) * chunk_size + 1
-        end_idx = min(c * chunk_size, length(A.BFs))
+        @tasks for c in 1:n_chunks
+            @set scheduler = scheduler
+            y_local = zeros(T, length(y))
+            start_idx = (c - 1) * chunk_size + 1
+            end_idx = min(c * chunk_size, length(A.BFs))
 
-        for i in start_idx:end_idx
-            bf = A.BFs[i]
-            bfw = A.workspaces[i]
+            for i in start_idx:end_idx
+                bf = A.BFs[i]
+                bfw = A.workspaces[i]
 
-            mul!(y_local, bf, x, bfw, 1, 1)
+                mul!(y_local, bf, x, bfw, 1, 1)
+            end
+            y_locals[c] = y_local
         end
-        y_locals[c] = y_local
-    end
 
-    # 3. Reduction
-    for c in 1:n_chunks
-        y .+= y_locals[c]
+        # 3. Reduction
+        for c in 1:n_chunks
+            y .+= y_locals[c]
+        end
     end
 
     return y

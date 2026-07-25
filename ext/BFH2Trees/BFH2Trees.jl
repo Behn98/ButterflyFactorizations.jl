@@ -1,6 +1,7 @@
 module BFH2Trees
 
 using ButterflyFactorizations
+using LinearAlgebra
 using H2Trees
 
 ButterflyFactorizations.cluster_center(tree::H2Trees.H2ClusterTree, node::Int) =
@@ -32,6 +33,10 @@ ButterflyFactorizations.cluster_parent(tree::H2Trees.H2ClusterTree, node::Int) =
 
 ButterflyFactorizations.cluster_values(tree::H2Trees.H2ClusterTree, node::Int) =
     H2Trees.values(tree, node)
+
+ButterflyFactorizations.cluster_blktree(
+    stree::H2Trees.H2ClusterTree, ttree::H2Trees.H2ClusterTree
+) = H2Trees.BlockTree(stree, ttree)
 
 include("isfarfunctor.jl")
 

@@ -56,8 +56,10 @@ function (t::ButterflyFactorizations.isFarFunctor)(
     olength = ButterflyFactorizations.cluster_radius(tsttree, onode)
     slength = ButterflyFactorizations.cluster_radius(srctree, snode)
 
+    #dist = sqrt(
+    #    (scent[1]-ocenter[1])^2 + (scenter[2] - ocenter[2])^2 + (scenter[3] - ocenter[3])^2
+    #)
     dist = norm(scenter - ocenter)
-
     # If you want standard H-matrix condition:
     W = max(slength, olength)
     return dist - (olength + slength) > t.α * W

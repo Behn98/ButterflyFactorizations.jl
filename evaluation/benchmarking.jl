@@ -93,6 +93,7 @@ function run_benchmarks(
     shape::Union{Symbol,Function}=:sphere,
     ie_type::Symbol=:EFIE,
     checkfarfieldaccuracy::Bool=false,
+    treekind::Symbol=:KMeansTree,
     α::Float64=1.5,
     csv_file::String="benchmark_results.csv",
     log_file_path::String="benchmark_log.txt",
@@ -151,7 +152,13 @@ function run_benchmarks(
         N = length(X)
 
         # Build Trees
-        tree = H2Trees.KMeansTree(X.pos, 2; minvalues=100)
+        if treekind == :KMeansTree
+            tree = H2Trees.KMeansTree(X.pos, 2; minvalues=100)
+        elseif treekind == :BisectionTree
+            tree = H2Trees.BisectionTree(X.pos; max_depth=10)
+        else
+            tree = H2Trees.TwoNTree(X, h)
+        end
         blktree = H2Trees.BlockTree(tree, tree)
 
         # 2. HMatrix (ACA)
@@ -710,12 +717,13 @@ function run_benchmarks(
     return p_time, p_mem, p_mv, p_err
 end
 
-h_values = [0.10, 0.08] #, 0.06, 0.03, 0.02, 0.01, 0.005
+h_values = [0.2, 0.10, 0.08] #, 0.06, 0.03, 0.02, 0.01, 0.005
 p_time, p_mem, p_mv, p_err = run_benchmarks(
     h_values;
     shape=:sphere,
-    ie_type=:MFIE,
-    checkfarfieldaccuracy=true,
+    ie_type=:EFIE,
+    checkfarfieldaccuracy=false,
+    treekind=:KMeansTree,
     α=1.5,
     csv_file="benchmark_results.csv",
     log_file_path="benchmark_log.txt",

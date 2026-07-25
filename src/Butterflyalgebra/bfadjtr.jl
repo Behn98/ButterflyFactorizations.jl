@@ -1,45 +1,22 @@
 import LinearAlgebra: mul!, adjoint, transpose
 
-function Base.adjoint(t::ButterflyFactorizations.ButterflyFactorization_Mat)
-    return ButterflyFactorization_Mat(
-        t.P',                                                      # Q becomes P'
-        AbstractMatrix{ComplexF64}[r' for r in Iterators.reverse(t.R)], # Reverse and map R
-        t.Q',                                                      # P becomes Q'
-        t.NO,                                                      # NS and NO swap roles
-        t.NS,
-        t.k,
-        t.τ,
-        t.PermQ,                                                   # Permutations swap roles
-        t.PermP,
-    )
-end
-
-function Base.transpose(t::ButterflyFactorizations.ButterflyFactorization_Mat)
-    return ButterflyFactorization_Mat(
-        transpose(t.P),
-        AbstractMatrix{ComplexF64}[transpose(r) for r in Iterators.reverse(t.R)],
-        transpose(t.Q),
-        t.NO,
-        t.NS,
-        t.k,
-        t.τ,
-        t.PermQ,
-        t.PermP,
-    )
-end
-
 # Helper function to flip domain/codomain and transform matrix data
 function transform_block(b::ButterflyBlock{T}, op) where {T}
     # Handle UniformScaling (Identity): I' = I, transpose(I) = I
     new_data = b.data isa UniformScaling ? b.data : Matrix(op(b.data))
 
     return ButterflyBlock(
-        b.obs_in,   # new obs_out (was in)
-        b.src_in,   # new src_out (was in)
-        b.obs_out,  # new obs_in  (was out)
-        b.src_out,  # new src_in  (was out)
+        b.src_in,   # new obs_out (was in)
+        b.obs_in,   # new src_out (was in)
+        b.src_out,  # new obs_in  (was out)
+        b.obs_out,  # new src_in  (was out)
         new_data,
     )
+end
+
+function reverse_tree(blktree)
+    # Reverse the block tree by swapping source and target trees
+    return cluster_blktree(cluster_trialtree(blktree), cluster_source_tree(blktree))
 end
 
 """
@@ -94,4 +71,32 @@ function Base.transpose(BF::ButterflyFactorization{T,M}) where {T,M}
     P_trans = [transform_block(b, transpose) for b in BF.Q]
 
     return ButterflyFactorization(Q_trans, R_trans, P_trans, BF.tree, BF.k, BF.τ)
+end
+
+function Base.adjoint(t::ButterflyFactorizations.ButterflyFactorization_Mat)
+    return ButterflyFactorization_Mat(
+        t.P',                                                      # Q becomes P'
+        AbstractMatrix{ComplexF64}[r' for r in Iterators.reverse(t.R)], # Reverse and map R
+        t.Q',                                                      # P becomes Q'
+        t.NO,                                                      # NS and NO swap roles
+        t.NS,
+        t.k,
+        t.τ,
+        t.PermQ,                                                   # Permutations swap roles
+        t.PermP,
+    )
+end
+
+function Base.transpose(t::ButterflyFactorizations.ButterflyFactorization_Mat)
+    return ButterflyFactorization_Mat(
+        transpose(t.P),
+        AbstractMatrix{ComplexF64}[transpose(r) for r in Iterators.reverse(t.R)],
+        transpose(t.Q),
+        t.NO,
+        t.NS,
+        t.k,
+        t.τ,
+        t.PermQ,
+        t.PermP,
+    )
 end
