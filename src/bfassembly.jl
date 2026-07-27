@@ -288,7 +288,7 @@ function build_nonfrozen_R_blocks(
         end
     end
 
-    sort!(all_blocks; by=block_key)
+    #sort!(all_blocks; by=block_key)
     return ButterflyLevel(all_blocks), all_k_updates
 end
 
@@ -338,7 +338,7 @@ function build_sourcefrozen_R_blocks(
         end
     end
 
-    sort!(all_blocks; by=block_key)
+    #sort!(all_blocks; by=block_key)
     return ButterflyLevel(all_blocks), all_k_updates
 end
 
@@ -393,7 +393,7 @@ function build_observerfrozen_R_blocks(
         end
     end
 
-    sort!(all_blocks; by=block_key)
+    #sort!(all_blocks; by=block_key)
     return ButterflyLevel(all_blocks), all_k_updates
 end
 

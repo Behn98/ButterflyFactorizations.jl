@@ -47,13 +47,15 @@ function mulBFs(
         active_levels = reverse(temp_BF.R)
     end
 
-    return ButterflyFactorization{T,M}(
-        BF_2.Q,
-        reverse(active_levels),
-        BF_1.P,
-        cluster_blktree(cluster_testtree(BF_1.tree), cluster_trialtree(BF_2.tree)),
-        BF_1.k,
-        τ,
+    return renamebf(
+        ButterflyFactorization{T,M}(
+            BF_2.Q,
+            reverse(active_levels),
+            BF_1.P,
+            cluster_blktree(cluster_testtree(BF_1.tree), cluster_trialtree(BF_2.tree)),
+            BF_1.k,
+            τ,
+        ),
     )
 end
 
@@ -301,6 +303,60 @@ function LinearAlgebra.mul!(
     C.P = res.P
     C.τ = res.τ
     return C
+end
+
+function renamebf(F::ButterflyFactorization{T,M}) where {T,M}
+    tsttree = cluster_testtree(BF.tree)
+    trialtree = cluster_trialtree(BF.tree)
+    newQ = Vector{ButterflyBlock{T}}()
+    newNO = cluster_root(tsttree)
+    translation = Dict{Tuple{Int,Int},Tuple{Int,Int}}()
+    for b in BF.Q
+        push!(newQ, ButterflyBlock(newNO, b.src_out, newNO, b.src_in, b.data))
+        translation[(b.obs_out, b.src_out)] = (newNO, b.src_out)
+    end
+    newR = Vector{ButterflyLevel{T}}(undef, length(BF.R))
+    for l in eachindex(BF.R)
+        new_translation = Dict{Tuple{Int,Int},Tuple{Int,Int}}()
+        childtracker = Dict{Int,Bool}()
+        newRlvl = Vector{ButterflyBlock{T}}()
+        for b in BF.R[l].blocks
+            newcol = translation[(b.obs_in, b.src_in)]
+            if !haskey(new_translation, (b.obs_out, b.src_out))
+                if haskey(childtracker, newcol[1])
+                    newrow = (
+                        sort!(collect(cluster_children(tsttree, newcol[1])))[2],
+                        cluster_parent(trialtree, newcol[2]),
+                    )
+                else
+                    newrow = (
+                        sort!(collect(cluster_children(tsttree, newcol[1])))[1],
+                        cluster_parent(trialtree, newcol[2]),
+                    )
+                    childtracker[newcol[1]] = true
+                end
+                new_translation[(b.obs_out, b.src_out)] = newrow
+                push!(
+                    newRlvl,
+                    ButterflyBlock(newrow[1], newrow[2], newcol[1], newcol[2], b.data),
+                )
+            else
+                newrow = new_translation[(b.obs_out, b.src_out)]
+                push!(
+                    newRlvl,
+                    ButterflyBlock(newrow[1], newrow[2], newcol[1], newcol[2], b.data),
+                )
+            end
+        end
+        newR[l] = ButterflyLevel(newRlvl)
+        translation = new_translation
+    end
+    newP = Vector{ButterflyBlock{T}}()
+    for b in BF.P
+        newcol = translation[(b.obs_in, b.src_in)]
+        push!(newP, ButterflyBlock(newcol[1], newcol[2], newcol[1], newcol[2], b.data))
+    end
+    return ButterflyFactorization{T,M}(newQ, newR, newP, BF.tree, BF.k, BF.τ)
 end
 
 function trivialmul(
