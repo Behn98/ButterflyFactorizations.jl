@@ -47,7 +47,7 @@ function mulBFs(
         active_levels = reverse(temp_BF.R)
     end
 
-    return renamebf(
+    return cleanupidxs(
         ButterflyFactorization{T,M}(
             BF_2.Q,
             reverse(active_levels),
@@ -305,57 +305,93 @@ function LinearAlgebra.mul!(
     return C
 end
 
-function renamebf(F::ButterflyFactorization{T,M}) where {T,M}
+function cleanupidxs(BF::ButterflyFactorization{T,M}) where {T,M}
     tsttree = cluster_testtree(BF.tree)
     trialtree = cluster_trialtree(BF.tree)
-    newQ = Vector{ButterflyBlock{T}}()
-    newNO = cluster_root(tsttree)
-    translation = Dict{Tuple{Int,Int},Tuple{Int,Int}}()
-    for b in BF.Q
-        push!(newQ, ButterflyBlock(newNO, b.src_out, newNO, b.src_in, b.data))
-        translation[(b.obs_out, b.src_out)] = (newNO, b.src_out)
+    L = length(BF.R)
+
+    root_obs = cluster_root(tsttree)
+    root_src = cluster_root(trialtree)
+
+    # =========================================================================
+    # PASS 1: Forward Traversal (Trace Source / Trial Tree Keys from Q)
+    # =========================================================================
+    src_translation = Dict{Tuple{Int,Int},Int}()
+
+    # Rebuild Q instantly and seed translation
+    newQ = Vector{ButterflyBlock{T}}(undef, length(BF.Q))
+    for (i, b) in enumerate(BF.Q)
+        true_src_in = b.src_in
+        true_src_out = cluster_parent(trialtree, true_src_in) # Move 1 level up the source tree
+
+        newQ[i] = ButterflyBlock(
+            root_obs, true_src_out, root_obs, true_src_in, copy(b.data)
+        )
+
+        # Save Q's output mapping to feed R_1
+        src_translation[(b.obs_out, b.src_out)] = true_src_out
     end
-    newR = Vector{ButterflyLevel{T}}(undef, length(BF.R))
-    for l in eachindex(BF.R)
-        new_translation = Dict{Tuple{Int,Int},Tuple{Int,Int}}()
-        childtracker = Dict{Int,Bool}()
-        newRlvl = Vector{ButterflyBlock{T}}()
-        for b in BF.R[l].blocks
-            newcol = translation[(b.obs_in, b.src_in)]
-            if !haskey(new_translation, (b.obs_out, b.src_out))
-                if haskey(childtracker, newcol[1])
-                    newrow = (
-                        sort!(collect(cluster_children(tsttree, newcol[1])))[2],
-                        cluster_parent(trialtree, newcol[2]),
-                    )
-                else
-                    newrow = (
-                        sort!(collect(cluster_children(tsttree, newcol[1])))[1],
-                        cluster_parent(trialtree, newcol[2]),
-                    )
-                    childtracker[newcol[1]] = true
-                end
-                new_translation[(b.obs_out, b.src_out)] = newrow
-                push!(
-                    newRlvl,
-                    ButterflyBlock(newrow[1], newrow[2], newcol[1], newcol[2], b.data),
-                )
-            else
-                newrow = new_translation[(b.obs_out, b.src_out)]
-                push!(
-                    newRlvl,
-                    ButterflyBlock(newrow[1], newrow[2], newcol[1], newcol[2], b.data),
-                )
-            end
+
+    # Preallocate storage for the computed source keys in R
+    src_keys_R = [Vector{Tuple{Int,Int}}(undef, length(BF.R[l].blocks)) for l in 1:L]
+
+    for l in 1:L
+        next_src_translation = Dict{Tuple{Int,Int},Int}()
+        for (i, b) in enumerate(BF.R[l].blocks)
+            new_src_in = src_translation[(b.obs_in, b.src_in)]
+            new_src_out = cluster_parent(trialtree, new_src_in)
+
+            src_keys_R[l][i] = (new_src_out, new_src_in)
+            next_src_translation[(b.obs_out, b.src_out)] = new_src_out
         end
-        newR[l] = ButterflyLevel(newRlvl)
-        translation = new_translation
+        src_translation = next_src_translation
     end
-    newP = Vector{ButterflyBlock{T}}()
-    for b in BF.P
-        newcol = translation[(b.obs_in, b.src_in)]
-        push!(newP, ButterflyBlock(newcol[1], newcol[2], newcol[1], newcol[2], b.data))
+
+    # =========================================================================
+    # PASS 2: Backward Traversal (Trace Observer Keys & Reconstruct R)
+    # =========================================================================
+    obs_translation = Dict{Tuple{Int,Int},Int}()
+
+    # Rebuild P instantly and seed translation
+    newP = Vector{ButterflyBlock{T}}(undef, length(BF.P))
+    for (i, b) in enumerate(BF.P)
+        true_obs_out = b.obs_out # P's output is the physical observer leaf
+        true_obs_in = cluster_parent(tsttree, true_obs_out) # Move 1 level up the observer tree
+
+        newP[i] = ButterflyBlock(
+            true_obs_out, root_src, true_obs_in, root_src, copy(b.data)
+        )
+
+        # Save P's input mapping to feed R_L
+        obs_translation[(b.obs_in, b.src_in)] = true_obs_in
     end
+
+    # Reconstruct R backwards, combining obs logic with stored src keys
+    newR = Vector{ButterflyLevel{T}}(undef, L)
+    for l in L:-1:1
+        next_obs_translation = Dict{Tuple{Int,Int},Int}()
+        new_blocks = Vector{ButterflyBlock{T}}(undef, length(BF.R[l].blocks))
+
+        for (i, b) in enumerate(BF.R[l].blocks)
+            # 1. Compute the new Observer keys
+            new_obs_out = obs_translation[(b.obs_out, b.src_out)]
+            new_obs_in = cluster_parent(tsttree, new_obs_out)
+
+            # 2. Retrieve the new Source keys computed in Pass 1
+            new_src_out, new_src_in = src_keys_R[l][i]
+
+            # 3. Reconstruct block on the spot!
+            new_blocks[i] = ButterflyBlock(
+                new_obs_out, new_src_out, new_obs_in, new_src_in, copy(b.data)
+            )
+
+            # Propagate the obs_in upwards to R_{l-1}
+            next_obs_translation[(b.obs_in, b.src_in)] = new_obs_in
+        end
+        newR[l] = ButterflyLevel(new_blocks)
+        obs_translation = next_obs_translation
+    end
+
     return ButterflyFactorization{T,M}(newQ, newR, newP, BF.tree, BF.k, BF.τ)
 end
 

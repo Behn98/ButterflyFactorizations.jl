@@ -16,7 +16,7 @@ end
 
 function reverse_tree(blktree)
     # Reverse the block tree by swapping source and target trees
-    return cluster_blktree(cluster_trialtree(blktree), cluster_source_tree(blktree))
+    return cluster_blktree(cluster_trialtree(blktree), cluster_testtree(blktree))
 end
 
 """
@@ -37,7 +37,7 @@ function Base.adjoint(BF::ButterflyFactorization{T,M}) where {T,M}
         orig_level = BF.R[L_minus_1 - l + 1]
 
         new_blocks = [transform_block(b, adjoint) for b in orig_level.blocks]
-        sort!(new_blocks; by=block_key)
+        #sort!(new_blocks; by=block_key)
 
         R_adj[l] = ButterflyLevel(new_blocks)
     end
@@ -45,7 +45,7 @@ function Base.adjoint(BF::ButterflyFactorization{T,M}) where {T,M}
     # 3. Q_adj becomes P'
     P_adj = [transform_block(b, adjoint) for b in BF.Q]
 
-    return ButterflyFactorization(Q_adj, R_adj, P_adj, BF.tree, BF.k, BF.τ)
+    return ButterflyFactorization(Q_adj, R_adj, P_adj, reverse_tree(BF.tree), BF.k, BF.τ)
 end
 
 """
@@ -63,14 +63,16 @@ function Base.transpose(BF::ButterflyFactorization{T,M}) where {T,M}
         orig_level = BF.R[L_minus_1 - l + 1]
 
         new_blocks = [transform_block(b, transpose) for b in orig_level.blocks]
-        sort!(new_blocks; by=block_key)
+        #sort!(new_blocks; by=block_key)
 
         R_trans[l] = ButterflyLevel(new_blocks)
     end
 
     P_trans = [transform_block(b, transpose) for b in BF.Q]
 
-    return ButterflyFactorization(Q_trans, R_trans, P_trans, BF.tree, BF.k, BF.τ)
+    return ButterflyFactorization(
+        Q_trans, R_trans, P_trans, reverse_tree(BF.tree), BF.k, BF.τ
+    )
 end
 
 function Base.adjoint(t::ButterflyFactorizations.ButterflyFactorization_Mat)
