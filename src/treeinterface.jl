@@ -3,6 +3,17 @@
 #---------MUST BE IMPLEMENTED FOR ANY TREE TYPE TO BE USED WITH THIS PACKAGE!!!!!----------#
 #------------------------------------------------------------------------------------------#
 #------------------------------------------------------------------------------------------#
+abstract type AbstractTreeParameters end
+
+struct TreeParameters{T} <: AbstractTreeParameters
+    α::T
+    C::T
+    Cε::T
+end
+
+function tree_parameters(tree)
+    return error("tree_parameters not implemented for $(typeof(tree))")
+end
 
 """
     cluster_center(tree, node)

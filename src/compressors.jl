@@ -1,20 +1,33 @@
 abstract type Abstractcompressor end
 
-"""
+struct PartialQRWorkspace{T}
+    buffers::Vector{Matrix{T}}
 
-PartialQR <: Abstractcompressor
+    function PartialQRWorkspace{T}() where {T}
+        # Use maxthreadid() to safely account for interactive/main threads
+        # Fallback to nthreads() + 1 just in case you are on an older Julia version
+        n_buffers = if isdefined(Threads, :maxthreadid)
+            Threads.maxthreadid()
+        else
+            Threads.nthreads() + 1
+        end
 
-
-A type representing the Partial QR compression strategy for low-rank approximations.
-
-"""
-
-struct PartialQR{L} <: Abstractcompressor
-    logger::L
+        return new([Matrix{T}(undef, 256, 256) for _ in 1:n_buffers])
+    end
 end
 
-# Default constructor: No logger = zero overhead!
-PartialQR() = PartialQR(nothing)
+"""
+PartialQR <: Abstractcompressor
+
+A type representing the Partial QR compression strategy for low-rank approximations.
+"""
+struct PartialQR{L} <: Abstractcompressor
+    logger::L
+    workspace::PartialQRWorkspace{ComplexF64}
+end
+
+# Default constructor: initializes the workspace automatically
+PartialQR() = PartialQR(nothing, PartialQRWorkspace{ComplexF64}())
 
 # Compiler eliminates this branch when logger === nothing
 @inline log_rank!(::Nothing, rank_est, r) = nothing
@@ -55,16 +68,12 @@ indices (the "skeleton").
   - `r`: The estimated mathematical rank of the block.
 """
 function (t::PartialQR)(
-    farassembler,
-    src_index::Vector{Int},
-    obs_index::Vector{Int},
-    rank_est, # Can be Int or RankEstimate
-    ε::Float64,
+    farassembler, src_index::Vector{Int}, obs_index::Vector{Int}, rank_est, ε::Float64
 )
     n_obs = length(obs_index)
     n_src = length(src_index)
 
-    # 1. Early exit if index sets are empty
+    # Early exit
     if n_obs == 0 || n_src == 0
         log_rank!(t.logger, rank_est, 0)
         return Matrix{ComplexF64}(undef, 0, n_src), Int[], 0
@@ -75,9 +84,21 @@ function (t::PartialQR)(
 
     shuffled_obs = obs_index[randperm(n_obs)]
 
-    # 🚀 FIX 1: Must use `zeros`! BEAST accumulates (+=) into this matrix.
-    # `undef` leaves memory garbage (including NaNs) which ruins the assembly.
-    Z = zeros(ComplexF64, n_otilde, n_src)
+    # --- NO-ALLOCATION BUFFER MANAGEMENT ---
+    tid = Threads.threadid()
+    buffer = t.workspace.buffers[tid]
+
+    # Dynamically grow the thread's buffer if the current block is larger than expected
+    if size(buffer, 1) < n_obs || size(buffer, 2) < n_src
+        new_rows = max(size(buffer, 1), n_obs)
+        new_cols = max(size(buffer, 2), n_src)
+        t.workspace.buffers[tid] = Matrix{ComplexF64}(undef, new_rows, new_cols)
+        buffer = t.workspace.buffers[tid]
+    end
+
+    # Create a view for the initial sample size and explicitly zero it out
+    Z = view(buffer, 1:n_otilde, 1:n_src)
+    fill!(Z, zero(ComplexF64))
 
     current_rows = @view shuffled_obs[1:n_otilde]
     farassembler(Z, current_rows, src_index)
@@ -86,58 +107,38 @@ function (t::PartialQR)(
 
     while true
         # --- Pivoted QR ---
-        Zpqr = deepcopy(Z)
+        # Z is a view. calling copy(Z) creates an exact-sized dense Matrix
+        # for pqr to safely mutate, without copying the massive background buffer.
+        Zpqr = copy(Z)
         Fqr = pqr(Zpqr; rtol=ε)
         Q, R, P = Fqr[1], Fqr[2], Fqr[3]
-
-        # 🚀 TRUNCATE RANK BASED ON DIAGONAL OF R
-        r = 0
-        if size(R, 1) > 0 && size(R, 2) > 0
-            R11_abs = abs(R[1, 1])
-
-            # 🚀 FIX 2: Scale-invariant tolerance!
-            # If the block is naturally tiny (e.g. 1e-16), this scales the cutoff proportionally,
-            # preventing SingularException without accidentally wiping out valid small blocks.
-            tol = R11_abs * max(ε, eps(Float64))
-
-            max_r = min(size(Q, 2), size(R, 1), size(R, 2))
-
-            for i in 1:max_r
-                if abs(R[i, i]) > tol
-                    r = i
-                else
-                    break
-                end
-            end
-        end
+        r = size(Q, 2)
 
         # Adaptive check: expand sample if rank maxed out sampled rows
         if r > floor(Int, 0.8 * rows_evaluated) && rows_evaluated < n_obs
             new_target = min(rows_evaluated * 2, n_obs)
-            new_rows_count = new_target - rows_evaluated
 
-            # 🚀 FIX 1 (cont.): Must also be `zeros` here.
-            Z_new = zeros(ComplexF64, new_rows_count, n_src)
+            # Instead of vcat, we just expand our view window into the buffer!
+            Z_expanded = view(buffer, 1:new_target, 1:n_src)
+
+            # Isolate the newly added rows and zero them out for BEAST
+            Z_new_section = view(buffer, (rows_evaluated + 1):new_target, 1:n_src)
+            fill!(Z_new_section, zero(ComplexF64))
+
             new_rows_idx = @view shuffled_obs[(rows_evaluated + 1):new_target]
+            farassembler(Z_new_section, new_rows_idx, src_index)
 
-            farassembler(Z_new, new_rows_idx, src_index)
-
-            Z = vcat(Z, Z_new)
+            # Update Z to point to the expanded matrix for the next loop iteration
+            Z = Z_expanded
             rows_evaluated = new_target
             continue
         end
 
         log_rank!(t.logger, rank_est, r)
 
-        if r == 0
-            @show "WARNING: Rank-0 block detected. This may indicate a numerical issue or a degenerate block."
-            return Matrix{ComplexF64}(undef, 0, n_src), Int[], 0
-        end
-
         Q1 = @view Q[:, 1:r]
         R11 = UpperTriangular(@view R[1:r, 1:r])
 
-        # `tmp` is completely overwritten by `mul!`, so `undef` is perfectly safe and fast here.
         tmp = Matrix{ComplexF64}(undef, r, n_src)
         mul!(tmp, Q1', Z)
         ldiv!(R11, tmp)
@@ -211,7 +212,7 @@ function estimate_rank_3d(
 end
 
 function estimate_rank_3d(
-    k, trialT, testT, Snode::Int, Onode::Int, ε::Float64; C=73.4706, Cε=0.6361, Rmin=3
+    k, trialT, testT, Snode::Int, Onode::Int, ε::Float64; C=1.5, Cε=1.5, Rmin=3
 )
     c_s = cluster_center(trialT, Snode)
     c_o = cluster_center(testT, Onode)

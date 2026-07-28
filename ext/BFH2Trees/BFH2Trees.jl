@@ -39,5 +39,6 @@ ButterflyFactorizations.cluster_blktree(
 ) = H2Trees.BlockTree(stree, ttree)
 
 include("isfarfunctor.jl")
+include("h2parameters.jl")
 
 end

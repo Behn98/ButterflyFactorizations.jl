@@ -17,29 +17,31 @@ using LinearMaps: LinearMaps
     y .+= A.nearinteractions * x
 
     # 2. Far Interactions
+    # 2. Far Interactions
     if !isempty(A.BFs)
-        n_chunks = min(length(A.BFs), Threads.nthreads() * 4)
-        chunk_size = cld(length(A.BFs), n_chunks)
-        y_locals = Vector{Vector{T}}(undef, n_chunks)
+        # Zero out all persistent thread buffers before we begin
+        for buf in A.y_thread_buffers
+            fill!(buf, zero(T))
+        end
 
-        @tasks for c in 1:n_chunks
+        @tasks for i in 1:length(A.BFs)
             @set scheduler = scheduler
-            y_local = zeros(T, length(y))
-            start_idx = (c - 1) * chunk_size + 1
-            end_idx = min(c * chunk_size, length(A.BFs))
 
-            for i in start_idx:end_idx
-                bf = A.BFs[i]
-                bfw = A.workspaces[i]
+            # Grab the buffer belonging to the current thread running this task
+            tid = Threads.threadid()
+            y_local = A.y_thread_buffers[tid]
 
-                mul!(y_local, bf, x, bfw, 1, 1)
-            end
-            y_locals[c] = y_local
+            bf = A.BFs[i]
+            bfw = A.workspaces[i]
+
+            # Accumulate directly into the thread's persistent buffer!
+            mul!(y_local, bf, x, bfw, 1, 1)
         end
 
         # 3. Reduction
-        for c in 1:n_chunks
-            y .+= y_locals[c]
+        # Sum all thread buffers back into the main output vector `y`
+        for buf in A.y_thread_buffers
+            y .+= buf
         end
     end
 

@@ -8,10 +8,16 @@ struct PetrovGalerkinBF{
     workspaces::Vector{WSType}   # 🚀 Added to hold pre-allocated workspaces
     near_lookup::LType
     far_lookup::LType
+    y_thread_buffers::Vector{Vector{T}}
 
     function PetrovGalerkinBF{T}(
         nearinteractions, tree, BFs, workspaces, dim, near_lookup, far_lookup
     ) where {T}
+        n_threads = if isdefined(Threads, :maxthreadid)
+            Threads.maxthreadid()
+        else
+            Threads.nthreads() + 1
+        end
         return new{
             T,
             typeof(nearinteractions),
@@ -20,7 +26,14 @@ struct PetrovGalerkinBF{
             eltype(workspaces),
             typeof(tree),
         }(
-            nearinteractions, dim, tree, BFs, workspaces, near_lookup, far_lookup
+            nearinteractions,
+            dim,
+            tree,
+            BFs,
+            workspaces,
+            near_lookup,
+            far_lookup,
+            [zeros(T, dim[1]) for _ in 1:n_threads],
         )
     end
 end

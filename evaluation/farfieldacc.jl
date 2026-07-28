@@ -6,7 +6,7 @@ Randomly samples far-field blocks, computes the exact BEAST dense block, and com
 the matrix-vector product against the Butterfly factorization.
 """
 function validate_farfield_accuracy(
-    operator, testspace, trialspace, tree, farints, fly; n_samples=20
+    operator, testspace, trialspace, BF::PetrovGalerkinBF; n_samples=20
 )
     # We only need the far-field kernel evaluator
     kernelmatrix = ButterflyFactorizations.AbstractKernelMatrix(
@@ -14,7 +14,7 @@ function validate_farfield_accuracy(
     )
 
     # Pick a random subset of blocks to test so we don't wait forever
-    n_total = length(farints)
+    n_total = length(BF.BFs)
     sample_indices = shuffle(1:n_total)[1:min(n_samples, n_total)]
 
     max_err = 0.0
@@ -23,11 +23,11 @@ function validate_farfield_accuracy(
     println("--- Far-Field Accuracy Validation ($n_samples blocks) ---")
 
     for i in sample_indices
-        (node_o, node_s) = farints[i]
+        (node_s, node_o) = ButterflyFactorizations.getNSNO(BF.BFs[i])
 
         # 1. Get the exact global indices for this block
-        test_idx = H2Trees.values(tree.testcluster, node_o)
-        trial_idx = H2Trees.values(tree.trialcluster, node_s)
+        test_idx = H2Trees.values(BF.tree.testcluster, node_o)
+        trial_idx = H2Trees.values(BF.tree.trialcluster, node_s)
 
         # 2. Assemble the EXACT dense block using BEAST
         Z_exact = zeros(ComplexF64, length(test_idx), length(trial_idx))
@@ -45,7 +45,7 @@ function validate_farfield_accuracy(
         x_tmp = zeros(ComplexF64, length(trialspace))
         x_tmp[trial_idx] .= x
         y_bf = zeros(ComplexF64, length(testspace))
-        mul!(y_bf, fly[i], x_tmp)
+        mul!(y_bf, BF.BFs[i], x_tmp)
 
         # 6. Calculate relative error
         rel_err = norm(y_exact - y_bf[test_idx]) / norm(y_exact)

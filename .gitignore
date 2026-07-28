@@ -3,3 +3,9 @@
 /docs/build/
 src/old.jl
 /githubrepo.code-workspace
+benchmark_log.txt
+benchmark_results.csv
+plot_accuracy.html
+plot_build_time.html
+plot_mat_vec_time.html
+plot_memory_usage.html

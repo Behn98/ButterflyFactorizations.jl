@@ -25,6 +25,11 @@ balanced trees in the sense that all leaves need to be on leaf level.
   - `tol`: The relative precision tolerance for compression (default: `1e-3`).
   - `ntasks`: Number of threads to use for parallel near-field assembly.
   - `α`: The geometric admissibility parameter (default: `2.0`).
+  - `unbalancedints`: Whether to allow unbalanced interactions (default: `true`).
+  - `leafcom`: Whether to allow leaf-level compression (default: `true`).
+  - `acctype`: The complex type to use for the factorization (default: `ComplexF64`).
+  - `scheduler`: The threading scheduler to use for parallel assembly (default:
+    `OhMyThreads.DynamicScheduler()`).
 
 **Returns:**
 
@@ -39,7 +44,9 @@ function PetrovGalerkinBF(
     k::Float64;
     compressor=ButterflyFactorizations.PartialQR(),
     tol=1e-3,
-    α=2.0,
+    α=tree_parameters(cluster_testtree(tree)).α,
+    C=tree_parameters(cluster_testtree(tree)).C,
+    Cε=tree_parameters(cluster_testtree(tree)).Cε,
     scheduler=OhMyThreads.DynamicScheduler(),
     acctype=ComplexF64,
     unbalancedints=true,
@@ -111,6 +118,8 @@ function PetrovGalerkinBF(
                 k,
                 tol;
                 compressor=compressor,
+                C=C,
+                Cε=Cε,
                 scheduler=OhMyThreads.SerialScheduler(),#SerialScheduler()DynamicScheduler()
             )
         end
@@ -168,11 +177,15 @@ function PetrovGalerkinBF_Mat(
     tree,
     k::Float64;
     compressor=ButterflyFactorizations.PartialQR(),
+    α=tree_parameters(cluster_testtree(tree)).α,
+    C=tree_parameters(cluster_testtree(tree)).C,
+    Cε=tree_parameters(cluster_testtree(tree)).Cε,
     tol=1e-3,
     scheduler=OhMyThreads.DynamicScheduler(),
-    α=2,
     acctype=ComplexF64,
 )
+    parameterset = tree_parameters(tree)
+    # --- NEAR INTERACTIONS ---
     nearmatrix = AbstractKernelMatrix(operator, testspace, trialspace;)
     farints, nearints = nearandfar(tree, α)
     blocks = Vector{Matrix{acctype}}(undef, length(nearints))
@@ -199,7 +212,7 @@ function PetrovGalerkinBF_Mat(
             @set scheduler = DynamicScheduler()
             (NO, NS) = farints[i]
             fly[i] = assemble_ButterflyFactorization_Mat(
-                nearmatrix, tree, NO, NS, k, tol; compressor=compressor
+                nearmatrix, tree, NO, NS, k, tol; compressor=compressor, C=C, Cε=Cε
             )
         end
     end

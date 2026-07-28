@@ -16,6 +16,10 @@ using SparseArrays
 f_nlogn(N) = N * log2(N)
 f_nlog2n(N) = N * (log2(N))^2
 
+function isnearwrap(treea, treeb, nodea, nodeb; α=1.5)
+    return (!(ButterflyFactorizations.isFarFunctor(α)(treea, treeb, nodea, nodeb)))
+end
+
 """
     fit_scaling_factor(N_vec, Y_vec, scaling_func)
 
@@ -60,6 +64,64 @@ function bf_matrix_memory(Bfmat)
     return mem_bytes / 1024^2
 end
 
+function validate_farfield_accuracy(
+    operator, testspace, trialspace, BF::PetrovGalerkinBF; n_samples=20
+)
+    # We only need the far-field kernel evaluator
+    kernelmatrix = ButterflyFactorizations.AbstractKernelMatrix(
+        operator, testspace, trialspace; type=:far
+    )
+
+    # Pick a random subset of blocks to test so we don't wait forever
+    n_total = length(BF.BFs)
+    sample_indices = shuffle(1:n_total)[1:min(n_samples, n_total)]
+
+    max_err = 0.0
+    avg_err = 0.0
+
+    println("\n--- Far-Field Accuracy Validation ($n_samples blocks) ---")
+
+    for i in sample_indices
+        (node_s, node_o) = ButterflyFactorizations.getNSNO(BF.BFs[i])
+
+        # 1. Get the exact global indices for this block
+        test_idx = H2Trees.values(BF.tree.testcluster, node_o)
+        trial_idx = H2Trees.values(BF.tree.trialcluster, node_s)
+
+        # 2. Assemble the EXACT dense block using BEAST
+        Z_exact = zeros(ComplexF64, length(test_idx), length(trial_idx))
+        kernelmatrix(Z_exact, test_idx, trial_idx)
+
+        # 3. Generate a random input vector
+        x = randn(ComplexF64, length(trial_idx))
+
+        # 4. Compute exact matvec
+        y_exact = Z_exact * x
+
+        # 5. Compute Butterfly matvec
+        # Assuming `fly[i]` supports multiplication: `mul!(y_bf, fly[i], x)`
+        # If your Butterfly uses an allocated `*`:
+        x_tmp = zeros(ComplexF64, length(trialspace))
+        x_tmp[trial_idx] .= x
+        y_bf = zeros(ComplexF64, length(testspace))
+        mul!(y_bf, BF.BFs[i], x_tmp)
+
+        # 6. Calculate relative error
+        rel_err = norm(y_exact - y_bf[test_idx]) / norm(y_exact)
+
+        max_err = max(max_err, rel_err)
+        avg_err += rel_err
+    end
+
+    avg_err /= length(sample_indices)
+
+    println("Maximum Relative Error: $(round(max_err, sigdigits=4))")
+    println("Average Relative Error: $(round(avg_err, sigdigits=4))")
+    println("------------------------------------------------\n")
+
+    return avg_err, max_err
+end
+
 # Helper to build mesh based on shape symbol or custom function
 function build_benchmark_mesh(shape, h::Float64)
     if shape isa Function
@@ -67,9 +129,7 @@ function build_benchmark_mesh(shape, h::Float64)
     elseif shape == :sphere
         return meshsphere(1.0, h)
     elseif shape == :cube || shape == :box
-        return meshbox(1.0, 1.0, 1.0, h)
-    elseif shape == :cylinder
-        return meshcylinder(0.5, 1.0, h)
+        return meshcuboid(1.0, 1.0, 1.0, h)
     else
         error(
             "Unsupported shape: $shape. Options: :sphere, :cube, :cylinder, or a custom function h -> mesh",
@@ -94,7 +154,7 @@ function run_benchmarks(
     ie_type::Symbol=:EFIE,
     checkfarfieldaccuracy::Bool=false,
     treekind::Symbol=:KMeansTree,
-    α::Float64=1.5,
+    unbalancedints::Bool=false,
     csv_file::String="benchmark_results.csv",
     log_file_path::String="benchmark_log.txt",
     scheduler=OhMyThreads.DynamicScheduler(),
@@ -160,39 +220,30 @@ function run_benchmarks(
             tree = H2Trees.TwoNTree(X, h)
         end
         blktree = H2Trees.BlockTree(tree, tree)
-
+        ACAtree = tree = H2Trees.KMeansTree(X.pos, 2; minvalues=100)
+        ACAblktree = H2Trees.BlockTree(ACAtree, ACAtree)
         # 2. HMatrix (ACA)
         println("\nStarting ACA ($ie_type)...")
-        if !checkfarfieldaccuracy
-            t_aca = @elapsed begin
-                hmat = HMatrix(
-                    op,
-                    X,
-                    X,
-                    blktree;
-                    tol=1e-3,
-                    spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
-                    scheduler=scheduler,
-                    maxrank=60,
-                )
-            end
-        else
-            t_aca = @elapsed begin
-                hmat = AdaptiveCrossApproximation.farmatrix(
-                    HMatrix(
-                        op,
-                        X,
-                        X,
-                        blktree;
-                        tol=1e-3,
-                        spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
-                        scheduler=scheduler,
-                        maxrank=60,
-                        isnear=(!(ButterflyFactorizations.isFarFunctor(α))),
-                    ),
-                )
-            end
+        #if !checkfarfieldaccuracy
+        t_aca = @elapsed begin
+            hmat = HMatrix(
+                op,
+                X,
+                X,
+                ACAblktree;
+                tol=1e-3,
+                spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
+                scheduler=scheduler,
+                maxrank=60,
+            )
         end
+        #=else
+            t_aca = @elapsed begin
+                hmat = AdaptiveCrossApproximation.farmatrix(HMatrix(op, X, X, ACAblktree; tol=1e-3,
+                    spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
+                    scheduler=scheduler, maxrank=60, isnear=isnearwrap))
+            end
+        end=#
         time_aca_str = @sprintf("Time for HMatrix (ACA): %.3f seconds", t_aca)
         println(time_aca_str)
         write(log_stream, time_aca_str * "\n")
@@ -204,39 +255,32 @@ function run_benchmarks(
 
         # 3. Butterfly Factorization (BF)
         println("\nStarting ButterflyFactorization ($ie_type)...")
-        if !checkfarfieldaccuracy
-            t_bf = @elapsed begin
-                Bfmat = ButterflyFactorizations.PetrovGalerkinBF(
-                    op,
-                    X,
-                    X,
-                    blktree,
-                    k;
-                    compressor=ButterflyFactorizations.PartialQR(),
-                    tol=1e-3,
-                    α=α,
-                )
-            end
-        else
-            t_bf = @elapsed begin
-                Bfmat = ButterflyFactorizations.farmatrix(
-                    ButterflyFactorizations.PetrovGalerkinBF(
-                        op,
-                        X,
-                        X,
-                        blktree,
-                        k;
-                        compressor=ButterflyFactorizations.PartialQR(),
-                        tol=1e-3,
-                        α=α,
-                    ),
-                )
-            end
+        #if !checkfarfieldaccuracy
+        t_bf = @elapsed begin
+            Bfmat = ButterflyFactorizations.PetrovGalerkinBF(
+                op,
+                X,
+                X,
+                blktree,
+                k;
+                compressor=ButterflyFactorizations.PartialQR(),
+                scheduler=scheduler,
+                tol=1e-3,
+                unbalancedints=unbalancedints,
+            )
         end
+        #=else
+            t_bf = @elapsed begin
+                Bfmat = ButterflyFactorizations.farmatrix(ButterflyFactorizations.PetrovGalerkinBF(op, X, X, blktree, k;
+                    compressor=ButterflyFactorizations.PartialQR(), scheduler=scheduler, tol=1e-3, unbalancedints=unbalancedints, isnear=isnearwrap))
+            end
+        end=#
         time_bf_str = @sprintf("Time for ButterflyFactorization: %.3f seconds", t_bf)
         println(time_bf_str)
         write(log_stream, time_bf_str * "\n")
-
+        if checkfarfieldaccuracy
+            validate_farfield_accuracy(op, X, X, Bfmat; n_samples=100)
+        end
         mem_bf_total = Base.summarysize(Bfmat) / 1024^2
         mem_ButterflyFactorization_Mat = bf_matrix_memory(Bfmat)
         mem_bf_str = @sprintf(
@@ -249,32 +293,22 @@ function run_benchmarks(
 
         # 4. Reference Matrix & Accuracy Check
         println("\nComputing reference Matrix with ACA for a lower tolerance...")
-        if !checkfarfieldaccuracy
-            refmat = HMatrix(
-                op,
-                X,
-                X,
-                blktree;
-                tol=1e-5,
+        #if !checkfarfieldaccuracy
+        refmat = HMatrix(
+            op,
+            X,
+            X,
+            ACAblktree;
+            tol=1e-5,
+            spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
+            scheduler=OhMyThreads.DynamicScheduler(),
+            maxrank=100,
+        )
+        #=else
+            refmat = AdaptiveCrossApproximation.farmatrix(HMatrix(op, X, X, ACAblktree; tol=1e-5,
                 spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
-                scheduler=scheduler,
-                maxrank=100,
-            )
-        else
-            refmat = AdaptiveCrossApproximation.farmatrix(
-                HMatrix(
-                    op,
-                    X,
-                    X,
-                    blktree;
-                    tol=1e-5,
-                    spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
-                    scheduler=scheduler,
-                    maxrank=100,
-                    isnear=(!(ButterflyFactorizations.isFarFunctor(α))),
-                ),
-            )
-        end
+                scheduler=OhMyThreads.DynamicScheduler(), maxrank=100, isnear=isnearwrap))
+        end=#
 
         xtest = randn(ComplexF64, size(Bfmat, 2))
         y_exact = refmat * xtest
@@ -717,14 +751,15 @@ function run_benchmarks(
     return p_time, p_mem, p_mv, p_err
 end
 
-h_values = [0.2, 0.10, 0.08] #, 0.06, 0.03, 0.02, 0.01, 0.005
+h_values = [0.10, 0.08, 0.06] #, 0.06, 0.03, 0.02, 0.01, 0.005
 p_time, p_mem, p_mv, p_err = run_benchmarks(
     h_values;
     shape=:sphere,
     ie_type=:EFIE,
-    checkfarfieldaccuracy=false,
+    checkfarfieldaccuracy=true,
+    unbalancedints=true,
     treekind=:KMeansTree,
-    α=1.5,
+    scheduler=OhMyThreads.DynamicScheduler(),
     csv_file="benchmark_results.csv",
     log_file_path="benchmark_log.txt",
 );
