@@ -24,148 +24,93 @@ the resulting operator to a desired accuracy tolerance.
   - **R Matrices:** Intersecting block keys across layers are combined via block-diagonalization (`blockdiag`). Unmatched keys are safely padded with zeros to preserve structural dimensions before block-diagonalization.
   - **Recompression:** The final structural configuration is passed to `recompress_BF` with the parameter `τ` to optimize memory and rank efficiency.
 """
-function add_eqbfs(BF_1_init::ButterflyFactorization, BF_2_init::ButterflyFactorization, τ)
-    @assert BF_1_init.NS == BF_2_init.NS && BF_1_init.NO == BF_2_init.NO "rootids must match for addition."
-    BF_1 = deepcopy(BF_1_init)
-    BF_2 = deepcopy(BF_2_init)
+function add_eqbfs(
+    BF_1_init::ButterflyFactorization{T,M}, BF_2_init::ButterflyFactorization{T,M}, τ
+) where {T,M}
+    @assert length(BF_1_init.R) == length(BF_2_init.R) "BFs must have the same number of layers"
+    @assert getNSNO(BF_1_init) == getNSNO(BF_2_init) "BFs must have the same number of source and output root nodes"
+    BF1 = deepcopy(BF_1_init)
+    BF2 = deepcopy(BF_2_init)
+    Q1idx = Dict{Int,Int}()
+    for (i, b) in enumerate(BF1.Q)
+        Q1idx[getrowidx(b)[2]] = i
+    end
 
-    P_new = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-    for k in keys(BF_1.P)
-        if haskey(BF_2.P, k)
-            P_new[k] = hcat(BF_1.P[k], BF_2.P[k])
+    newQ = Vector{ButterflyBlock{T}}(undef, length(BF1.Q))
+    for (i, b) in enumerate(BF2.Q)
+        idx = getrowidx(b)[2]
+        if haskey(Q1idx, idx)
+            newQ[Q1idx[idx]] = ButterflyBlock{T}(
+                b.obs_out,
+                b.src_out,
+                b.obs_in,
+                b.src_in,
+                vcat(BF1.Q[Q1idx[idx]].data, b.data),
+            )
+            delete!(Q1idx, idx)
         else
-            P_new[k] = BF_1.P[k]
+            push!(newQ, b)
         end
     end
-    #single = 0
-    #comb = 0
-    #=
-    for k in keys(BF_2.P)
-        if !haskey(BF_1.P, k)
-            P_new[k] = BF_2.P[k]
-        end
+
+    for (src, i) in Q1idx
+        newQ[i] = BF1.Q[i]
     end
-    =#
-    R_new = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(
-        undef, length(BF_1.R)
-    )
-    for l in eachindex(BF_1.R)
-        R_new[l] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
-        col_to_rows1 = Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}()
-        for row_skel in keys(BF_1.R[l])
-            for col_idx in keys(BF_1.R[l][row_skel])
-                if !haskey(col_to_rows1, col_idx)
-                    col_to_rows1[col_idx] = Vector{Tuple{Int,Int}}()
-                end
-                push!(col_to_rows1[col_idx], row_skel)
-            end
+
+    newR = Vector{ButterflyLevel}(undef, length(BF1.R))
+    for l in 1:length(BF1.R)
+        R1idx = Dict{Tuple{Int,Int,Int,Int},Int}()
+        for (i, b) in enumerate(BF1.R[l].blocks)
+            R1idx[block_key(b)] = i
         end
-        col_to_rows2 = Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}()
-        for row_skel in keys(BF_2.R[l])
-            for col_idx in keys(BF_2.R[l][row_skel])
-                if !haskey(col_to_rows2, col_idx)
-                    col_to_rows2[col_idx] = Vector{Tuple{Int,Int}}()
-                end
-                push!(col_to_rows2[col_idx], row_skel)
-            end
-        end
-        newrowspace = Dict{Tuple{Int,Int},Int}()
-        for row in keys(BF_1.R[l])
-            if haskey(BF_2.R[l], row)
-                newrowspace[row] =
-                    size(BF_1.R[l][row][first(keys(BF_1.R[l][row]))], 1) +
-                    size(BF_2.R[l][row][first(keys(BF_2.R[l][row]))], 1)
+
+        newRlvl = Vector{ButterflyBlock{T}}(undef, length(BF1.R[l].blocks))
+        for b in BF2.R[l].blocks
+            idx = block_key(b)
+            if haskey(R1idx, idx)
+                newRlvl[R1idx[idx]] = blockdiag(BF1.R[l].blocks[R1idx[idx]], b)
+                delete!(R1idx, idx)
             else
-                newrowspace[row] = size(BF_1.R[l][row][first(keys(BF_1.R[l][row]))], 1)
+                push!(newRlvl, b)
             end
         end
-        for row in keys(BF_2.R[l])
-            if !haskey(newrowspace, row)
-                newrowspace[row] = size(BF_2.R[l][row][first(keys(BF_2.R[l][row]))], 1)
-            end
+
+        for (blkkey, i) in R1idx
+            newR[i] = BF1.R[l].blocks[i]
         end
-        newcolspace = Dict{Tuple{Int,Int},Int}()
-        for col in keys(col_to_rows1)
-            if haskey(col_to_rows2, col)
-                newcolspace[col] =
-                    size(BF_1.R[l][col_to_rows1[col][1]][col], 2) +
-                    size(BF_2.R[l][col_to_rows2[col][1]][col], 2)
-            else
-                newcolspace[col] = size(BF_1.R[l][col_to_rows1[col][1]][col], 2)
-            end
-        end
-        for col in keys(col_to_rows2)
-            if !haskey(newcolspace, col)
-                newcolspace[col] = size(BF_2.R[l][col_to_rows2[col][1]][col], 2)
-            end
-        end
-        for row in keys(newrowspace)
-            R_new[l][row] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-            for col in keys(newcolspace)
-                if haskey(BF_1.R[l], row) &&
-                    haskey(BF_1.R[l][row], col) &&
-                    haskey(BF_2.R[l], row) &&
-                    haskey(BF_2.R[l][row], col)
-                    #comb += 1
-                    R_new[l][row][col] = blockdiag(BF_1.R[l][row][col], BF_2.R[l][row][col])
-                elseif haskey(BF_1.R[l], row) && haskey(BF_1.R[l][row], col)
-                    #single += 1
-                    R_new[l][row][col] = blockdiag(
-                        BF_1.R[l][row][col],
-                        zeros(
-                            ComplexF64,
-                            newrowspace[row]-size(BF_1.R[l][row][col], 1),
-                            newcolspace[col]-size(BF_1.R[l][row][col], 2),
-                        ),
-                    )
-                elseif haskey(BF_2.R[l], row) && haskey(BF_2.R[l][row], col)
-                    #single += 1
-                    R_new[l][row][col] = blockdiag(
-                        zeros(
-                            ComplexF64,
-                            newrowspace[row]-size(BF_2.R[l][row][col], 1),
-                            newcolspace[col]-size(BF_2.R[l][row][col], 2),
-                        ),
-                        BF_2.R[l][row][col],
-                    )
-                end
-            end
-        end
+        newR[l] = ButterflyLevel(newRlvl)
     end
-    Q_new = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-    for k in keys(BF_1.Q)
-        if haskey(BF_2.Q, k)
-            Q_new[k] = vcat(BF_1.Q[k], BF_2.Q[k])
+
+    P1idx = Dict{Int,Int}()
+    for (i, b) in enumerate(BF1.P)
+        P1idx[getcolidx(b)[1]] = i
+    end
+
+    newP = Vector{ButterflyBlock{T}}(undef, length(BF1.P))
+    for (i, b) in enumerate(BF2.P)
+        idx = getcolidx(b)[1]
+        if haskey(P1idx, idx)
+            newP[P1idx[idx]] = ButterflyBlock{T}(
+                b.obs_out,
+                b.src_out,
+                b.obs_in,
+                b.src_in,
+                hcat(BF1.P[P1idx[idx]].data, b.data),
+            )
+            delete!(P1idx, idx)
         else
-            Q_new[k] = BF_1.Q[k]
+            push!(newP, b)
         end
     end
-    #=
-    for k in keys(BF_2.Q)
-        if !haskey(BF_1.Q, k)
-            Q_new[k] = BF_2.Q[k]
-        end
+
+    for (obs, i) in P1idx
+        newP[i] = BF1.P[i]
     end
-    =#
-    #@show single
-    #@show comb
+
     return recompress_BF(
-        BF(
-            Q_new,
-            R_new,
-            P_new,
-            BF_1.dim,
-            BF_1.NS,
-            BF_1.NO,
-            BF_1.k,
-            max(BF_1.τ, BF_2.τ),
-            BF_1.stree,
-            BF_1.otree,
-        ),
-        τ,
+        ButterflyFactorization{T,M}(newQ, newR, newP, BF1.tree, BF1.k, τ), τ
     )
 end
 
-function add_neqbfs(BF_1::ButterflyFactorization, BF_2::ButterflyFactorization)
-    return (BF_1, BF_2)   #insert struct here if needed
-end
+Base.:+(BF_1::ButterflyFactorization{T,M}, BF_2::ButterflyFactorization{T,M}) where {T,M} =
+    add_eqbfs(BF_1, BF_2, max(BF_1.τ, BF_2.τ))

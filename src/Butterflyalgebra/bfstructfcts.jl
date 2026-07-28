@@ -7,6 +7,27 @@ function getNSNO(BFactorization::ButterflyFactorization)
     return block_key(BFactorization.P[1])[4], block_key(BFactorization.Q[1])[1]
 end
 
+function getrowidx(block::ButterflyBlock)
+    return (block.obs_out, block.src_out)
+end
+
+function getcolidx(block::ButterflyBlock)
+    return (block.obs_in, block.src_in)
+end
+
+# Overload for ButterflyBlocks to automatically preserve your routing keys
+function blockdiag(blk_A::ButterflyBlock{T}, blk_B::ButterflyBlock{T}) where {T}
+    # Since they correspond to the same index pairs, the keys should match
+    @assert blk_A.obs_out == blk_B.obs_out && blk_A.src_out == blk_B.src_out
+    @assert blk_A.obs_in == blk_B.obs_in && blk_A.src_in == blk_B.src_in
+
+    new_data = blockdiag(blk_A.data, blk_B.data)
+
+    return ButterflyBlock(
+        blk_A.obs_out, blk_A.src_out, blk_A.obs_in, blk_A.src_in, new_data
+    )
+end
+
 function clear!(logger::RankLogger)
     for buf in logger.buffers
         empty!(buf)
