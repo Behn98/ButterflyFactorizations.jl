@@ -305,11 +305,10 @@ X = raviartthomas(m)
 N = length(X)
 
 # Bygg träd
-tree = H2Trees.KMeansTree(X.pos, 2; minvalues=100)
+#tree = H2Trees.KMeansTree(X.pos, 2; minvalues=100)
+#tree = H2Trees.TwoNTree(X, h;)#minvalues=100
+tree = H2Trees.BisectionTree(X.pos; max_points=50)
 blktree = H2Trees.BlockTree(tree, tree)
-#Ttree = H2Trees.TwoNTree(X, h;)#minvalues=100
-#Stree = H2Trees.TwoNTree(X, h;)#minvalues=100
-#blktree = BlockTree(Ttree, Stree)
 #As = assemble(op, X, X)
 
 BLAS.set_num_threads(1) # Avoid nested threading issues

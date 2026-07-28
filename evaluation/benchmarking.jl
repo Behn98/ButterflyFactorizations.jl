@@ -215,7 +215,7 @@ function run_benchmarks(
         if treekind == :KMeansTree
             tree = H2Trees.KMeansTree(X.pos, 2; minvalues=100)
         elseif treekind == :BisectionTree
-            tree = H2Trees.BisectionTree(X.pos; max_depth=10)
+            tree = H2Trees.BisectionTree(X.pos; max_points=50)
         else
             tree = H2Trees.TwoNTree(X, h)
         end

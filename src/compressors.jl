@@ -29,6 +29,8 @@ end
 # Default constructor: initializes the workspace automatically
 PartialQR() = PartialQR(nothing, PartialQRWorkspace{ComplexF64}())
 
+PartialQR(logger::L) where {L} = PartialQR(logger, PartialQRWorkspace{ComplexF64}())
+
 # Compiler eliminates this branch when logger === nothing
 @inline log_rank!(::Nothing, rank_est, r) = nothing
 
