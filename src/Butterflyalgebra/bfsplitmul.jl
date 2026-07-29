@@ -46,369 +46,173 @@ representation.
     modifications.
 """
 function splitmulbf(
-    butterflycluster_init::Matrix{ButterflyFactorization},
-    higherkBF_init::ButterflyFactorization,
+    bfcluster::Matrix{ButterflyFactorization{T,M}},
+    higherkBF::ButterflyFactorization{T,M},
     τ::Float64,
-)
-    butterflycluster = deepcopy(butterflycluster_init)
-    higherkBF = deepcopy(higherkBF_init)
-    #recall that for multiplication the source tree of the left factor and the observer tree
-    #of the right factor must match.
-    children = [bf.NS for bf in butterflycluster[1, :]]
-    numchildren = length(children)
-    l = length(higherkBF.R) # Number of R-levels in the higher k BF
-    #Step 1: subdividing the higher k BF into numchildren BFs of lvl k-1
-    lowerkBFs = Vector{ButterflyFactorization}(undef, numchildren)
-    ssubtree = treelevels(higherkBF.stree, higherkBF.NS)
-    for i in 1:numchildren
-        osubtree = treelevels(higherkBF.otree, children[i])
-        new_P = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-        for leaf in osubtree[end]
-            new_P[leaf, higherkBF.NS] = copy(higherkBF.P[leaf, higherkBF.NS])
-        end
-        new_R = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(
-            undef, l - 1
-        )
-        for j in 1:(l - 1)
-            new_R[j] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
-            for onode in osubtree[j + 1]
-                for snode in ssubtree[end - j - 1]
-                    #if haskey(higherkBF.R[j], (onode, snode))
-                    new_R[j][(onode, snode)] = copy(higherkBF.R[j + 1][(onode, snode)])
-                    #end
-                end
-            end
-        end
-        new_Q = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-        lowerkBFs[i] = ButterflyFactorization(
-            new_Q,
-            new_R,
-            new_P,
-            (size(higherkBF, 1), size(higherkBF, 2)),
-            higherkBF.NS,
-            children[i],
-            higherkBF.k,
-            higherkBF.τ,
-            higherkBF.stree,
-            higherkBF.otree,
-        )
-    end
-    #The new Butterflies will not have any Q factors, those are preserved together with the
-    #last R factor in the higher k BF until we performed the multiplications between the
-    #smaller BFs and the cluster of BFs.
-    intermediate = Matrix{ButterflyFactorization}(
-        undef, size(butterflycluster, 1), numchildren
-    )
-    for i in 1:size(butterflycluster, 1)
-        for j in 1:numchildren
-            intermediate[i, j] = mulBFs(#trivialmul
-                butterflycluster[i, j],
-                lowerkBFs[j],
-                τ,
+) where {T,M}
+
+    # Step 1: Split the higher-level BF into child-level BFs
+    srcchildren = [getNSNO(childbf)[1] for childbf in bfcluster[1, :]]
+    bfdiagonal = splitobsside(higherkBF; obschildren=srcchildren)
+    @assert size(bfcluster, 1) == size(bfcluster, 2) "bfcluster must be square --> no unbalanced interactions allowed"
+    N = size(bfcluster, 1)
+    # Step 2: Multiply each child BF with the corresponding cluster BF
+    intermediate_bfs = Vector{Matrix{ButterflyFactorization{T,M}}}(undef, N)
+    for i in 1:N
+        intermediate_bfs[i] = Matrix{ButterflyFactorization{T,M}}(undef, N, N)
+        for (j, child_bf) in enumerate(bfdiagonal)
+            intermediate_bfs[mod(j - i, N) + 1][i, j] = mulBFs(
+                bfcluster[i, j], child_bf; τ=higherkBF.τ
             )
         end
     end
-    rowsize = size(intermediate, 1)
-    colsize = size(intermediate, 2)
-    tobeadditioned = Vector{ButterflyFactorization}(undef, rowsize)
-    nodaloffset = 1
-    otmapv = Vector{Vector{Dict{Int,Int}}}(undef, colsize)
-    for i in 1:rowsize
-        supertree, mappings, root_super_id, nodaloffset = build_supertree(
-            children, higherkBF.otree, nodaloffset
+
+    # Step 3: Align and merge the intermediate BFs into a single BF
+    merged_bf = intermediate_bfs[1]
+    for i in 2:length(intermediate_bfs)
+        merged_bf = add_eqbfs(
+            merged_bf, intermediate_bfs[i], max(merged_bf.τ, intermediate_bfs[i].τ)
         )
-        otmapv[i] = mappings
     end
-    for i in 1:rowsize
-        new_P = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-        new_R = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(
-            undef, l
+
+    return merged_bf
+end
+
+function splitobsside(
+    BF::ButterflyFactorization{T,M};
+    obschildren=sort!(cluster_children(cluster_testtree(BF.tree), getNSNO(BF)[2])),
+) where {T,M}
+    depth=log2(length(obschildren))
+    L = length(BF.R)
+    bfdiagonal = Vector{ButterflyFactorization{T,M}}(undef, length(obschildren))
+    for (i, ochild) in enumerate(obschildren)
+        newR = Vector{ButterflyLevel}(undef, L-depth)
+        idx = 1
+        newrlength = length(BF.R[2].blocks)/length(obschildren)
+        newRlvl = Vector{ButterflyBlock{T}}(undef, newrlength)
+        rowmemory = Dict{Tuple{Int,Int},Bool}()
+        for b in BF.R[depth + 1].blocks
+            if b.obs_in == ochild
+                newRlvl[idx] = b
+                idx += 1
+                if !haskey(rowmemory, getrowidx(b))
+                    rowmemory[getrowidx(b)] = true
+                end
+            end
+        end
+        newR[1] = ButterflyLevel(newRlvl)
+        for l in (depth + 2):L
+            idx = 1
+            newRlvl = Vector{ButterflyBlock{T}}(undef, newrlength)
+            newrowmemory = Dict{Tuple{Int,Int},Bool}()
+            for b in BF.R[l].blocks
+                if haskey(rowmemory, getcolidx(b))
+                    newRlvl[idx] = b
+                    idx += 1
+                    newrowmemory[getrowidx(b)] = true
+                end
+            end
+            rowmemory = newrowmemory
+            newR[l - 1] = ButterflyLevel(newRlvl)
+        end
+        newP = Vector{ButterflyBlock{T}}(undef, length(BF.P)/length(obschildren))
+        idx = 1
+        for b in BF.P
+            if haskey(rowmemory, getcolidx(b))
+                newP[idx] = b
+                idx += 1
+            end
+        end
+        bfdiagonal[i] = ButterflyFactorization{T,M}(
+            Vector{ButterflyBlock{T}}(), newR, newP, BF.tree, BF.k, τ
         )
-        for s in eachindex(new_R)
-            new_R[s] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
-        end
-
-        #otmapv = Vector{Dict{Int,Int}}(undef, colsize)
-        colspaces = Vector{Dict{Tuple{Int,Int},Int}}(undef, colsize)
-        for j in 1:colsize
-            # Target index based on your wrap-around logic
-            target_idx = ((i + j-2) % rowsize) + 1
-            target_bf = intermediate[target_idx, j]
-            #otmapv[j] = treemapping(children[j], children[target_idx], higherkBF.otree)
-            otmap = otmapv[target_idx][j]
-            colspaces[j] = retrievecolspace(target_bf.R[1])
-            deep_accumulate_P!(new_P, target_bf.P)
-            for k in 1:(l - 2)
-                deep_accumulate_R!(
-                    new_R[k + 1], target_bf.R[k]; otmap=otmap, stmap=Dict{Int,Int}()
-                )
-            end
-            for (node_key, inner_dict_src) in target_bf.R[l - 1]
-                if !haskey(new_R[l], node_key)
-                    new_R[l][node_key] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-                    for (sub_key, mat_src) in inner_dict_src
-                        if haskey(otmap, sub_key[1])
-                            new_sub_key = (otmap[sub_key[1]], sub_key[2])
-                        else
-                            new_sub_key = sub_key
-                        end
-                        new_R[l][node_key][new_sub_key] = copy(mat_src)
-                    end
-                else
-                    # Node key exists, merge the inner mapping level
-                    inner_dict_dest = dest[node_key]
-                    for (sub_key, mat_src) in inner_dict_src
-                        if haskey(otmap, sub_key[1])
-                            new_sub_key = (otmap[sub_key[1]], sub_key[2])
-                        else
-                            new_sub_key = sub_key
-                        end
-                        if !haskey(inner_dict_dest, new_sub_key)
-                            inner_dict_dest[new_sub_key] = copy(mat_src)
-                        else
-                            println(
-                                "Overlapping block detected at node_key: $new_node_key, sub_key: $new_sub_key",
-                            )
-                            blockdiag(inner_dict_dest[new_sub_key], mat_src)
-                        end
-                    end
-                end
-            end
-        end
-        localkeys = collect(keys(new_P))
-        for key in localkeys
-            nk = (key[1], H2Trees.parent(butterflycluster[1, 1].otree, key[2]))
-            new_P[nk] = copy(new_P[key])
-            new_R[end][nk] = copy(new_R[end][key])
-            delete!(new_P, key)
-            delete!(new_R[end], key)
-        end
-        new_R[1] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
-        for j in eachindex(colspaces)
-            target_idx = ((i + j-2) % rowsize) + 1
-            otmap = otmapv[target_idx][j]
-            for key in keys(colspaces[j])
-                if haskey(otmap, key[1])
-                    new_key = (otmap[key[1]], key[2])
-                    new_R[1][new_key] = copy(higherkBF.R[1][key])
-                end
-            end
-        end
-        new_Q = higherkBF.Q
-        tobeadditioned[i] = #recompress_BF(
-        ButterflyFactorization(
-            new_Q,
-            new_R,
-            new_P,
-            (
-                length(
-                    cluster_cluster_values(
-                        butterflycluster[1, 1].otree,
-                        H2Trees.parent(
-                            butterflycluster[1, 1].otree, butterflycluster[1, 1].NO
-                        ),
-                    ),
-                ),
-                size(higherkBF, 2),
-            ),
-            higherkBF.NS,
-            H2Trees.parent(butterflycluster[1, 1].otree, butterflycluster[1, 1].NO),
-            higherkBF.k,
-            higherkBF.τ,
-            higherkBF.stree,
-            butterflycluster[1, 1].otree,
-        )#,
-        #τ,
-        #)
     end
-    #return tobeadditioned
-    l = length(tobeadditioned)-1
-    result = add_eqbfs(tobeadditioned[1], tobeadditioned[2], τ)
 
-    #println("addition 1 of $l done \n")
-    for i in eachindex(tobeadditioned[3:end])
-        result = add_eqbfs(result, tobeadditioned[3:end][i], τ)
-        h = i+1
-        #println("addition $h of $l done \n")
-    end
-    return result
+    return bfdiagonal
 end
 
-function deep_accumulate_P!(
-    dest::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
-    src::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
-)
-    for (key, mat_src) in src
-        if !haskey(dest, key)
-            dest[key] = copy(mat_src)
-        else
-            println("Overlapping block detected at key: $key")
-            #may not happen --> preserve the existing block and append the new one
-            dest[key] = hcat(dest[key], mat_src)
-        end
-    end
-    return dest
-end
+function partialcleanupidxs(BF::ButterflyFactorization{T,M}) where {T,M}
+    tsttree = cluster_testtree(BF.tree)
+    trialtree = cluster_trialtree(BF.tree)
+    L = length(BF.R)
 
-function deep_accumulate_Q!(
-    dest::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
-    src::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
-)
-    for (key, mat_src) in src
-        if !haskey(dest, key)
-            dest[key] = copy(mat_src)
-        else
-            println("Overlapping block detected at key: $key")
-            #may not happen --> preserve the existing block and append the new one
-            dest[key] = vcat(dest[key], mat_src)
-        end
-    end
-    return dest
-end
+    # =========================================================================
+    # PASS 1: Forward Traversal (Trace Source / Trial Tree Keys from Q)
+    # =========================================================================
+    src_translation = Dict{Tuple{Int,Int},Int}()
+    # Preallocate storage for the computed source keys in R
+    src_keys_R = [Vector{Tuple{Int,Int}}(undef, length(BF.R[l].blocks)) for l in 1:L]
 
-function deep_accumulate_R!(
-    dest::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}},
-    src::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}};
-    otmap::Dict{Int,Int} = Dict{Int,Int}(),
-    stmap::Dict{Int,Int} = Dict{Int,Int}(),
-)
-    for (node_key, inner_dict_src) in src
-        if haskey(otmap, node_key[1]) && haskey(stmap, node_key[2])
-            new_node_key = (otmap[node_key[1]], stmap[node_key[2]])
-        elseif haskey(otmap, node_key[1])
-            new_node_key = (otmap[node_key[1]], node_key[2])
-        elseif haskey(stmap, node_key[2])
-            new_node_key = (node_key[1], stmap[node_key[2]])
-        else
-            new_node_key = node_key
-        end
-        if !haskey(dest, new_node_key)
-            dest[new_node_key] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-            for (sub_key, mat_src) in inner_dict_src
-                if haskey(otmap, sub_key[1]) && haskey(stmap, sub_key[2])
-                    new_sub_key = (otmap[sub_key[1]], stmap[sub_key[2]])
-                elseif haskey(otmap, sub_key[1])
-                    new_sub_key = (otmap[sub_key[1]], sub_key[2])
-                elseif haskey(stmap, sub_key[2])
-                    new_sub_key = (sub_key[1], stmap[sub_key[2]])
-                else
-                    new_sub_key = sub_key
-                end
-                dest[new_node_key][new_sub_key] = copy(mat_src)
+    for l in 1:L
+        next_src_translation = Dict{Tuple{Int,Int},Int}()
+        for (i, b) in enumerate(BF.R[l].blocks)
+            if haskey(src_translation, (b.obs_in, b.src_in))
+                new_src_in = src_translation[(b.obs_in, b.src_in)]
+            else
+                new_src_in = b.src_in
             end
-        else
-            # Node key exists, merge the inner mapping level
-            inner_dict_dest = dest[new_node_key]
-            for (sub_key, mat_src) in inner_dict_src
-                if haskey(otmap, sub_key[1]) && haskey(stmap, sub_key[2])
-                    new_sub_key = (otmap[sub_key[1]], stmap[sub_key[2]])
-                elseif haskey(otmap, sub_key[1])
-                    new_sub_key = (otmap[sub_key[1]], sub_key[2])
-                elseif haskey(stmap, sub_key[2])
-                    new_sub_key = (sub_key[1], stmap[sub_key[2]])
-                else
-                    new_sub_key = sub_key
-                end
-                if !haskey(inner_dict_dest, new_sub_key)
-                    inner_dict_dest[new_sub_key] = copy(mat_src)
-                else
-                    println(
-                        "Overlapping block detected at node_key: $new_node_key, sub_key: $new_sub_key",
-                    )
-                    #may not happen --> preserve the existing block and append the new one
-                    blockdiag(inner_dict_dest[new_sub_key], mat_src)
-                end
-            end
+            new_src_out = cluster_parent(trialtree, new_src_in)
+
+            src_keys_R[l][i] = (new_src_out, new_src_in)
+            next_src_translation[(b.obs_out, b.src_out)] = new_src_out
         end
-    end
-    return dest
-end
-
-function treemapping(a::Int, b::Int, tree)
-    mapping = Dict{Int,Int}()
-
-    # Initialize a stack with our starting pair of node IDs
-    stack = [(a, b)]
-
-    while !isempty(stack)
-        curr_a, curr_b = pop!(stack)
-
-        mapping[curr_a] = curr_b
-
-        # Push all paired children onto the stack
-        for (child_a, child_b) in zip(children(tree, curr_a), children(tree, curr_b))
-            push!(stack, (child_a, child_b))
-        end
+        src_translation = next_src_translation
     end
 
-    return mapping
-end
+    # =========================================================================
+    # PASS 2: Backward Traversal (Trace Observer Keys & Reconstruct R)
+    # =========================================================================
+    obs_translation = Dict{Tuple{Int,Int},Int}()
 
-function build_supertree(roots::Vector{Int}, tree, init_super_id::Int)
-    N = length(roots)
+    # Rebuild P instantly and seed translation
+    newP = Vector{ButterflyBlock{T}}(undef, length(BF.P))
+    for (i, b) in enumerate(BF.P)
+        true_obs_out = b.obs_out # P's output is the physical observer leaf
+        true_obs_in = b.obs_in # Move 1 level up the observer tree
+        root_src = src_translation[(b.obs_in, b.src_in)] # P's input is the root of the source tree
+        newP[i] = ButterflyBlock(
+            true_obs_out, root_src, true_obs_in, root_src, copy(b.data)
+        )
 
-    # 1. The new Super-Tree structure
-    # Maps a Super-Node ID -> Array of child Super-Node IDs
-    supertree = Dict{Int,Vector{Int}}()
-
-    # 2. The Lifts (Mappings)
-    # An array of N dictionaries.
-    # mappings[i] maps: Original Node ID in Tree i -> Super-Node ID
-    mappings = [Dict{Int,Int}() for _ in 1:N]
-
-    # Counter to generate fresh, unique IDs for the Super-Tree
-    next_super_id = init_super_id
-
-    # Recursive traversal function
-    function traverse(curr_nodes::Vector{Union{Int,Nothing}})
-        # Allocate a new ID for this position in the Super-Tree
-        super_id = next_super_id
-        next_super_id += 1
-
-        # Initialize empty children array for this Super-Node
-        supertree[super_id] = Int[]
-
-        # Record the mapping for any tree that has a real node here
-        for i in 1:N
-            if !isnothing(curr_nodes[i])
-                mappings[i][curr_nodes[i]] = super_id
-            end
-        end
-
-        # Gather all child iterators. If a tree has no node here (nothing),
-        # it provides an empty array of children.
-        all_children = [
-            isnothing(n) ? Int[] : collect(children(tree, n)) for n in curr_nodes
-        ]
-
-        # The union must account for the widest branch at this level across all N trees
-        max_children = maximum(length.(all_children))
-
-        # Traverse downwards for each child index
-        for child_idx in 1:max_children
-            # Build the next layer of nodes to evaluate
-            next_nodes = Vector{Union{Int,Nothing}}(undef, N)
-
-            for i in 1:N
-                # If tree 'i' has a child at this index, grab it. Otherwise, it's a ghost.
-                if child_idx <= length(all_children[i])
-                    next_nodes[i] = all_children[i][child_idx]
-                else
-                    next_nodes[i] = nothing
-                end
-            end
-
-            # Recurse and link the resulting child Super-Node to the current one
-            child_super_id = traverse(next_nodes)
-            push!(supertree[super_id], child_super_id)
-        end
-
-        return super_id
+        # Save P's input mapping to feed R_L
+        obs_translation[(b.obs_in, b.src_in)] = true_obs_in
     end
 
-    # Initialize the traversal with our N roots
-    initial_nodes = Union{Int,Nothing}[roots[i] for i in 1:N]
-    root_super_id = traverse(initial_nodes)
-    nodaloffset = next_super_id - 1
-    return supertree, mappings, root_super_id, nodaloffset
+    # Reconstruct R backwards, combining obs logic with stored src keys
+    newR = Vector{ButterflyLevel{T}}(undef, L)
+    for l in L:-1:1
+        next_obs_translation = Dict{Tuple{Int,Int},Int}()
+        new_blocks = Vector{ButterflyBlock{T}}(undef, length(BF.R[l].blocks))
+
+        for (i, b) in enumerate(BF.R[l].blocks)
+            # 1. Compute the new Observer keys
+            new_obs_out = obs_translation[(b.obs_out, b.src_out)]
+            new_obs_in = cluster_parent(tsttree, new_obs_out)
+
+            # 2. Retrieve the new Source keys computed in Pass 1
+            new_src_out, new_src_in = src_keys_R[l][i]
+
+            # 3. Reconstruct block on the spot!
+            new_blocks[i] = ButterflyBlock(
+                new_obs_out, new_src_out, new_obs_in, new_src_in, copy(b.data)
+            )
+
+            # Propagate the obs_in upwards to R_{l-1}
+            next_obs_translation[(b.obs_in, b.src_in)] = new_obs_in
+        end
+        newR[l] = ButterflyLevel(new_blocks)
+        obs_translation = next_obs_translation
+    end
+
+    newQ = Vector{ButterflyBlock{T}}(undef, length(BF.Q))
+    for (i, b) in enumerate(BF.Q)
+        true_obs_out = obs_translation[(b.obs_out, b.src_out)]
+        true_obs_in = true_obs_out
+
+        newQ[i] = ButterflyBlock(
+            true_obs_out, b.src_out, true_obs_in, b.src_in, copy(b.data)
+        )
+    end
+
+    return ButterflyFactorization{T,M}(newQ, newR, newP, BF.tree, BF.k, BF.τ)
 end

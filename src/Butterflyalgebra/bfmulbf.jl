@@ -48,15 +48,13 @@ function mulBFs(
         active_levels = reverse(temp_BF.R)
     end
 
-    return cleanupidxs(
-        ButterflyFactorization{T,M}(
-            BF_2.Q,
-            reverse(active_levels),
-            BF_1.P,
-            cluster_blktree(cluster_testtree(BF_1.tree), cluster_trialtree(BF_2.tree)),
-            BF_1.k,
-            τ,
-        ),
+    return ButterflyFactorization{T,M}(
+        BF_2.Q,
+        reverse(active_levels),
+        BF_1.P,
+        cluster_blktree(cluster_testtree(BF_1.tree), cluster_trialtree(BF_2.tree)),
+        BF_1.k,
+        τ,
     )
 end
 
@@ -277,14 +275,17 @@ end
 # --- Overloads ---
 
 function Base.:*(BF_1::ButterflyFactorization, BF_2::ButterflyFactorization)
-    return mulBFs(BF_1, BF_2, max(BF_1.τ, BF_2.τ))
+    return cleanupidxs(mulBFs(BF_1, BF_2, max(BF_1.τ, BF_2.τ)))
 end
 
 function LinearAlgebra.mul!(
-    C::ButterflyFactorization, A::ButterflyFactorization, B::ButterflyFactorization
+    C::ButterflyFactorization,
+    A::ButterflyFactorization,
+    B::ButterflyFactorization;
+    τ=max(A.τ, B.τ),
 )
     # Replaces the internal fields of C with the newly computed product
-    res = mulBFs(A, B, max(A.τ, B.τ))
+    res = cleanupidxs(mulBFs(A, B, τ))
     C.Q = res.Q
     C.R = res.R
     C.P = res.P
