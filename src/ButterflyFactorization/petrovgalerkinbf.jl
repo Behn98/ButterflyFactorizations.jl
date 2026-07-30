@@ -49,7 +49,7 @@ function PetrovGalerkinBF(
     Cε=tree_parameters(cluster_testtree(tree)).Cε,
     scheduler=OhMyThreads.DynamicScheduler(),
     acctype=ComplexF64,
-    unbalancedints=true,
+    unbalancedints=false,
     leafcom=true,
 )
     # --- NEAR INTERACTIONS ---

@@ -35,7 +35,7 @@ It uses the admissibility condition (`isFarFunctor`) to separate interactions.
   - `farinteractions`: A `Dict` mapping an observer node ID to a list of source node
     IDs that are well-separated from it.
 """
-function nearandfar(tree, α; unbalancedints=true, leafcom=true)
+function nearandfar(tree, α; unbalancedints=false, leafcom=true)
     admissible = isFarFunctor(α)
     srctree = cluster_trialtree(tree)
     tsttree = cluster_testtree(tree)
@@ -92,7 +92,7 @@ function process_nodes!(
     farinteractions,
     nearinteractions;
     allowleafcompression=true,
-    allowunbalancedfints=true,
+    allowunbalancedfints=false,
 ) where {T}
     if admissible(srctree, tsttree, node_s, node_o) && (
         !(

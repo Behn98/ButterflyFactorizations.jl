@@ -13,7 +13,7 @@ using Random
 using SparseArrays
 using Statistics
 
-function fit_rank_parameters(logger::ButterflyFactorizations.RankLogger; safety_margin=1.15)
+function fit_rank_parameters(logger::ButterflyFactorizations.RankLogger; safety_margin=2)
     # Aggregate data from all threads
     all_records = reduce(vcat, logger.buffers)
     if isempty(all_records)
@@ -199,8 +199,8 @@ As = assemble(op, X, X)
 
 # Bygg träd
 #tree = H2Trees.KMeansTree(X.pos, 2; minvalues=100)
-#tree = H2Trees.TwoNTree(X, h;)#minvalues=100
-tree = H2Trees.BisectionTree(X.pos; max_points=50)
+tree = H2Trees.TwoNTree(X, h; minvalues=100)#
+#tree = H2Trees.BisectionTree(X.pos; max_points=50)
 blktree = H2Trees.BlockTree(tree, tree)
 
 # Create logger and compressor
@@ -219,10 +219,3 @@ reldif = norm(xs - xs2) / norm(xs2)
 C_opt, Cε_opt = fit_rank_parameters(logger)
 
 plot_rank_diagnostics(logger, C_opt, Cε_opt)
-
-#=
-"Rather than introducing locking overhead or injecting tree-level metadata into the
-performance-critical assembly loops, diagnostics were collected in thread-local buffers.
-Furthermore, analyzing rank compressibility against the geometric factor $x_1$ provides a
-more rigorous physical metric than discrete tree levels, as blocks at the same level can
-exhibit vastly different geometric separations."=#
