@@ -222,7 +222,7 @@ function estimate_rank_3d(
     a_o = cluster_radius(testT, Onode)
 
     d = norm(c_s .- c_o)
-    dmin = max(d - 0.5 * (a_s + a_o), 1e-4)
+    dmin = max(d - (a_s + a_o), 1e-4)
 
     # Isolated predictor variables
     x1 = (k * (a_s * a_o) / dmin)^2

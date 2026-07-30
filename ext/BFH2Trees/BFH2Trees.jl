@@ -8,10 +8,10 @@ ButterflyFactorizations.cluster_center(tree::H2Trees.H2ClusterTree, node::Int) =
     H2Trees.center(tree, node)
 
 ButterflyFactorizations.cluster_radius(tree::H2Trees.TwoNTree, node::Int) =
-    H2Trees.halfsize(tree, node)
+    H2Trees.halfsize(tree, node)*sqrt(3)
 
 ButterflyFactorizations.cluster_radius(tree::H2Trees.BisectionTree, node::Int) =
-    H2Trees.halfsize(tree, node)
+    H2Trees.halfsize(tree, node)*sqrt(3)
 
 ButterflyFactorizations.cluster_radius(tree::H2Trees.BoundingBallTree, node::Int) =
     H2Trees.radius(tree, node)

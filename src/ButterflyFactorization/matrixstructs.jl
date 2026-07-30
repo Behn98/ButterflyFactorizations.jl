@@ -104,6 +104,7 @@ function farmatrix(
         BlockSparseMatrix(Matrix{ComplexF64}[], Int[], Int[], mat.dim; scheduler=scheduler),
         mat.tree,
         mat.BFs,
+        mat.workspaces,
         mat.dim,
         mat.near_lookup,
         mat.far_lookup,

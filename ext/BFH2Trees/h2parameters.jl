@@ -15,13 +15,13 @@ near-field """
 # struct TreeParameters{T} <: AbstractTreeParameters α::T C::T Cε::T end
 
 function ButterflyFactorizations.tree_parameters(tree::H2Trees.TwoNTree)
-    return ButterflyFactorizations.TreeParameters(1.0, 48.1385, 0.8303)
+    return ButterflyFactorizations.TreeParameters(1.0, 2.4, 2)
 end
 
 function ButterflyFactorizations.tree_parameters(tree::H2Trees.BisectionTree)
-    return ButterflyFactorizations.TreeParameters(1.0, 6.6665, 1.7462)
+    return ButterflyFactorizations.TreeParameters(1.0, 2.4, 2)
 end
 
 function ButterflyFactorizations.tree_parameters(tree::H2Trees.BoundingBallTree)
-    return ButterflyFactorizations.TreeParameters(1.0, 1.5738, 1.6357)
+    return ButterflyFactorizations.TreeParameters(1.0, 2, 2)
 end
