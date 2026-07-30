@@ -30,12 +30,10 @@ It uses the admissibility condition (`isFarFunctor`) to separate interactions.
 
 **Returns:**
 
-  - `nearov`: A `Vector` containing the global observer indices for near-field blocks.
-  - `nearsv`: A `Vector` containing the global source indices for near-field blocks.
-  - `farinteractions`: A `Dict` mapping an observer node ID to a list of source node
-    IDs that are well-separated from it.
+  - `farinteractions`: A vector of tuples `(observer_node_id, source_node_id)` for admissible interactions.
+  - `nearinteractions`: A vector of tuples `(observer_node_id, source_node_id)` for non-admissible interactions.
 """
-function nearandfar(tree, α; unbalancedints=false, leafcom=true)
+function nearandfar(tree, α; unbalancedints=false, leafcomp=true, leafimbalance=true)
     admissible = isFarFunctor(α)
     srctree = cluster_trialtree(tree)
     tsttree = cluster_testtree(tree)
@@ -51,14 +49,15 @@ function nearandfar(tree, α; unbalancedints=false, leafcom=true)
         admissible,
         farinteractions,
         nearinteractions;
-        allowunbalancedfints=unbalancedints,
-        allowleafcompression=leafcom,
+        unbalancedints=unbalancedints,
+        leafcomp=leafcomp,
+        leafimbalance=leafimbalance,
     )
     return farinteractions, nearinteractions
 end
 
 """
-    process_nodes!(srctree, tsttree, node_o, node_s, admissible, far, nearsv, nearov; allowleafcompression=true, allowunbalancedfints=true)
+    process_nodes!(srctree, tsttree, node_o, node_s, admissible, farinteractions, nearinteractions; leafcomp=true, unbalancedints=true)
 
 Recursively analyzes the interaction between a source node and an observer node.
 
@@ -78,43 +77,40 @@ Recursively analyzes the interaction between a source node and an observer node.
 
   - `farinteractions`: Accumulator dictionary for far-field node pairs.
 
-  - `nearsv`, `nearov`: Accumulator vectors for near-field global indices.
+  - `nearinteractions`: Accumulator vector for near-field node pairs.
 
-      + `allowleafcompression`: If `false`, leaf nodes will not be compressed even if admissible.
-      + `allowunbalancedfints`: If `false`, both nodes must be split simultaneously, even if one is larger.
+      + `leafcomp`: If `false`, leaf nodes will not be compressed even if admissible.
+      + `unbalancedints`: If `false`, both nodes must be split simultaneously, even if one is larger.
 """
 function process_nodes!(
-    srctree::T,
-    tsttree::T,
+    srctree::T2,
+    tsttree::T1,
     node_o,
     node_s,
     admissible::isFarFunctor,
     farinteractions,
     nearinteractions;
-    allowleafcompression=true,
-    allowunbalancedfints=false,
-) where {T}
-    if admissible(srctree, tsttree, node_s, node_o) && (
-        !(
-            cluster_isleaf(tsttree, node_o) &&
-            cluster_isleaf(srctree, node_s) &&
-            !allowleafcompression
-        )
-    )
+    leafcomp=true,
+    unbalancedints=false,
+    leafimbalance=true,
+) where {T1,T2}
+    if admissible(srctree, tsttree, node_s, node_o) &&
+        (!(cluster_isleaf(tsttree, node_o) && cluster_isleaf(srctree, node_s) && !leafcomp))
         push!(farinteractions, (node_o, node_s))
         return nothing
-    elseif cluster_isleaf(tsttree, node_o) && cluster_isleaf(srctree, node_s)
-        #push!(nearsv, cluster_values(srctree, node_s))
-        #push!(nearov, cluster_values(tsttree, node_o))
+    elseif (cluster_isleaf(tsttree, node_o) && cluster_isleaf(srctree, node_s)) || (
+        !leafimbalance &&
+        (cluster_isleaf(tsttree, node_o) || cluster_isleaf(srctree, node_s))
+    )
         push!(nearinteractions, (node_o, node_s))
         return nothing
     end
     # split the larger node
-    if allowunbalancedfints
+    if unbalancedints
         if (
             largernode(tsttree, srctree, node_o, node_s) && !cluster_isleaf(tsttree, node_o)
         ) || cluster_isleaf(srctree, node_s)
-            for child_o in collect(cluster_children(tsttree, node_o))
+            for child_o in cluster_children(tsttree, node_o)
                 process_nodes!(
                     srctree,
                     tsttree,
@@ -123,12 +119,13 @@ function process_nodes!(
                     admissible,
                     farinteractions,
                     nearinteractions;
-                    allowleafcompression=allowleafcompression,
-                    allowunbalancedfints=allowunbalancedfints,
+                    leafcomp=leafcomp,
+                    unbalancedints=unbalancedints,
+                    leafimbalance=leafimbalance,
                 )
             end
         else
-            for child_s in collect(cluster_children(srctree, node_s))
+            for child_s in cluster_children(srctree, node_s)
                 process_nodes!(
                     srctree,
                     tsttree,
@@ -137,15 +134,46 @@ function process_nodes!(
                     admissible,
                     farinteractions,
                     nearinteractions;
-                    allowleafcompression=allowleafcompression,
-                    allowunbalancedfints=allowunbalancedfints,
+                    leafcomp=leafcomp,
+                    unbalancedints=unbalancedints,
+                    leafimbalance=leafimbalance,
                 )
             end
         end
     else
-        if !cluster_isleaf(tsttree, node_o) && !cluster_isleaf(srctree, node_s)
+        if cluster_isleaf(tsttree, node_o)
+            for child_s in cluster_children(srctree, node_s)
+                process_nodes!(
+                    srctree,
+                    tsttree,
+                    node_o,
+                    child_s,
+                    admissible,
+                    farinteractions,
+                    nearinteractions;
+                    leafcomp=leafcomp,
+                    unbalancedints=unbalancedints,
+                    leafimbalance=leafimbalance,
+                )
+            end
+        elseif cluster_isleaf(srctree, node_s)
+            for child_o in cluster_children(tsttree, node_o)
+                process_nodes!(
+                    srctree,
+                    tsttree,
+                    child_o,
+                    node_s,
+                    admissible,
+                    farinteractions,
+                    nearinteractions;
+                    leafcomp=leafcomp,
+                    unbalancedints=unbalancedints,
+                    leafimbalance=leafimbalance,
+                )
+            end
+        else
             for child_o in collect(cluster_children(tsttree, node_o))
-                for child_s in collect(cluster_children(srctree, node_s))
+                for child_s in cluster_children(srctree, node_s)
                     process_nodes!(
                         srctree,
                         tsttree,
@@ -154,38 +182,11 @@ function process_nodes!(
                         admissible,
                         farinteractions,
                         nearinteractions;
-                        allowleafcompression=allowleafcompression,
-                        allowunbalancedfints=allowunbalancedfints,
+                        leafcomp=leafcomp,
+                        unbalancedints=unbalancedints,
+                        leafimbalance=leafimbalance,
                     )
                 end
-            end
-        elseif !cluster_isleaf(tsttree, node_o)
-            for child_o in collect(cluster_children(tsttree, node_o))
-                process_nodes!(
-                    srctree,
-                    tsttree,
-                    child_o,
-                    node_s,
-                    admissible,
-                    farinteractions,
-                    nearinteractions;
-                    allowleafcompression=allowleafcompression,
-                    allowunbalancedfints=allowunbalancedfints,
-                )
-            end
-        else
-            for child_s in collect(cluster_children(srctree, node_s))
-                process_nodes!(
-                    srctree,
-                    tsttree,
-                    node_o,
-                    child_s,
-                    admissible,
-                    farinteractions,
-                    nearinteractions;
-                    allowleafcompression=allowleafcompression,
-                    allowunbalancedfints=allowunbalancedfints,
-                )
             end
         end
     end

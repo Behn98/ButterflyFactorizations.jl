@@ -6,7 +6,7 @@ end
 # Main Assembly Routine
 # ------------------------------------------------------------------
 """
-    assemble_BF(kernelmatrix, H2Blocktree, NO, NS, k, τ; Compressor=PartialQR())
+    assemble_BF(kernelmatrix, blktree, NO, NS, k, τ; Compressor=PartialQR())
 
 Constructs the Butterfly Factorization for a given block in a **dictionary format**.
 
@@ -19,7 +19,7 @@ without permanently storing the tree.
 **Arguments:**
 
   - `kernelmatrix`: Function computing matrix entries for specified row/column indices.
-  - `H2Blocktree`: The paired source-observer tree structure.
+  - `blktree`: The paired source-observer tree structure.
   - `NO`, `NS`: The root IDs of the observer (test) and source (trial) spaces.
   - `k`, `τ`: Wavenumber (crucial for rank estimation) and precision tolerance.
   - `compressor`: Compression scheme for low-rank blocks (default: `PartialQR`).
@@ -35,19 +35,19 @@ MV products, which is managed through the `PermQ` and `PermP` dictionaries.
 """
 function assemble_BF(
     kernelmatrix,
-    H2Blocktree,
+    blktree,
     NO::Int,
     NS::Int,
     k::Float64,
     τ::Float64;
-    C=tree_parameters(cluster_testtree(H2Blocktree)).C,
-    Cε=tree_parameters(cluster_testtree(H2Blocktree)).Cε,
+    C=tree_parameters(cluster_testtree(blktree)).C,
+    Cε=tree_parameters(cluster_testtree(blktree)).Cε,
     compressor=ButterflyFactorizations.PartialQR(),
     scheduler=OhMyThreads.SerialScheduler(),
 )
     # --- Trees & Helpers ---
-    trialT = cluster_trialtree(H2Blocktree)
-    testT = cluster_testtree(H2Blocktree)
+    trialT = cluster_trialtree(blktree)
+    testT = cluster_testtree(blktree)
     treeS = traverseandpad(trialT, NS)
     treeO = traverseandpad(testT, NO)
 
@@ -173,7 +173,7 @@ function assemble_BF(
         return P[idx] = ButterflyBlock(Oleaf, NS, Oleaf, NS, Z)
     end
 
-    return ButterflyFactorization(Q, R, P, H2Blocktree, k, τ)
+    return ButterflyFactorization(Q, R, P, blktree, k, τ)
 end
 
 # ------------------------------------------------------------------
@@ -444,7 +444,7 @@ function build_observerfrozen_R_blocks(
 end
 
 """
-    assemble_ButterflyFactorization_Mat(kernelmatrix, H2Blocktree, NO, NS, k, τ; compressor=PartialQR())
+    assemble_BF_Mat(kernelmatrix, blktree, NO, NS, k, τ; compressor=PartialQR())
 
 Constructs the Butterfly Factorization for a given block in a **sparse matrix format**.
 
@@ -459,16 +459,16 @@ overhead), it allows for dramatically faster direct Matrix-Vector applications u
 standard linear algebra methods. It also provides a clear visual and algebraic
 representation of the overall block structure, which is invaluable for debugging.
 """
-function assemble_ButterflyFactorization_Mat(
+function assemble_BF_Mat(
     kernelmatrix,
-    H2Blocktree,
+    blktree,
     NO::Int,
     NS::Int,
     k::Float64,
     τ::Float64;
     compressor=ButterflyFactorizations.PartialQR(),
-    C=tree_parameters(cluster_testtree(H2Blocktree)).C,
-    Cε=tree_parameters(cluster_testtree(H2Blocktree)).Cε,
+    C=tree_parameters(cluster_testtree(blktree)).C,
+    Cε=tree_parameters(cluster_testtree(blktree)).Cε,
 )
 
     # --- containers ---
@@ -482,8 +482,8 @@ function assemble_ButterflyFactorization_Mat(
     PermP = Vector{Int}()
 
     # --- trees & helpers ---
-    trialT = H2Trees.cluster_trialtree(H2Blocktree)
-    testT = H2Trees.cluster_testtree(H2Blocktree)
+    trialT = cluster_trialtree(blktree)
+    testT = cluster_testtree(blktree)
 
     treeS = traverseandpad(trialT, NS)
     treeO = traverseandpad(testT, NO)

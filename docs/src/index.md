@@ -14,7 +14,7 @@ PetrovGalerkinBF
 PetrovGalerkinBF_Mat
 FlatBF
 assemble_BF
-assemble_ButterflyFactorization_Mat
+assemble_BF_Mat
 PartialQR
 BEASTKernelMatrix
 ```

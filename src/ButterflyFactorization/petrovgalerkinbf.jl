@@ -50,39 +50,68 @@ function PetrovGalerkinBF(
     scheduler=OhMyThreads.DynamicScheduler(),
     acctype=ComplexF64,
     unbalancedints=false,
-    leafcom=true,
+    leafcomp=true,
+    leafimbalance=true,
 )
     # --- NEAR INTERACTIONS ---
     nearmatrix_near = AbstractKernelMatrix(operator, testspace, trialspace; type=:near)
-    farints, nearints = nearandfar(tree, α; unbalancedints=unbalancedints, leafcom=leafcom)
+    farints, nearints = nearandfar(
+        tree,
+        α;
+        unbalancedints=unbalancedints,
+        leafcomp=leafcomp,
+        leafimbalance=leafimbalance,
+    )
+    n_ints = length(nearints)
 
-    blocks = Vector{Matrix{acctype}}(undef, length(nearints))
-    test_indices = Vector{Vector{Int64}}(undef, length(nearints))
-    trial_indices = Vector{Vector{Int64}}(undef, length(nearints))
+    blocks = Vector{Matrix{acctype}}(undef, n_ints)
+    test_indices = Vector{Vector{Int64}}(undef, n_ints)
+    trial_indices = Vector{Vector{Int64}}(undef, n_ints)
 
-    near_rows = Vector{Int}(undef, length(nearints))
-    near_cols = Vector{Int}(undef, length(nearints))
-    near_vals = Vector{Int}(undef, length(nearints))
+    near_rows = Vector{Int}(undef, n_ints)
+    near_cols = Vector{Int}(undef, n_ints)
+    near_vals = Vector{Int}(undef, n_ints)
 
+    # ---------------------------------------------------------
+    # PASS 1: Sequential Pre-allocation & Index Fetching
+    # (Keeps all dynamic allocations and array pushes on the main thread)
+    # ---------------------------------------------------------
+    for i in 1:n_ints
+        (node_o, node_s) = nearints[i]
+
+        near_rows[i] = node_o
+        near_cols[i] = node_s
+        near_vals[i] = i
+
+        test_indices[i] = cluster_values(tree.testcluster, node_o)
+        trial_indices[i] = cluster_values(tree.trialcluster, node_s)
+
+        # Allocate uninitialized memory outside the threaded loop
+        blocks[i] = Matrix{acctype}(
+            undef, length(test_indices[i]), length(trial_indices[i])
+        )
+    end
+
+    # ---------------------------------------------------------
+    # PASS 2: Parallel Block Evaluation
+    # (Threads only execute pure compute and memory overwrites)
+    # ---------------------------------------------------------
     let nearmatrix_near = nearmatrix_near
-        @tasks for i in eachindex(nearints)
+        @tasks for i in 1:n_ints
             @set scheduler = scheduler
-            (node_o, node_s) = nearints[i]
 
-            near_rows[i] = node_o
-            near_cols[i] = node_s
-            near_vals[i] = i
+            blk = blocks[i]
 
-            test_indices[i] = cluster_values(tree.testcluster, node_o)
-            trial_indices[i] = cluster_values(tree.trialcluster, node_s)
+            # Explicitly zero out the pre-allocated block memory
+            # (matches the behavior of `zeros()`)
+            fill!(blk, zero(acctype))
 
-            blk = zeros(acctype, length(test_indices[i]), length(trial_indices[i]))
+            # Pure compute
             nearmatrix_near(blk, test_indices[i], trial_indices[i])
-            blocks[i] = blk
         end
     end
 
-    nears = if !isempty(nearints)
+    nears = if n_ints > 0
         BlockSparseMatrix(
             blocks,
             test_indices,
@@ -91,7 +120,13 @@ function PetrovGalerkinBF(
             scheduler=OhMyThreads.DynamicScheduler(),#SerialScheduler()
         )
     else
-        sparse(zeros(acctype, size(nearmatrix_near)...))
+        BlockSparseMatrix(
+            Matrix{acctype}[], # Changed from ComplexF64 to acctype for consistency
+            Int[],
+            Int[],
+            size(nearmatrix_near);
+            scheduler=scheduler,
+        )
     end
 
     # --- FAR INTERACTIONS (FLAT BUTTERFLIES) ---
@@ -184,22 +219,44 @@ function PetrovGalerkinBF_Mat(
     scheduler=OhMyThreads.DynamicScheduler(),
     acctype=ComplexF64,
 )
-    parameterset = tree_parameters(tree)
     # --- NEAR INTERACTIONS ---
     nearmatrix = AbstractKernelMatrix(operator, testspace, trialspace;)
     farints, nearints = nearandfar(tree, α)
-    blocks = Vector{Matrix{acctype}}(undef, length(nearints))
-    values = Vector{Vector{Int64}}(undef, length(nearints))
-    nearvalues = Vector{Vector{Int64}}(undef, length(nearints))
+    n_ints = length(nearints)
+
+    blocks = Vector{Matrix{acctype}}(undef, n_ints)
+    values = Vector{Vector{Int64}}(undef, n_ints)
+    nearvalues = Vector{Vector{Int64}}(undef, n_ints)
+
+    # ---------------------------------------------------------
+    # PASS 1: Sequential Pre-allocation
+    # (Fast, lock-free, keeps the GC happy)
+    # ---------------------------------------------------------
+    for i in 1:n_ints
+        (node_o, node_s) = nearints[i]
+        values[i] = cluster_values(tree.testcluster, node_o)
+        nearvalues[i] = cluster_values(tree.trialcluster, node_s)
+
+        # Allocate uninitialized memory OUTSIDE the threaded loop
+        blocks[i] = Matrix{acctype}(undef, length(values[i]), length(nearvalues[i]))
+    end
+
+    # ---------------------------------------------------------
+    # PASS 2: Parallel Evaluation
+    # (Zero allocations = maximum parallel scaling)
+    # ---------------------------------------------------------
     let nearmatrix = nearmatrix
-        @tasks for i in eachindex(nearints)
-            (node_o, node_s) = nearints[i]
-            @set scheduler = scheduler #DynamicScheduler() #SerialScheduler
-            values[i] = cluster_values(tree.testcluster, node_o)
-            nearvalues[i] = cluster_values(tree.trialcluster, node_s)
-            blk = zeros(acctype, length(values[i]), length(nearvalues[i]))
+        @tasks for i in 1:n_ints
+            @set scheduler = scheduler
+
+            blk = blocks[i]
+
+            # If your `nearmatrix` function purely over-writes the matrix,
+            # you DO NOT need this fill! line (saving even more time).
+            # If it accumulates (+=), then keep it.
+            fill!(blk, zero(acctype))
+
             nearmatrix(blk, values[i], nearvalues[i])
-            blocks[i] = blk
         end
     end
     nears = BlockSparseMatrix(
@@ -211,7 +268,7 @@ function PetrovGalerkinBF_Mat(
         @tasks for i in eachindex(farints)
             @set scheduler = DynamicScheduler()
             (NO, NS) = farints[i]
-            fly[i] = assemble_ButterflyFactorization_Mat(
+            fly[i] = assemble_BF_Mat(
                 nearmatrix, tree, NO, NS, k, tol; compressor=compressor, C=C, Cε=Cε
             )
         end
