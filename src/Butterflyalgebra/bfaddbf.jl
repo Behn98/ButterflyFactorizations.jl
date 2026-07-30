@@ -107,9 +107,7 @@ function add_eqbfs(
         newP[i] = BF1.P[i]
     end
 
-    return recompress_BF(
-        ButterflyFactorization{T,M}(newQ, newR, newP, BF1.tree, BF1.k, τ), τ
-    )
+    return recompress_BF(ButterflyFactorization(newQ, newR, newP, BF1.tree, BF1.k, τ), τ)
 end
 
 Base.:+(BF_1::ButterflyFactorization{T,M}, BF_2::ButterflyFactorization{T,M}) where {T,M} =

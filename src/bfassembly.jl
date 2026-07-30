@@ -1,5 +1,5 @@
 @inline function fastkey(s::Int, o::Int)::Int
-    return (s << 32) | o
+    return (s << 32) | (o & 0xFFFFFFFF)
 end
 
 # ------------------------------------------------------------------

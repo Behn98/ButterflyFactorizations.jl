@@ -16,10 +16,9 @@ using LinearMaps: LinearMaps
     # 1. Near Interactions
     y .+= A.nearinteractions * x
 
-    # 2. Far Interactions
-    # 2. Far Interactions
+    # 2. Far Interactions (Looping over all the individual BFs)
     if !isempty(A.BFs)
-        # Zero out all persistent thread buffers before we begin
+        # Clear out thread buffers
         for buf in A.y_thread_buffers
             fill!(buf, zero(T))
         end
@@ -27,19 +26,19 @@ using LinearMaps: LinearMaps
         @tasks for i in 1:length(A.BFs)
             @set scheduler = scheduler
 
-            # Grab the buffer belonging to the current thread running this task
+            # What thread is executing this specific iteration?
             tid = Threads.threadid()
+
+            # Grab the workspace and y-buffer assigned to this thread
             y_local = A.y_thread_buffers[tid]
-
+            ws_local = A.thread_workspaces[tid]
             bf = A.BFs[i]
-            bfw = A.workspaces[i]
 
-            # Accumulate directly into the thread's persistent buffer!
-            mul!(y_local, bf, x, bfw, 1, 1)
+            # The thread re-uses its personal workspace to evaluate this BF.
+            mul!(y_local, bf, x, ws_local, 1, 1)
         end
 
-        # 3. Reduction
-        # Sum all thread buffers back into the main output vector `y`
+        # 3. Reduction: Sum all the thread local vectors back into the main `y`
         for buf in A.y_thread_buffers
             y .+= buf
         end

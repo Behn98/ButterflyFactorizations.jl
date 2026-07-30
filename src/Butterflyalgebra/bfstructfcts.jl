@@ -38,6 +38,41 @@ end
 get_n_otilde(e::RankEstimate) = e.n_otilde
 get_n_otilde(n::Int) = n
 
+# 1. Type-parameterized outer constructor
+# Cleaner constructor for initialization
+function ThreadButterflyWorkspace{T}(max_levels::Int=20) where {T}
+    level_buffers = [Vector{Vector{T}}() for _ in 1:max_levels]
+    level_lengths = [Vector{Int}() for _ in 1:max_levels]
+    return ThreadButterflyWorkspace{T}(level_buffers, level_lengths)
+end
+
+# Helper to ensure buffers are sized correctly for a specific block
+@inline function get_buffer_and_set_len!(
+    pool::Vector{Vector{T}}, lens::Vector{Int}, ptr::Int, required_size::Int
+) where {T}
+    # 1. Expand pointer slots if needed
+    if ptr > length(pool)
+        old_len = length(pool)
+        resize!(pool, ptr)
+        resize!(lens, ptr)
+        for i in (old_len + 1):ptr
+            pool[i] = Vector{T}()
+            lens[i] = 0
+        end
+    end
+
+    # 2. Grab buffer and ensure physical capacity
+    buf = pool[ptr]
+    if length(buf) < required_size
+        resize!(buf, required_size)
+    end
+
+    # 3. 🚀 Record the EXACT mathematical length written to this pointer
+    lens[ptr] = required_size
+
+    return buf
+end
+
 # ------------------------------------------------------------------
 # Helpers for memory & rank analysis
 # ------------------------------------------------------------------

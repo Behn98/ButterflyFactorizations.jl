@@ -165,11 +165,9 @@ function PetrovGalerkinBF(
 
     near_lookup = sparse(near_rows, near_cols, near_vals, num_test_nodes, num_trial_nodes)
     far_lookup  = sparse(far_rows, far_cols, far_vals, num_test_nodes, num_trial_nodes)
-    # 4. Initialize standard workspaces
-    workspaces = map(ButterflyWorkspace, fly)
 
     return PetrovGalerkinBF{acctype}(
-        nears, tree, fly, workspaces, size(nearmatrix_far), near_lookup, far_lookup
+        nears, tree, fly, size(nearmatrix_far), near_lookup, far_lookup
     )
 end
 

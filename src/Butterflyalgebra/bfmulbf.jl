@@ -41,14 +41,14 @@ function mulBFs(
         active_levels = multiply_adjacent!(active_levels, idx_mul)
 
         # 4. Trimming / Recompression
-        temp_BF = ButterflyFactorization{T,M}(
+        temp_BF = ButterflyFactorization(
             BF_2.Q, copy(reverse(active_levels)), BF_1.P, BF_1.tree, BF_1.k, τ
         )
         temp_BF = recompress_BF(temp_BF, τ)
         active_levels = reverse(temp_BF.R)
     end
 
-    return ButterflyFactorization{T,M}(
+    return ButterflyFactorization(
         BF_2.Q,
         reverse(active_levels),
         BF_1.P,
@@ -377,7 +377,7 @@ function cleanupidxs(BF::ButterflyFactorization{T,M}) where {T,M}
         )
     end
 
-    return ButterflyFactorization{T,M}(newQ, newR, newP, BF.tree, BF.k, BF.τ)
+    return ButterflyFactorization(newQ, newR, newP, BF.tree, BF.k, BF.τ)
 end
 
 function trivialmul(
@@ -398,7 +398,7 @@ function trivialmul(
         multiply_adjacent!(active_levels, L - m)
     end
 
-    return ButterflyFactorization{T,M}(
+    return ButterflyFactorization(
         BF_2.Q,
         reverse(active_levels),
         BF_1.P,

@@ -123,7 +123,7 @@ function splitobsside(
                 idx += 1
             end
         end
-        bfdiagonal[i] = ButterflyFactorization{T,M}(
+        bfdiagonal[i] = ButterflyFactorization(
             Vector{ButterflyBlock{T}}(), newR, newP, BF.tree, BF.k, τ
         )
     end
@@ -214,5 +214,5 @@ function partialcleanupidxs(BF::ButterflyFactorization{T,M}) where {T,M}
         )
     end
 
-    return ButterflyFactorization{T,M}(newQ, newR, newP, BF.tree, BF.k, BF.τ)
+    return ButterflyFactorization(newQ, newR, newP, BF.tree, BF.k, BF.τ)
 end

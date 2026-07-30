@@ -1,41 +1,47 @@
 struct PetrovGalerkinBF{
-    T,NearInteractionsType,LType<:AbstractMatrix{Int},BFType,WSType,treetype
+    T,NearInteractionsType,LType<:AbstractMatrix{Int},BFType,treetype
 } <: LinearMaps.LinearMap{T}
     nearinteractions::NearInteractionsType
     dim::Tuple{Int,Int}
     tree::treetype
     BFs::Vector{BFType}
-    workspaces::Vector{WSType}   # 🚀 Added to hold pre-allocated workspaces
     near_lookup::LType
     far_lookup::LType
     y_thread_buffers::Vector{Vector{T}}
+    thread_workspaces::Vector{ThreadButterflyWorkspace{T}} # 🚀 Only n_threads workspaces!
 
     function PetrovGalerkinBF{T}(
-        nearinteractions, tree, BFs, workspaces, dim, near_lookup, far_lookup
+        nearinteractions, tree, BFs, dim, near_lookup, far_lookup
     ) where {T}
         n_threads = if isdefined(Threads, :maxthreadid)
             Threads.maxthreadid()
         else
             Threads.nthreads() + 1
         end
-        return new{
-            T,
-            typeof(nearinteractions),
-            typeof(near_lookup),
-            eltype(BFs),
-            eltype(workspaces),
-            typeof(tree),
-        }(
-            nearinteractions,
-            dim,
-            tree,
-            BFs,
-            workspaces,
-            near_lookup,
-            far_lookup,
-            [zeros(T, dim[1]) for _ in 1:n_threads],
+
+        # 1. Initialize empty workspaces for each thread (max depth 20 levels)
+        thread_ws = [ThreadButterflyWorkspace{T}(20) for _ in 1:n_threads]
+
+        # 2. Initialize thread-local output buffers
+        thread_y = [zeros(T, dim[1]) for _ in 1:n_threads]
+
+        return new{T,typeof(nearinteractions),typeof(near_lookup),eltype(BFs),typeof(tree)}(
+            nearinteractions, dim, tree, BFs, near_lookup, far_lookup, thread_y, thread_ws
         )
     end
+end
+
+function farmatrix(
+    mat::PetrovGalerkinBF{T}; scheduler=OhMyThreads.SerialScheduler()
+) where {T}
+    return PetrovGalerkinBF{T}(
+        BlockSparseMatrix(Matrix{ComplexF64}[], Int[], Int[], mat.dim; scheduler=scheduler),
+        mat.tree,
+        mat.BFs,
+        mat.dim,
+        mat.near_lookup,
+        mat.far_lookup,
+    )
 end
 
 struct PetrovGalerkinBF_Mat{T,NearInteractionsType} <: LinearMaps.LinearMap{T}
@@ -60,53 +66,4 @@ struct PetrovGalerkinBF_Mat{T,NearInteractionsType} <: LinearMaps.LinearMap{T}
             BFs,#::Vector{BF}
         )
     end
-end
-
-abstract type AbstractBlockView{T} <: LinearMaps.LinearMap{T} end
-
-# Fixed the syntax typo here (<: instead of < ref)
-struct NearBlockView{T,M<:AbstractMatrix{T}} <: AbstractBlockView{T}
-    obs_id::Int
-    src_id::Int
-    dim::Tuple{Int,Int}
-    matrix::M
-end
-
-struct FarBlockView{T,BFType} <: AbstractBlockView{T}
-    obs_id::Int
-    src_id::Int
-    dim::Tuple{Int,Int}
-    bf::BFType
-end
-
-# For parent/composite nodes that aren't leaves or direct BFs
-struct CompositeBlockView{
-    T,NearInteractionsType,LType<:SparseArrays.SparseMatrixCSC{Int,Int}
-} <: AbstractBlockView{T}
-    nearinteractions::NearInteractionsType
-    dim::Tuple{Int,Int}
-    BFs::Vector{ButterflyFactorization{T}}
-    near_lookup::LType
-    far_lookup::LType
-    function CompositeBlockView{T}(
-        nearinteractions, dim, BFs, near_lookup, far_lookup
-    ) where {T}
-        return new{T,typeof(nearinteractions),typeof(near_lookup)}(
-            nearinteractions, dim, BFs, near_lookup, far_lookup
-        )
-    end
-end
-
-function farmatrix(
-    mat::PetrovGalerkinBF{T}; scheduler=OhMyThreads.SerialScheduler()
-) where {T}
-    return PetrovGalerkinBF{T}(
-        BlockSparseMatrix(Matrix{ComplexF64}[], Int[], Int[], mat.dim; scheduler=scheduler),
-        mat.tree,
-        mat.BFs,
-        mat.workspaces,
-        mat.dim,
-        mat.near_lookup,
-        mat.far_lookup,
-    )
 end

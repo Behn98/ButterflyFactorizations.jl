@@ -121,7 +121,7 @@ function recompress_BF_right(
     end
 
     # Return new factorisation
-    return ButterflyFactorization{T,M}(
+    return ButterflyFactorization(
         Butterfly_init.Q,
         R_factors,
         Butterfly_init.P,

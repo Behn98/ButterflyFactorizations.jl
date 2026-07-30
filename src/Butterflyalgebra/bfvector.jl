@@ -188,6 +188,113 @@ function LinearAlgebra.mul!(
     return y
 end
 
+function LinearAlgebra.mul!(
+    y::AbstractVector{T},
+    BF::ButterflyFactorization{T,M},
+    x::AbstractVector{T},
+    ws::ThreadButterflyWorkspace{T},
+    α::Number=1,
+    β::Number=0;
+) where {T,M}
+    trialT = cluster_trialtree(BF.tree)
+    testT  = cluster_testtree(BF.tree)
+
+    if β != 1
+        β == 0 ? fill!(y, 0) : rmul!(y, β)
+    end
+
+    num_levels = length(BF.R) + 1
+
+    # Safely expand workspace depth if this BF > 20 levels
+    if length(ws.level_buffers) < num_levels
+        old_len = length(ws.level_buffers)
+        resize!(ws.level_buffers, num_levels)
+        resize!(ws.level_lengths, num_levels)
+        for i in (old_len + 1):num_levels
+            ws.level_buffers[i] = Vector{Vector{T}}()
+            ws.level_lengths[i] = Vector{Int}()
+        end
+    end
+
+    # ---------------------------------------------
+    # 1. Leaf Level Q
+    # ---------------------------------------------
+    buf_Q = ws.level_buffers[1]
+    len_Q = ws.level_lengths[1]
+
+    for block in BF.Q
+        src_idx = cluster_values(trialT, block.src_in)
+        v_in = view(x, src_idx)
+
+        req_size = block.data isa UniformScaling ? length(src_idx) : size(block.data, 1)
+        v_out = get_buffer_and_set_len!(buf_Q, len_Q, block.out_ptr, req_size)
+        v_out_view = view(v_out, 1:req_size)
+
+        if block.data isa UniformScaling
+            copyto!(v_out_view, v_in)
+        else
+            mul!(v_out_view, block.data, v_in)
+        end
+    end
+
+    # ---------------------------------------------
+    # 2. Intermediate R Levels
+    # ---------------------------------------------
+    for (l, level) in enumerate(BF.R)
+        buf_in = ws.level_buffers[l]
+        len_in = ws.level_lengths[l]
+
+        buf_out = ws.level_buffers[l + 1]
+        len_out = ws.level_lengths[l + 1]
+
+        # Reset outputs first
+        for block in level.blocks
+            in_size = len_in[block.in_ptr]
+            req_size = block.data isa UniformScaling ? in_size : size(block.data, 1)
+
+            v_out = get_buffer_and_set_len!(buf_out, len_out, block.out_ptr, req_size)
+            fill!(view(v_out, 1:req_size), 0)
+        end
+
+        # Multiply and accumulate
+        for block in level.blocks
+            in_size = len_in[block.in_ptr]
+            v_in = view(buf_in[block.in_ptr], 1:in_size) # 🚀 Exact valid size
+
+            req_size = block.data isa UniformScaling ? in_size : size(block.data, 1)
+            v_out = view(buf_out[block.out_ptr], 1:req_size)
+
+            if block.data isa UniformScaling
+                v_out .+= v_in
+            else
+                mul!(v_out, block.data, v_in, 1, 1)
+            end
+        end
+    end
+
+    # ---------------------------------------------
+    # 3. Leaf Level P
+    # ---------------------------------------------
+    last_buf = ws.level_buffers[num_levels]
+    last_len = ws.level_lengths[num_levels]
+
+    for block in BF.P
+        in_size = last_len[block.in_ptr]
+        v_in = view(last_buf[block.in_ptr], 1:in_size) # 🚀 Exact valid size
+
+        obs_idx = cluster_values(testT, block.obs_out)
+        y_view = view(y, obs_idx)
+
+        if block.data isa UniformScaling
+            y_view .+= α .* v_in
+        else
+            mul!(y_view, block.data, v_in, α, 1)
+        end
+    end
+
+    return y
+end
+
 # Enable `y = BF * x`
 function Base.:*(BF::ButterflyFactorization, x::AbstractVector)
     rows, _ = size(BF)
