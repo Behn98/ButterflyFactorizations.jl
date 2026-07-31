@@ -1,20 +1,4 @@
 """
-    isFarFunctor
-
-A functor (callable struct) used to determine if two bounding boxes (clusters)
-in a hierarchical tree are well-separated ("far") enough to be compressed.
-
-**Fields:**
-
-  - `α::Float64`: The separation parameter. A larger `α` forces clusters to be
-    further apart before they are considered admissible for low-rank approximation.
-"""
-struct isFarFunctor
-    α::Float64
-    isFarFunctor(α) = new(α)
-end
-
-"""
     nearandfar(tree::H2Trees.BlockTree, α)
 
 Traverses a block-tree and categorizes interactions between source and observer
@@ -33,14 +17,16 @@ It uses the admissibility condition (`isFarFunctor`) to separate interactions.
   - `farinteractions`: A vector of tuples `(observer_node_id, source_node_id)` for admissible interactions.
   - `nearinteractions`: A vector of tuples `(observer_node_id, source_node_id)` for non-admissible interactions.
 """
-function nearandfar(tree, α; unbalancedints=false, leafcomp=true, leafimbalance=true)
-    admissible = isFarFunctor(α)
+function nearandfar(
+    tree, admissible; unbalancedints=false, leafcomp=true, leafimbalance=true
+)
     srctree = cluster_trialtree(tree)
     tsttree = cluster_testtree(tree)
     node_o = cluster_root(tsttree)
     node_s = cluster_root(srctree)
-    nearinteractions = Vector{Tuple{Int64,Int64}}()         #observernodeid --> sourcenodeid
-    farinteractions = Vector{Tuple{Int64,Int64}}()          #observernodeid --> sourcenodeid
+    nearinteractions = Vector{Tuple{Int64,Int64}}()
+    farinteractions = Vector{Tuple{Int64,Int64}}()
+
     process_nodes!(
         srctree,
         tsttree,
@@ -54,6 +40,12 @@ function nearandfar(tree, α; unbalancedints=false, leafcomp=true, leafimbalance
         leafimbalance=leafimbalance,
     )
     return farinteractions, nearinteractions
+end
+
+#Backwards-compatible wrapper that automatically creates `isFarFunctor`
+# if a Float64 (α) is passed instead.
+function nearandfar(tree, α::Float64; kwargs...)
+    return nearandfar(tree, isFarFunctor(α); kwargs...)
 end
 
 """
@@ -87,7 +79,7 @@ function process_nodes!(
     tsttree::T1,
     node_o,
     node_s,
-    admissible::isFarFunctor,
+    admissible,
     farinteractions,
     nearinteractions;
     leafcomp=true,

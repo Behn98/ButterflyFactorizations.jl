@@ -93,3 +93,19 @@ function (t::ButterflyFactorizations.isFarFunctor)(
     # If the closest points of the cubes are further than α * W, they are far-field
     return sqrt(mind_sq) > target_dist
 end
+
+function (t::ButterflyFactorizations.CenterDistanceAdmissibility)(
+    srctree::H2Trees.BisectionTree, tsttree::H2Trees.BisectionTree, snode::Int, onode::Int
+)
+    ocenter = ButterflyFactorizations.cluster_center(tsttree, onode)
+    scenter = ButterflyFactorizations.cluster_center(srctree, snode)
+
+    olength = ButterflyFactorizations.cluster_radius(tsttree, onode)
+    slength = ButterflyFactorizations.cluster_radius(srctree, snode)
+
+    # 1. Center-to-center distance (Immune to the origin-overlap trap!)
+    dist_centers = norm(scenter - ocenter)
+
+    # 2. Standard spatial condition
+    return dist_centers > t.β * (slength + olength)
+end

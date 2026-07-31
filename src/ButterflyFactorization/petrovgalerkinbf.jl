@@ -44,7 +44,7 @@ function PetrovGalerkinBF(
     k::Float64;
     compressor=ButterflyFactorizations.PartialQR(),
     tol=1e-3,
-    α=tree_parameters(cluster_testtree(tree)).α,
+    admissibility=isFarFunctor(tree_parameters(cluster_testtree(tree)).α),
     C=tree_parameters(cluster_testtree(tree)).C,
     Cε=tree_parameters(cluster_testtree(tree)).Cε,
     scheduler=OhMyThreads.DynamicScheduler(),
@@ -55,15 +55,16 @@ function PetrovGalerkinBF(
 )
     # --- NEAR INTERACTIONS ---
     nearmatrix_near = AbstractKernelMatrix(operator, testspace, trialspace; type=:near)
+
+    # 🚀 Pass the functor directly instead of α
     farints, nearints = nearandfar(
         tree,
-        α;
+        admissibility;
         unbalancedints=unbalancedints,
         leafcomp=leafcomp,
         leafimbalance=leafimbalance,
     )
     n_ints = length(nearints)
-
     blocks = Vector{Matrix{acctype}}(undef, n_ints)
     test_indices = Vector{Vector{Int64}}(undef, n_ints)
     trial_indices = Vector{Vector{Int64}}(undef, n_ints)
@@ -76,6 +77,7 @@ function PetrovGalerkinBF(
     # PASS 1: Sequential Pre-allocation & Index Fetching
     # (Keeps all dynamic allocations and array pushes on the main thread)
     # ---------------------------------------------------------
+
     for i in 1:n_ints
         (node_o, node_s) = nearints[i]
 
@@ -110,14 +112,13 @@ function PetrovGalerkinBF(
             nearmatrix_near(blk, test_indices[i], trial_indices[i])
         end
     end
-
     nears = if n_ints > 0
         BlockSparseMatrix(
             blocks,
             test_indices,
             trial_indices,
             size(nearmatrix_near);
-            scheduler=OhMyThreads.DynamicScheduler(),#SerialScheduler()
+            scheduler=scheduler,
         )
     else
         BlockSparseMatrix(
@@ -125,7 +126,7 @@ function PetrovGalerkinBF(
             Int[],
             Int[],
             size(nearmatrix_near);
-            scheduler=scheduler,
+            scheduler=SerialScheduler(),
         )
     end
 
@@ -135,7 +136,6 @@ function PetrovGalerkinBF(
     far_rows = Vector{Int}(undef, length(farints))
     far_cols = Vector{Int}(undef, length(farints))
     far_vals = Vector{Int}(undef, length(farints))
-
     let nearmatrix_far = nearmatrix_far
         @tasks for i in eachindex(farints)
             @set scheduler = scheduler
@@ -162,9 +162,8 @@ function PetrovGalerkinBF(
 
     num_test_nodes  = sum(length(lvl) for lvl in treelevels(tree.testcluster, 1))
     num_trial_nodes = sum(length(lvl) for lvl in treelevels(tree.trialcluster, 1))
-
-    near_lookup = sparse(near_rows, near_cols, near_vals, num_test_nodes, num_trial_nodes)
-    far_lookup  = sparse(far_rows, far_cols, far_vals, num_test_nodes, num_trial_nodes)
+    near_lookup     = sparse(near_rows, near_cols, near_vals, num_test_nodes, num_trial_nodes)
+    far_lookup      = sparse(far_rows, far_cols, far_vals, num_test_nodes, num_trial_nodes)
 
     return PetrovGalerkinBF{acctype}(
         nears, tree, fly, size(nearmatrix_far), near_lookup, far_lookup

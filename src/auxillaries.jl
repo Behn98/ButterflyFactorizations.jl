@@ -377,3 +377,31 @@ function retrievecolspace(
 
     return colspace
 end
+
+function compute_interaction_percentages(nearints, farints, test_tree, trial_tree)
+    near_elements = 0
+    for (snode, onode) in nearints
+        s_dofs = length(cluster_values(trial_tree, snode))
+        o_dofs = length(cluster_values(test_tree, onode))
+        near_elements += s_dofs * o_dofs
+    end
+
+    far_elements = 0
+    for (snode, onode) in farints
+        s_dofs = length(cluster_values(trial_tree, snode))
+        o_dofs = length(cluster_values(test_tree, onode))
+        far_elements += s_dofs * o_dofs
+    end
+
+    total_elements = near_elements + far_elements
+    println(
+        "True Near-field fraction: ",
+        round(100 * near_elements / total_elements; digits=2),
+        "% of matrix entries",
+    )
+    return println(
+        "True Far-field fraction:  ",
+        round(100 * far_elements / total_elements; digits=2),
+        "% of matrix entries",
+    )
+end

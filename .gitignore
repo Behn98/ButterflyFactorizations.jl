@@ -9,3 +9,5 @@ plot_accuracy.html
 plot_build_time.html
 plot_mat_vec_time.html
 plot_memory_usage.html
+plot_max_R_rank_vs_k.html
+plot_ranks_vs_level_h_*.html

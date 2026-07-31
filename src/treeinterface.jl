@@ -9,6 +9,7 @@ struct TreeParameters{T} <: AbstractTreeParameters
     α::T
     C::T
     Cε::T
+    β::T
 end
 
 function tree_parameters(tree)

@@ -70,6 +70,7 @@ include("Butterflyalgebra/bfsplitmul.jl")
 include("Butterflyalgebra/bfsplit.jl")
 
 #Tree traversale and Butterfly construction
+include("farfieldcrit.jl")
 include("intlists.jl")
 include("compressors.jl")
 include("bfassembly.jl")
