@@ -117,7 +117,7 @@ function (t::PartialQR)(
         r = size(Q, 2)
 
         # Adaptive check: expand sample if rank maxed out sampled rows
-        if r > floor(Int, 0.8 * rows_evaluated) && rows_evaluated < n_obs
+        if r > floor(Int, 0.95 * rows_evaluated) && rows_evaluated < n_obs
             new_target = min(rows_evaluated * 2, n_obs)
 
             # Instead of vcat, we just expand our view window into the buffer!

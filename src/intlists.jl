@@ -95,7 +95,7 @@ function process_nodes!(
     leafimbalance=true,
 ) where {T1,T2}
     if admissible(srctree, tsttree, node_s, node_o) &&
-        (!(cluster_isleaf(tsttree, node_o) && cluster_isleaf(srctree, node_s) && !leafcomp))
+        (!(cluster_isleaf(tsttree, node_o) || cluster_isleaf(srctree, node_s) && !leafcomp))
         push!(farinteractions, (node_o, node_s))
         return nothing
     elseif (cluster_isleaf(tsttree, node_o) && cluster_isleaf(srctree, node_s)) || (
