@@ -24,13 +24,13 @@ struct TreeParameters{T} <: AbstractTreeParameters
 end
 =#
 function ButterflyFactorizations.tree_parameters(tree::H2Trees.TwoNTree)
-    return ButterflyFactorizations.TreeParameters(0.1, 2.3858, 1.8072, 0.25)
+    return ButterflyFactorizations.TreeParameters(0.1, 2.3858, 1.8072, 1.0)
 end
 
 function ButterflyFactorizations.tree_parameters(tree::H2Trees.BisectionTree)
-    return ButterflyFactorizations.TreeParameters(0.1, 0.1491, 2.9961, 0.25)
+    return ButterflyFactorizations.TreeParameters(0.1, 0.1491, 2.9961, 1.0)
 end
 
 function ButterflyFactorizations.tree_parameters(tree::H2Trees.BoundingBallTree)
-    return ButterflyFactorizations.TreeParameters(0.1, 0.9828, 3.0000, 0.25)
+    return ButterflyFactorizations.TreeParameters(0.1, 0.9828, 3.0000, 1.0)
 end
