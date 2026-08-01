@@ -42,8 +42,9 @@ function assemble_BF(
     τ::Float64;
     C=tree_parameters(cluster_testtree(blktree)).C,
     Cε=tree_parameters(cluster_testtree(blktree)).Cε,
+    adaptive=false,
     compressor=ButterflyFactorizations.PartialQR(),
-    scheduler=OhMyThreads.SerialScheduler(),
+    scheduler=OhMyThreads.DynamicScheduler(),
 )
     # --- Trees & Helpers ---
     trialT = cluster_trialtree(blktree)
@@ -70,7 +71,9 @@ function assemble_BF(
         obsindex = cluster_values(testT, NO)
 
         n_otilde = estimate_rank_3d(k, trialT, testT, Sleaf, NO, τ; C=C, Cε=Cε)
-        q_ks, k_l, _ = compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
+        q_ks, k_l, _ = compressor(
+            kernelmatrix, srcindex, obsindex, n_otilde, τ; adaptive=adaptive
+        )
 
         return (blockidx, Sleaf, q_ks, k_l)
     end
@@ -114,7 +117,8 @@ function assemble_BF(
                 τ,
                 scheduler,
                 C,
-                Cε,
+                Cε;
+                adaptive=adaptive,
             )
         elseif source_is_frozen && !obs_is_frozen
             level_R, k_updates = build_sourcefrozen_R_blocks(
@@ -129,7 +133,8 @@ function assemble_BF(
                 τ,
                 scheduler,
                 C,
-                Cε,
+                Cε;
+                adaptive=adaptive,
             )
         elseif !source_is_frozen && obs_is_frozen
             level_R, k_updates = build_observerfrozen_R_blocks(
@@ -145,7 +150,8 @@ function assemble_BF(
                 τ,
                 scheduler,
                 C,
-                Cε,
+                Cε;
+                adaptive=adaptive,
             )
         end
 
@@ -222,7 +228,8 @@ function build_nonfrozen_R_blocks(
     τ,
     scheduler,
     C,
-    Cε,
+    Cε;
+    adaptive=false,
 )
     interactions = vec(collect(Iterators.product(treeO_level, treeS_level)))
     n_ints = length(interactions)
@@ -267,7 +274,9 @@ function build_nonfrozen_R_blocks(
                 obsindex = cluster_values(testT, Ochild)
                 srcindex = U[fastkey(Svert, Overt)]
                 n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Ochild, τ; C=C, Cε=Cε)
-                q_ks, k_l, _ = compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
+                q_ks, k_l, _ = compressor(
+                    kernelmatrix, srcindex, obsindex, n_otilde, τ; adaptive=adaptive
+                )
 
                 u_idx += 1
                 all_k_updates[u_off + u_idx] = (Svert, Ochild, k_l)
@@ -296,7 +305,9 @@ function build_nonfrozen_R_blocks(
             if !cluster_isleaf(trialT, Svert)
                 srcindex = U[fastkey(Svert, Overt)]
                 n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Overt, τ; C=C, Cε=Cε)
-                q_ks, k_l, _ = compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
+                q_ks, k_l, _ = compressor(
+                    kernelmatrix, srcindex, obsindex, n_otilde, τ; adaptive=adaptive
+                )
 
                 last_idx = 0
                 for Schild in cluster_children(trialT, Svert)
@@ -327,7 +338,19 @@ function build_nonfrozen_R_blocks(
 end
 
 function build_sourcefrozen_R_blocks(
-    treeO_level, NS, K, trialT, testT, kernelmatrix, compressor, k, τ, scheduler, C, Cε
+    treeO_level,
+    NS,
+    K,
+    trialT,
+    testT,
+    kernelmatrix,
+    compressor,
+    k,
+    τ,
+    scheduler,
+    C,
+    Cε;
+    adaptive=false,
 )
     Svert = NS
     n_ints = length(treeO_level)
@@ -357,7 +380,9 @@ function build_sourcefrozen_R_blocks(
                 obsindex = cluster_values(testT, Ochild)
                 srcindex = K[fastkey(Svert, Overt)]
                 n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Ochild, τ; C=C, Cε=Cε)
-                q_ks, k_l, _ = compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
+                q_ks, k_l, _ = compressor(
+                    kernelmatrix, srcindex, obsindex, n_otilde, τ; adaptive=adaptive
+                )
 
                 b_idx += 1
                 all_blocks[b_off + b_idx] = ButterflyBlock(
@@ -389,7 +414,8 @@ function build_observerfrozen_R_blocks(
     τ,
     scheduler,
     C,
-    Cε,
+    Cε;
+    adaptive=false,
 )
     interactions = vec(collect(Iterators.product(treeO_LO, treeS_level)))
     n_ints = length(interactions)
@@ -418,7 +444,9 @@ function build_observerfrozen_R_blocks(
         if !cluster_isleaf(trialT, Svert)
             srcindex = U[fastkey(Svert, Overt)]
             n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Overt, τ; C=C, Cε=Cε)
-            q_ks, k_l, _ = compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
+            q_ks, k_l, _ = compressor(
+                kernelmatrix, srcindex, obsindex, n_otilde, τ; adaptive=adaptive
+            )
 
             last_idx = 0
             for Schild in cluster_children(trialT, Svert)
@@ -466,6 +494,7 @@ function assemble_BF_Mat(
     NS::Int,
     k::Float64,
     τ::Float64;
+    adaptive=false,
     compressor=ButterflyFactorizations.PartialQR(),
     C=tree_parameters(cluster_testtree(blktree)).C,
     Cε=tree_parameters(cluster_testtree(blktree)).Cε,
@@ -500,7 +529,9 @@ function assemble_BF_Mat(
         push!(PermQ, srcindex...)
         obsindex = cluster_values(testT, NO)
         n_otilde = estimate_rank_3d(k, trialT, testT, Sleaf, NO, τ; C=C, Cε=Cε)
-        q_ks, k_l, r_l = compressor(kernelmatrix, srcindex, obsindex, n_otilde, τ)
+        q_ks, k_l, r_l = compressor(
+            kernelmatrix, srcindex, obsindex, n_otilde, τ; adaptive=adaptive
+        )
         Q = sparse_blockdiag(Q, q_ks)               #SPARSITY: sparse_ or blocksparse_
         getsubdict!(K, Sleaf)[NO] = k_l
     end
@@ -552,7 +583,7 @@ function assemble_BF_Mat(
                             k, trialT, testT, Svert, Ochild, τ; C=C, Cε=Cε
                         )
                         q_ks, k_l, r_l = compressor(
-                            kernelmatrix, srcindex, obsindex, n_otilde, τ
+                            kernelmatrix, srcindex, obsindex, n_otilde, τ; adaptive=adaptive
                         )
                         R_temp3 = sparse_blockdiag(R_temp3, q_ks)
                         getsubdict!(K, Svert)[Ochild] = k_l
@@ -579,7 +610,7 @@ function assemble_BF_Mat(
                             k, trialT, testT, Svert, Ochild, τ; C=C, Cε=Cε
                         )
                         q_ks, k_l, r_l = compressor(
-                            kernelmatrix, srcindex, obsindex, n_otilde, τ
+                            kernelmatrix, srcindex, obsindex, n_otilde, τ; adaptive=adaptive
                         )
                         R_temp3 = sparse_blockdiag(R_temp3, q_ks)
 
@@ -605,7 +636,7 @@ function assemble_BF_Mat(
                         k, trialT, testT, Svert, Overt, τ; C=C, Cε=Cε
                     )
                     q_ks, k_l, r_l = compressor(
-                        kernelmatrix, srcindex, obsindex, n_otilde, τ
+                        kernelmatrix, srcindex, obsindex, n_otilde, τ; adaptive=adaptive
                     )
                     R_temp2 = sparse_blockdiag(R_temp2, q_ks)
 

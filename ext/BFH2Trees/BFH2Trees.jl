@@ -34,6 +34,8 @@ ButterflyFactorizations.cluster_parent(tree::H2Trees.H2ClusterTree, node::Int) =
 ButterflyFactorizations.cluster_values(tree::H2Trees.H2ClusterTree, node::Int) =
     H2Trees.values(tree, node)
 
+ButterflyFactorizations.cluster_levels(tree::H2Trees.H2ClusterTree) = H2Trees.levels(tree)
+
 ButterflyFactorizations.cluster_blktree(
     stree::H2Trees.H2ClusterTree, ttree::H2Trees.H2ClusterTree
 ) = H2Trees.BlockTree(stree, ttree)

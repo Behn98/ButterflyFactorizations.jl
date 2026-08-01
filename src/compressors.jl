@@ -70,7 +70,12 @@ indices (the "skeleton").
   - `r`: The estimated mathematical rank of the block.
 """
 function (t::PartialQR)(
-    farassembler, src_index::Vector{Int}, obs_index::Vector{Int}, rank_est, ε::Float64
+    farassembler,
+    src_index::Vector{Int},
+    obs_index::Vector{Int},
+    rank_est,
+    ε::Float64;
+    adaptive=false,
 )
     n_obs = length(obs_index)
     n_src = length(src_index)
@@ -116,8 +121,8 @@ function (t::PartialQR)(
         Q, R, P = Fqr[1], Fqr[2], Fqr[3]
         r = size(Q, 2)
 
-        # Adaptive check: expand sample if rank maxed out sampled rows
-        if r > floor(Int, 0.95 * rows_evaluated) && rows_evaluated < n_obs
+        #Adaptive check: expand sample if rank maxed out sampled rows
+        if ((r > floor(Int, 0.95 * rows_evaluated) && rows_evaluated < n_obs) && adaptive)
             new_target = min(rows_evaluated * 2, n_obs)
 
             # Instead of vcat, we just expand our view window into the buffer!

@@ -49,6 +49,8 @@ function PetrovGalerkinBF(
     Cε=tree_parameters(cluster_testtree(tree)).Cε,
     scheduler=OhMyThreads.DynamicScheduler(),
     acctype=ComplexF64,
+    minbflvl=3,
+    adaptive=false,
     unbalancedints=false,
     leafcomp=true,
     leafimbalance=true,
@@ -63,6 +65,7 @@ function PetrovGalerkinBF(
         unbalancedints=unbalancedints,
         leafcomp=leafcomp,
         leafimbalance=leafimbalance,
+        minbflvl=minbflvl,
     )
     n_ints = length(nearints)
     blocks = Vector{Matrix{acctype}}(undef, n_ints)
@@ -138,7 +141,7 @@ function PetrovGalerkinBF(
     far_vals = Vector{Int}(undef, length(farints))
     let nearmatrix_far = nearmatrix_far
         @tasks for i in eachindex(farints)
-            @set scheduler = scheduler
+            @set scheduler = scheduler #OhMyThreads.SerialScheduler()
             (NO, NS) = farints[i]
 
             far_rows[i] = NO
@@ -156,6 +159,7 @@ function PetrovGalerkinBF(
                 C=C,
                 Cε=Cε,
                 scheduler=OhMyThreads.SerialScheduler(),#SerialScheduler()DynamicScheduler()
+                adaptive=adaptive,
             )
         end
     end
@@ -213,6 +217,7 @@ function PetrovGalerkinBF_Mat(
     C=tree_parameters(cluster_testtree(tree)).C,
     Cε=tree_parameters(cluster_testtree(tree)).Cε,
     tol=1e-3,
+    adaptive=false,
     scheduler=OhMyThreads.DynamicScheduler(),
     acctype=ComplexF64,
 )
@@ -263,7 +268,7 @@ function PetrovGalerkinBF_Mat(
     fly = Vector{ButterflyFactorization_Mat}(undef, length(farints))
     let nearmatrix = nearmatrix
         @tasks for i in eachindex(farints)
-            @set scheduler = DynamicScheduler()
+            @set scheduler = scheduler
             (NO, NS) = farints[i]
             fly[i] = assemble_BF_Mat(
                 nearmatrix, tree, NO, NS, k, tol; compressor=compressor, C=C, Cε=Cε

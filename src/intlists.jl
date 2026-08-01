@@ -18,7 +18,7 @@ It uses the admissibility condition (`isFarFunctor`) to separate interactions.
   - `nearinteractions`: A vector of tuples `(observer_node_id, source_node_id)` for non-admissible interactions.
 """
 function nearandfar(
-    tree, admissible; unbalancedints=false, leafcomp=true, leafimbalance=true
+    tree, admissible; minbflvl=3, unbalancedints=false, leafcomp=true, leafimbalance=true
 )
     srctree = cluster_trialtree(tree)
     tsttree = cluster_testtree(tree)
@@ -26,6 +26,7 @@ function nearandfar(
     node_s = cluster_root(srctree)
     nearinteractions = Vector{Tuple{Int64,Int64}}()
     farinteractions = Vector{Tuple{Int64,Int64}}()
+    totaltreeheight = min(length(cluster_levels(tsttree)), length(cluster_levels(srctree)))
 
     process_nodes!(
         srctree,
@@ -34,7 +35,9 @@ function nearandfar(
         node_s,
         admissible,
         farinteractions,
-        nearinteractions;
+        nearinteractions,
+        totaltreeheight;
+        minbflvl=minbflvl,
         unbalancedints=unbalancedints,
         leafcomp=leafcomp,
         leafimbalance=leafimbalance,
@@ -81,20 +84,27 @@ function process_nodes!(
     node_s,
     admissible,
     farinteractions,
-    nearinteractions;
+    nearinteractions,
+    currentheight;
     leafcomp=true,
     unbalancedints=false,
     leafimbalance=true,
+    minbflvl=1,
 ) where {T1,T2}
     if admissible(srctree, tsttree, node_s, node_o) && (
-        !((cluster_isleaf(tsttree, node_o) || cluster_isleaf(srctree, node_s)) && !leafcomp)
+        !(
+            (cluster_isleaf(tsttree, node_o) || cluster_isleaf(srctree, node_s))&&currentheight>minbflvl &&
+            !leafcomp
+        )
     )
         push!(farinteractions, (node_o, node_s))
         return nothing
-    elseif (cluster_isleaf(tsttree, node_o) && cluster_isleaf(srctree, node_s)) || (
-        !leafimbalance &&
-        (cluster_isleaf(tsttree, node_o) || cluster_isleaf(srctree, node_s))
-    )
+    elseif (cluster_isleaf(tsttree, node_o) && cluster_isleaf(srctree, node_s)) ||
+        (
+            !leafimbalance &&
+            (cluster_isleaf(tsttree, node_o) || cluster_isleaf(srctree, node_s))
+        ) ||
+        (currentheight <= minbflvl && !leafcomp)
         push!(nearinteractions, (node_o, node_s))
         return nothing
     end
@@ -111,7 +121,9 @@ function process_nodes!(
                     node_s,
                     admissible,
                     farinteractions,
-                    nearinteractions;
+                    nearinteractions,
+                    currentheight-1;
+                    minbflvl=minbflvl,
                     leafcomp=leafcomp,
                     unbalancedints=unbalancedints,
                     leafimbalance=leafimbalance,
@@ -126,7 +138,9 @@ function process_nodes!(
                     child_s,
                     admissible,
                     farinteractions,
-                    nearinteractions;
+                    nearinteractions,
+                    currentheight-1;
+                    minbflvl=minbflvl,
                     leafcomp=leafcomp,
                     unbalancedints=unbalancedints,
                     leafimbalance=leafimbalance,
@@ -143,7 +157,9 @@ function process_nodes!(
                     child_s,
                     admissible,
                     farinteractions,
-                    nearinteractions;
+                    nearinteractions,
+                    currentheight-1;
+                    minbflvl=minbflvl,
                     leafcomp=leafcomp,
                     unbalancedints=unbalancedints,
                     leafimbalance=leafimbalance,
@@ -158,7 +174,9 @@ function process_nodes!(
                     node_s,
                     admissible,
                     farinteractions,
-                    nearinteractions;
+                    nearinteractions,
+                    currentheight-1;
+                    minbflvl=minbflvl,
                     leafcomp=leafcomp,
                     unbalancedints=unbalancedints,
                     leafimbalance=leafimbalance,
@@ -174,7 +192,9 @@ function process_nodes!(
                         child_s,
                         admissible,
                         farinteractions,
-                        nearinteractions;
+                        nearinteractions,
+                        currentheight-1;
+                        minbflvl=minbflvl,
                         leafcomp=leafcomp,
                         unbalancedints=unbalancedints,
                         leafimbalance=leafimbalance,
