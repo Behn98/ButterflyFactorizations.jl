@@ -40,7 +40,8 @@ ButterflyFactorizations.cluster_blktree(
     stree::H2Trees.H2ClusterTree, ttree::H2Trees.H2ClusterTree
 ) = H2Trees.BlockTree(stree, ttree)
 
-include("isfarfunctor.jl")
+include("h2admissible.jl")
 include("h2parameters.jl")
+include("h2rankest.jl")
 
 end

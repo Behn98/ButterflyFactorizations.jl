@@ -28,7 +28,7 @@ function ButterflyFactorizations.tree_parameters(tree::H2Trees.TwoNTree)
 end
 
 function ButterflyFactorizations.tree_parameters(tree::H2Trees.BisectionTree)
-    return ButterflyFactorizations.TreeParameters(0.1, 0.1491, 2.9961, 1.0)
+    return ButterflyFactorizations.TreeParameters(0.1, 0.5197, 2.6569, 1.0)
 end
 
 function ButterflyFactorizations.tree_parameters(tree::H2Trees.BoundingBallTree)

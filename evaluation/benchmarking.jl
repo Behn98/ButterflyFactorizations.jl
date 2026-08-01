@@ -37,14 +37,14 @@ function extract_ranks_per_level(Bfmat)
     for bf in Bfmat.BFs
         # Q blocks (Leaves / BF Level 1)
         q_rank = maximum(
-            [size(b.data, 2) for b in bf.Q if b.data isa AbstractMatrix]; init=0
+            [size(b.data, 1) for b in bf.Q if b.data isa AbstractMatrix]; init=0
         )
         level_max_ranks[1] = max(get(level_max_ranks, 1, 0), q_rank)
 
         # R blocks (Intermediate BF levels)
         for (l, level) in enumerate(bf.R)
             r_rank = maximum(
-                [size(b.data, 2) for b in level.blocks if b.data isa AbstractMatrix]; init=0
+                [size(b.data, 1) for b in level.blocks if b.data isa AbstractMatrix]; init=0
             )
             level_max_ranks[l + 1] = max(get(level_max_ranks, l+1, 0), r_rank)
         end

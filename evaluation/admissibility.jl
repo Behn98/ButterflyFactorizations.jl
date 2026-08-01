@@ -23,10 +23,12 @@ function benchmark_and_validate_alpha(
     compressor=ButterflyFactorizations.PartialQR(),
     tol=1e-3,
     alpha_range=1.0:0.1:3.0,
-    n_error_samples=50,
-    scheduler=OhMyThreads.DynamicScheduler(),
+    criterion::Symbol=:isFarFunctor,
     farfield_only::Bool=false,
+    scheduler=OhMyThreads.DynamicScheduler(),
+    acctype=ComplexF64,
 )
+    # 🚀 NEW: Added a Dict to the NamedTuple to store BF counts per level
     benchmark_results = NamedTuple{
         (
             :alpha,
@@ -35,24 +37,35 @@ function benchmark_and_validate_alpha(
             :time_total,
             :num_near,
             :num_far,
-            :avg_err,
-            :max_err,
+            :farfielderr,
+            :bf_counts,
         ),
-        Tuple{Float64,Float64,Float64,Float64,Int,Int,Float64,Float64},
+        Tuple{Float64,Float64,Float64,Float64,Int,Int,Float64,Dict{Int,Int}},
     }[]
 
     println("==================================================")
     println(" Starting Alpha Benchmark & Accuracy Validation")
     println(" Target Tolerance (τ): $tol")
     println(" Mode: $(farfield_only ? "Far-Field ONLY" : "Full Assembly")")
+    println(" Admissibility Criterion: $criterion")
     println("==================================================")
 
     for α in alpha_range
         @printf("\nTesting α = %.2f ... \n", α)
+        if criterion == :isFarFunctor
+            admissible = ButterflyFactorizations.isFarFunctor(α)
+        elseif criterion == :CenterDistanceAdmissibility
+            admissible = ButterflyFactorizations.CenterDistanceAdmissibility(α)
+        end
+        local_isnear(ta, tb, na, nb) = !admissible(ta, tb, na, nb)
 
-        # Always traverse the tree to get interaction lists (this is fast)
         farints, nearints = ButterflyFactorizations.nearandfar(
-            tree, α; unbalancedints=true, leafcom=true
+            tree,
+            admissible;
+            unbalancedints=false,
+            leafcomp=true,
+            minbflvl=0,
+            leafimbalance=false,
         )
 
         # --- 1. Timing Near-Field Assembly ---
@@ -81,8 +94,32 @@ function benchmark_and_validate_alpha(
                         blocks[i] = blk
                     end
                 end
-                # Combine into BlockSparseMatrix (omitted variable assignment for brevity)
             end
+            if length(nearints) > 0
+                nears = BlockSparseMatrix(
+                    blocks,
+                    test_indices,
+                    trial_indices,
+                    size(nearmatrix_near);
+                    scheduler=scheduler,
+                )
+            else
+                nears = BlockSparseMatrix(
+                    Matrix{acctype}[],
+                    Int[],
+                    Int[],
+                    size(nearmatrix_near);
+                    scheduler=SerialScheduler(),
+                )
+            end
+        else
+            nears = BlockSparseMatrix(
+                Matrix{acctype}[],
+                Int[],
+                Int[],
+                size(nearmatrix_near);
+                scheduler=SerialScheduler(),
+            )
         end
 
         # --- 2. Timing Far-Field Butterfly Assembly ---
@@ -108,6 +145,7 @@ function benchmark_and_validate_alpha(
                         k,
                         tol;
                         compressor=compressor,
+                        adaptive=false,
                         scheduler=OhMyThreads.SerialScheduler(),
                     )
                 end
@@ -116,39 +154,49 @@ function benchmark_and_validate_alpha(
 
         time_total = time_near + time_far
 
+        # 🚀 NEW: Count BFs by their R-factor level
+        bf_counts = Dict{Int,Int}()
+        for bf in fly
+            r_levels = length(bf.R) # 0 means just Q and P factors (shallowest BF)
+            bf_counts[r_levels] = get(bf_counts, r_levels, 0) + 1
+        end
+
         # --- 3. Validate Accuracy (Not Timed) ---
-        max_err = 0.0
-        avg_err = 0.0
-
+        Bfmat = PetrovGalerkinBF{ComplexF64}(
+            nears,
+            tree,
+            fly,
+            size(nearmatrix_far),
+            sparse(Matrix{Int64}(undef, 0, 0)),
+            sparse(Matrix{Int64}(undef, 0, 0)),
+        )
+        err_bf = 0.0
         if !isempty(farints)
-            n_samples = min(n_error_samples, length(farints))
-            sample_indices = shuffle(1:length(farints))[1:n_samples]
+            println(
+                "\nComputing reference ACA Far-Matrix for accuracy check (tol = $(tol * 1e-2))...",
+            )
 
-            for i in sample_indices
-                (node_o, node_s) = farints[i]
-                test_idx = H2Trees.values(tree.testcluster, node_o)
-                trial_idx = H2Trees.values(tree.trialcluster, node_s)
+            refmat = HMatrix(
+                op,
+                X,
+                X,
+                tree;
+                tol=tol * 1e-2,
+                spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
+                scheduler=scheduler,
+                maxrank=100,
+                isnear=local_isnear,
+            )
 
-                # Exact BEAST dense block
-                Z_exact = zeros(ComplexF64, length(test_idx), length(trial_idx))
-                nearmatrix_far(Z_exact, test_idx, trial_idx)
+            ref_far = AdaptiveCrossApproximation.farmatrix(refmat)
+            bf_far = ButterflyFactorizations.farmatrix(Bfmat)
+            xtest = randn(ComplexF64, size(ref_far, 2))
+            y_exact_far = ref_far * xtest
+            y_bf_far = bf_far * xtest
 
-                # Random vector test
-                x = randn(ComplexF64, length(trial_idx))
-                y_exact = Z_exact * x
-
-                # Zero-padded global vector for multiplication
-                x_tmp = zeros(ComplexF64, length(trialspace))
-                x_tmp[trial_idx] .= x
-
-                y_bf = zeros(ComplexF64, length(testspace))
-                mul!(y_bf, fly[i], x_tmp)
-
-                rel_err = norm(y_exact - y_bf[test_idx]) / norm(y_exact)
-                max_err = max(max_err, rel_err)
-                avg_err += rel_err
-            end
-            avg_err /= n_samples
+            err_bf = norm(y_exact_far - y_bf_far) / norm(y_exact_far)
+            err_str = @sprintf("Relative error of Far-field mat-vec: %.2e", err_bf)
+            println(err_str)
         end
 
         if farfield_only
@@ -161,7 +209,6 @@ function benchmark_and_validate_alpha(
                 time_total
             )
         end
-        @printf(" -> Error: Avg = %.2e | Max = %.2e\n", avg_err, max_err)
 
         push!(
             benchmark_results,
@@ -172,8 +219,8 @@ function benchmark_and_validate_alpha(
                 time_total=time_total,
                 num_near=length(nearints),
                 num_far=length(farints),
-                avg_err=avg_err,
-                max_err=max_err,
+                farfielderr=err_bf,
+                bf_counts=bf_counts,
             ),
         )
     end
@@ -187,27 +234,26 @@ function plot_alpha_performance_and_accuracy(results, target_tol::Float64)
     t_far = [r.time_far for r in results]
     t_total = [r.time_total for r in results]
 
-    avg_errs = [max(r.avg_err, 1e-16) for r in results] # Prevent log(0)
-    max_errs = [max(r.max_err, 1e-16) for r in results]
+    farfielderror = [max(r.farfielderr, 1e-16) for r in results]
 
-    # Find optimal time
     min_idx = argmin(t_total)
     opt_alpha = alphas[min_idx]
     opt_time = t_total[min_idx]
 
-    # 🚀 Use reshape to explicitly create a 2x1 Matrix of strings
+    # 🚀 NEW: Added a 3rd row for the BF Count plot
     fig = make_subplots(;
-        rows=2,
+        rows=3,
         cols=1,
         subplot_titles=reshape(
             [
                 "1. Assembly Wall-Clock Time vs. Admissibility (α)",
                 "2. Block-Level Relative Error vs. Admissibility (α)",
+                "3. Number of BFs per Level (Intermediate R-Factors)",
             ],
-            2,
+            3,
             1,
         ),
-        vertical_spacing=0.15,
+        vertical_spacing=0.1,
     )
 
     # --- TOP PANEL: TIME ---
@@ -248,23 +294,14 @@ function plot_alpha_performance_and_accuracy(results, target_tol::Float64)
     add_trace!(fig, trace_total; row=1, col=1)
     add_trace!(fig, trace_opt; row=1, col=1)
 
-    # --- BOTTOM PANEL: ERROR ---
-    trace_avg = scatter(;
+    # --- MIDDLE PANEL: ERROR ---
+    trace_farfielderror = scatter(;
         x=alphas,
-        y=avg_errs,
+        y=farfielderror,
         mode="lines+markers",
         name="Average Error",
         line=attr(; color="seagreen", dash="dash"),
     )
-    trace_max = scatter(;
-        x=alphas,
-        y=max_errs,
-        mode="lines+markers",
-        name="Max Error",
-        line=attr(; color="darkgreen", width=2),
-    )
-
-    # Target Tolerance Line
     trace_tol = scatter(;
         x=[minimum(alphas), maximum(alphas)],
         y=[target_tol, target_tol],
@@ -273,30 +310,47 @@ function plot_alpha_performance_and_accuracy(results, target_tol::Float64)
         line=attr(; color="red", dash="dot"),
     )
 
-    add_trace!(fig, trace_avg; row=2, col=1)
-    add_trace!(fig, trace_max; row=2, col=1)
+    add_trace!(fig, trace_farfielderror; row=2, col=1)
     add_trace!(fig, trace_tol; row=2, col=1)
+
+    # 🚀 NEW: BOTTOM PANEL: BF LEVEL COUNTS ---
+    # Find all unique R-levels encountered across all alpha tests
+    all_r_levels = sort(unique(vcat([collect(keys(r.bf_counts)) for r in results]...)))
+
+    for r_lvl in all_r_levels
+        # Extract the count for this specific level across all alphas (default 0 if missing)
+        counts = [get(r.bf_counts, r_lvl, 0) for r in results]
+
+        # Plot a line showing how the count of BFs at this level changes with alpha
+        trace_cnt = scatter(;
+            x=alphas, y=counts, mode="lines+markers", name="Level $r_lvl BFs (R-factors)"
+        )
+        add_trace!(fig, trace_cnt; row=3, col=1)
+    end
 
     # --- LAYOUT UPDATE ---
     relayout!(
         fig;
         title_text="Butterfly Factorization: Runtime & Accuracy Profiling",
-        height=800,
-        width=900,
+        height=1100,
+        width=900, # Increased height to accommodate the 3rd plot
         template="plotly_white",
         hovermode="x unified",
         xaxis_title="",
-        yaxis_title="Execution Time (Seconds)",
-        xaxis2_title="α (Separation Parameter)",
+        xaxis2_title="",
+        xaxis3_title="α (Separation Parameter)",
+        yaxis_title="Execution Time (s)",
         yaxis2_title="Relative Error (Log Scale)",
-        yaxis2_type="log", # 🚀 Essential for viewing errors spanning 1e-3 to 1e-12
+        yaxis2_type="log",
         yaxis2_exponentformat="e",
+        yaxis3_title="Count of BFs",
     )
 
     return fig
 end
 
-h = 0.1
+# --- SETUP & EXECUTION ---
+h = 0.05
 lambda = 10 * h
 k = 2 * pi / lambda
 op = Maxwell3D.singlelayer(; wavenumber=k)
@@ -304,14 +358,10 @@ m = meshsphere(1.0, h)
 X = raviartthomas(m)
 N = length(X)
 
-# Bygg träd
-#tree = H2Trees.KMeansTree(X.pos, 2; minvalues=100)
-#tree = H2Trees.TwoNTree(X, h;)#minvalues=100
-tree = H2Trees.BisectionTree(X.pos; max_points=50)
+tree = H2Trees.BisectionTree(X.pos; max_points=100)
 blktree = H2Trees.BlockTree(tree, tree)
-#As = assemble(op, X, X)
 
-BLAS.set_num_threads(1) # Avoid nested threading issues
+BLAS.set_num_threads(1)
 tol = 1e-3
 results = benchmark_and_validate_alpha(
     op,
@@ -321,10 +371,12 @@ results = benchmark_and_validate_alpha(
     k;
     compressor=ButterflyFactorizations.PartialQR(),
     tol=tol,
-    alpha_range=1.0:0.1:3.0,
-    n_error_samples=100,
+    alpha_range=0.8:0.1:1.5, #0.0:0.1:2.0 for isFarFunctor, 0.8:0.1:2.0 for CenterDistanceAdmissibility
     scheduler=OhMyThreads.DynamicScheduler(),
     farfield_only=false,
+    criterion=:CenterDistanceAdmissibility, # ∈ [:isFarFunctor, :CenterDistanceAdmissibility]
 )
 
 fig = plot_alpha_performance_and_accuracy(results, tol)
+savefig(fig, "alpha_benchmark_results_CenterDistanceAdmissibility.html")
+display(fig)

@@ -27,7 +27,7 @@ function fit_rank_parameters(logger::ButterflyFactorizations.RankLogger; safety_
     for i in 1:N
         X[i, 1] = all_records[i][1] # x1 term
         X[i, 2] = all_records[i][2] # x2 term
-        y[i] = all_records[i][3] # actual rank 'r'
+        y[i] = all_records[i][3]    # actual computed rank 'r'
     end
 
     # Solve least squares: X * [C, Cε] ≈ y
@@ -48,7 +48,10 @@ function fit_rank_parameters(logger::ButterflyFactorizations.RankLogger; safety_
 end
 
 function plot_rank_diagnostics(
-    logger::ButterflyFactorizations.RankLogger, C_fit::Float64, Cε_fit::Float64
+    logger::ButterflyFactorizations.RankLogger,
+    C_fit::Float64,
+    Cε_fit::Float64,
+    title_suffix::String,
 )
     # 1. Flatten Thread-Local Buffers
     x1_vals = Float64[]
@@ -74,10 +77,9 @@ function plot_rank_diagnostics(
     end
 
     if isempty(actual_ranks)
-        error("No data found in logger. Did you run the assembly?")
+        error("No data found in logger.")
     end
 
-    # 2. Create the Subplot Layout (Using the 2x2 Matrix fix!)
     fig = make_subplots(;
         rows=2,
         cols=2,
@@ -127,7 +129,6 @@ function plot_rank_diagnostics(
     add_trace!(fig, trace_adaptive; row=1, col=1)
 
     # --- Plot 2: Rank vs Geometric Factor (x1) ---
-    # Because x1 spans orders of magnitude, a log-x scale shows the relationship beautifully
     trace2 = scatter(;
         x=x1_vals,
         y=actual_ranks,
@@ -164,7 +165,7 @@ function plot_rank_diagnostics(
     # 3. Update Layout
     relayout!(
         fig;
-        title_text="Butterfly Factorization: Rank Estimator Diagnostics",
+        title_text="Rank Estimator Diagnostics: $title_suffix",
         height=800,
         width=1200,
         template="plotly_white",
@@ -173,7 +174,7 @@ function plot_rank_diagnostics(
         yaxis_title="Actual Computed Rank",
         xaxis2_title="Geometric Factor x1 (Log Scale)",
         yaxis2_title="Actual Rank",
-        xaxis2_type="log", # 🚀 Makes x1 much easier to read!
+        xaxis2_type="log",
         xaxis3_title="Estimation Error (Est - Actual)",
         yaxis3_title="Probability Density",
         xaxis4_title="Estimated Rank",
@@ -183,39 +184,76 @@ function plot_rank_diagnostics(
     return fig
 end
 
-# How to call it (assuming fit_rank_parameters returned C_fit and Cε_fit):
-# C_fit, Cε_fit = fit_rank_parameters(logger, safety_margin=1.15)
-# fig = plot_rank_diagnostics(logger, C_fit, Cε_fit)
-# display(fig)
-
-h = 0.1
+# --- SETUP GEOMETRY ---
+h = 0.05
 lambda = 10 * h
 k = 2 * pi / lambda
 op = Maxwell3D.singlelayer(; wavenumber=k)
 m = meshsphere(1.0, h)
 X = raviartthomas(m)
 N = length(X)
-As = assemble(op, X, X)
 
-# Bygg träd
-#tree = H2Trees.KMeansTree(X.pos, 2; minvalues=100)
-tree = H2Trees.TwoNTree(X, h; minvalues=100)#
-#tree = H2Trees.BisectionTree(X.pos; max_points=50)
+tree = H2Trees.BisectionTree(X.pos; max_points=100)
 blktree = H2Trees.BlockTree(tree, tree)
 
-# Create logger and compressor
-logger = ButterflyFactorizations.RankLogger()
-compressor = ButterflyFactorizations.PartialQR(logger)
-BLAS.set_num_threads(1) # Avoid nested threading issues
-# Assemble PetrovGalerkinBF as normal on a representative mesh
-A = ButterflyFactorizations.PetrovGalerkinBF(op, X, X, blktree, k; compressor=compressor)
+BLAS.set_num_threads(1)
+tol = 1e-3
 
-xtest = rand(ComplexF64, size(A, 2))
-xs = A * xtest
-xs2 = As * xtest
-reldif = norm(xs - xs2) / norm(xs2)
+# --- ADMISSIBILITY CRITERIA TO TEST ---
+criteria_to_test = [
+    (
+        :isFarFunctor,
+        ButterflyFactorizations.isFarFunctor(
+            ButterflyFactorizations.tree_parameters(tree).α
+        ),
+    ),
+    (
+        :CenterDistanceAdmissibility,
+        ButterflyFactorizations.CenterDistanceAdmissibility(
+            ButterflyFactorizations.tree_parameters(tree).β
+        ),
+    ),
+]
 
-# Fit C and Cε
-C_opt, Cε_opt = fit_rank_parameters(logger)
+for (name, admissibility_functor) in criteria_to_test
+    println("\n==================================================================")
+    println(" Starting Rank Calibration for: ", name)
+    println("==================================================================")
 
-plot_rank_diagnostics(logger, C_opt, Cε_opt)
+    # Create fresh logger and compressor for this run
+    logger = ButterflyFactorizations.RankLogger()
+    compressor = ButterflyFactorizations.PartialQR(logger)
+
+    # 🚀 Assemble using the fully expanded parameter list
+    # adaptive = true is REQUIRED so the compressor actually searches for the true rank
+    A = ButterflyFactorizations.PetrovGalerkinBF(
+        op,
+        X,
+        X,
+        blktree,
+        k;
+        compressor=compressor,
+        tol=tol,
+        admissibility=admissibility_functor,
+        C=1.0,           # Dummy start
+        Cε=1.0,          # Dummy start
+        scheduler=OhMyThreads.DynamicScheduler(),
+        acctype=ComplexF64,
+        minbflvl=2,
+        adaptive=true,   # MUST BE TRUE FOR CALIBRATION
+        unbalancedints=false,
+        leafcomp=true,
+        leafimbalance=false,
+    )
+
+    # Fit the parameters with a 15% safety margin
+    C_opt, Cε_opt = fit_rank_parameters(logger; safety_margin=2.0)
+
+    # Plot and save
+    fig = plot_rank_diagnostics(logger, C_opt, Cε_opt, string(name))
+    display(fig)
+
+    filename = "plot_rank_calibration_$(name).html"
+    savefig(fig, filename)
+    println("Saved diagnostics to $filename")
+end

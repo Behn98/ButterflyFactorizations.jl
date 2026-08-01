@@ -91,20 +91,33 @@ function process_nodes!(
     leafimbalance=true,
     minbflvl=1,
 ) where {T1,T2}
-    if admissible(srctree, tsttree, node_s, node_o) && (
-        !(
-            (cluster_isleaf(tsttree, node_o) || cluster_isleaf(srctree, node_s))&&currentheight>minbflvl &&
-            !leafcomp
-        )
-    )
-        push!(farinteractions, (node_o, node_s))
+
+    # 1. Calculate clearly defined state variables
+    is_leaf_o = cluster_isleaf(tsttree, node_o)
+    is_leaf_s = cluster_isleaf(srctree, node_s)
+    any_leaf = is_leaf_o || is_leaf_s
+    both_leaves = is_leaf_o && is_leaf_s
+    is_admissible = admissible(srctree, tsttree, node_s, node_o)
+
+    # 2. Global Minimum Depth Override
+    # If we hit the minimum allowed depth and leaf compression is off, force into near-field
+    if (currentheight <= minbflvl && !leafcomp)
+        push!(nearinteractions, (node_o, node_s))
         return nothing
-    elseif (cluster_isleaf(tsttree, node_o) && cluster_isleaf(srctree, node_s)) ||
-        (
-            !leafimbalance &&
-            (cluster_isleaf(tsttree, node_o) || cluster_isleaf(srctree, node_s))
-        ) ||
-        (currentheight <= minbflvl && !leafcomp)
+    end
+
+    # 3. Admissible Handling
+    if is_admissible
+        if (any_leaf && !leafcomp)
+            push!(nearinteractions, (node_o, node_s))
+        else
+            push!(farinteractions, (node_o, node_s))
+        end
+        return nothing
+    end
+
+    # 4. Non-Admissible Fallbacks (Must we split, or are we forced to near-field?)
+    if (both_leaves || (any_leaf && !leafimbalance))
         push!(nearinteractions, (node_o, node_s))
         return nothing
     end
