@@ -3,7 +3,6 @@ using CompScienceMeshes
 using ParallelKMeans
 using H2Trees
 using AdaptiveCrossApproximation
-using OhMyThreads
 using ButterflyFactorizations
 using LinearAlgebra
 using BenchmarkTools
@@ -12,10 +11,25 @@ using PlotlyJS
 using Random
 using SparseArrays
 using StaticArrays
+using OhMyThreads
 
 # --- Fitting Helper Functions ---
 f_nlogn(N) = N * log2(N)
 f_nlog2n(N) = N * (log2(N))^2
+
+function fit_scaling_factor(
+    N_vec::Vector{Int}, Y_vec::Vector{Float64}, scaling_func::Function
+)
+    valid_idx = .!isnan.(Y_vec)
+    if sum(valid_idx) == 0
+        return NaN
+    end
+    N_valid = N_vec[valid_idx]
+    Y_valid = Y_vec[valid_idx]
+
+    f_vals = scaling_func.(N_valid)
+    return sum(Y_valid .* f_vals) / sum(f_vals .^ 2)
+end
 
 function extract_ranks_per_level(Bfmat)
     level_max_ranks = Dict{Int,Int}()
@@ -37,20 +51,6 @@ function extract_ranks_per_level(Bfmat)
     end
 
     return level_max_ranks
-end
-
-function fit_scaling_factor(
-    N_vec::Vector{Int}, Y_vec::Vector{Float64}, scaling_func::Function
-)
-    valid_idx = .!isnan.(Y_vec)
-    if sum(valid_idx) == 0
-        return NaN
-    end
-    N_valid = N_vec[valid_idx]
-    Y_valid = Y_vec[valid_idx]
-
-    f_vals = scaling_func.(N_valid)
-    return sum(Y_valid .* f_vals) / sum(f_vals .^ 2)
 end
 
 function bf_matrix_memory(Bfmat)
@@ -78,6 +78,40 @@ function bf_matrix_memory(Bfmat)
     num_elements += SparseArrays.nnz(Bfmat.nearinteractions)
     mem_bytes = num_elements * sizeof(ComplexF64)
     return mem_bytes / 1024^2
+end
+
+# 🚀 NEW: Helper to calculate memory footprint explicitly grouped by BF depth
+function extract_memory_per_depth(Bfmat)
+    mem_dict = Dict{Int,Float64}()
+
+    for bf in Bfmat.BFs
+        # Depth is leaves (Q) + root (P) + intermediate (R factors)
+        depth = length(bf.R) + 2
+
+        num_elements = 0
+        for block in bf.Q
+            if block.data isa AbstractMatrix
+                num_elements += length(block.data)
+            end
+        end
+        for block in bf.P
+            if block.data isa AbstractMatrix
+                num_elements += length(block.data)
+            end
+        end
+        for level in bf.R
+            for block in level.blocks
+                if block.data isa AbstractMatrix
+                    num_elements += length(block.data)
+                end
+            end
+        end
+
+        mem_mb = (num_elements * sizeof(ComplexF64)) / 1024^2
+        mem_dict[depth] = get(mem_dict, depth, 0.0) + mem_mb
+    end
+
+    return mem_dict
 end
 
 function build_benchmark_mesh(shape, h::Float64)
@@ -110,6 +144,9 @@ function run_benchmarks(
     treekind::Symbol=:KMeansTree,
     ie_type::Symbol=:EFIE,
     bf_tol::Float64=1e-3,
+    minbflvl::Int=3,
+    maxpointsbisection=80,
+    adaptive=false,
     admissibility_spec::Symbol=:isFarFunctor,
     checkfarfieldaccuracy::Bool=false,
     acacomparison::Bool=false,
@@ -135,13 +172,23 @@ function run_benchmarks(
     t_mv_bf_vals = Float64[]
     k_vals = Float64[]
     max_R_ranks = Int[]
+
+    # 🚀 NEW: Dictionary to store memory histories per BF depth across all h steps
+    mem_by_depth_history = Dict{Int,Vector{Float64}}()
+
     p_level_ranks_all = PlotlyJS.SyncPlot[]
+
+    p_time = plot()
+    p_mem = plot()
+    p_mv = plot()
+    p_err = plot()
+    p_rank_vs_k = plot()
 
     println("==========================================================")
     println(" Starting Benchmarks | Shape: $shape | IE Type: $ie_type")
     println(" ACA Comparison      : $acacomparison")
     println(" Far-Field Check     : $checkfarfieldaccuracy")
-    println(" Admissibility       : $admissibility_spec") # 🚀 Log the functor type
+    println(" Admissibility       : $admissibility_spec")
     println(" Structured Data File: $csv_file")
     println(" Console Log File    : $log_file_path")
     println("==========================================================\n")
@@ -169,19 +216,17 @@ function run_benchmarks(
         flush(log_stream)
 
         if highf
-            lambda = 10 * h
+            lambda = 5 * h
         else
-            lambda = 10 * h_values[1]
+            lambda = 5 * h_values[1]
         end
         k = 2 * pi / lambda
 
-        # 1. Build Geometry and Operator dynamically
         op = build_beast_operator(ie_type, k)
         m = build_benchmark_mesh(shape, h)
         X = raviartthomas(m)
         N = length(X)
 
-        # Build Trees
         if disjointgeom
             y = translate(build_benchmark_mesh(shape, h), SVector(3.0, 0.0, 0.0))
             Y = raviartthomas(y)
@@ -189,8 +234,8 @@ function run_benchmarks(
                 Stree = H2Trees.KMeansTree(X.pos, 2; minvalues=50)
                 Otree = H2Trees.KMeansTree(Y.pos, 2; minvalues=50)
             elseif treekind == :BisectionTree
-                Stree = H2Trees.BisectionTree(X.pos; max_points=50)
-                Otree = H2Trees.BisectionTree(Y.pos; max_points=50)
+                Stree = H2Trees.BisectionTree(X.pos; max_points=maxpointsbisection)
+                Otree = H2Trees.BisectionTree(Y.pos; max_points=maxpointsbisection)
             else
                 Stree = H2Trees.TwoNTree(X, h)
                 Otree = H2Trees.TwoNTree(Y, h)
@@ -204,7 +249,7 @@ function run_benchmarks(
             if treekind == :KMeansTree
                 tree = H2Trees.KMeansTree(X.pos, 2; minvalues=30)
             elseif treekind == :BisectionTree
-                tree = H2Trees.BisectionTree(X.pos; max_points=50)
+                tree = H2Trees.BisectionTree(X.pos; max_points=maxpointsbisection)
             else
                 tree = H2Trees.TwoNTree(X, h)
             end
@@ -213,6 +258,7 @@ function run_benchmarks(
             ACAtree = H2Trees.KMeansTree(X.pos, 2; minvalues=100)
             ACAblktree = H2Trees.BlockTree(ACAtree, ACAtree)
         end
+
         if admissibility_spec == :CenterDistanceAdmissibility
             admissibility = ButterflyFactorizations.CenterDistanceAdmissibility(
                 ButterflyFactorizations.tree_parameters(blktree).β
@@ -226,12 +272,9 @@ function run_benchmarks(
                 "Unsupported admissibility: $admissibility_spec. Use :CenterDistanceAdmissibility or :isFarFunctor",
             )
         end
-        # 🚀 NEW: Define the dynamic closure for ACA to use the exact same logic
+
         local_isnear(ta, tb, na, nb) = !admissibility(ta, tb, na, nb)
 
-        # -------------------------------------------------------------
-        # 2. Butterfly Factorization (BF)
-        # -------------------------------------------------------------
         println("\nStarting ButterflyFactorization ($ie_type)...")
         farints, nearints = ButterflyFactorizations.nearandfar(
             blktree,
@@ -239,6 +282,7 @@ function run_benchmarks(
             unbalancedints=unbalancedints,
             leafcomp=leafcompression,
             leafimbalance=(!checkfarfieldaccuracy),
+            minbflvl=minbflvl,
         )
         ButterflyFactorizations.compute_interaction_percentages(
             nearints,
@@ -246,6 +290,7 @@ function run_benchmarks(
             ButterflyFactorizations.cluster_testtree(blktree),
             ButterflyFactorizations.cluster_trialtree(blktree),
         )
+
         if disjointgeom
             t_bf = @elapsed begin
                 Bfmat = ButterflyFactorizations.PetrovGalerkinBF(
@@ -261,7 +306,9 @@ function run_benchmarks(
                     leafimbalance=(!checkfarfieldaccuracy),
                     leafcomp=leafcompression,
                     admissibility=admissibility,
-                ) # 🚀 Pass functor
+                    minbflvl=minbflvl,
+                    adaptive=adaptive,
+                )
             end
         else
             t_bf = @elapsed begin
@@ -278,18 +325,40 @@ function run_benchmarks(
                     leafimbalance=(!checkfarfieldaccuracy),
                     leafcomp=leafcompression,
                     admissibility=admissibility,
-                ) # 🚀 Pass functor
+                    minbflvl=minbflvl,
+                    adaptive=adaptive,
+                )
             end
         end
 
-        # -------------------------------------------------------------
-        # Rank Analytics & Plotting (Per Step h)
-        # -------------------------------------------------------------
         ranks_dict = extract_ranks_per_level(Bfmat)
+
+        # 🚀 NEW: Extract and record Depth-Specific Memory footprints
+        current_mem_by_depth = extract_memory_per_depth(Bfmat)
+
+        # Pad any missing depths in history with NaN so all arrays match the length of N_vals
+        for d in keys(current_mem_by_depth)
+            if !haskey(mem_by_depth_history, d)
+                mem_by_depth_history[d] = fill(NaN, i - 1)
+            end
+        end
+        # Push current values to history
+        for d in keys(mem_by_depth_history)
+            push!(mem_by_depth_history[d], get(current_mem_by_depth, d, NaN))
+        end
 
         println("--- Maximum Ranks per BF Level ---")
         for l in sort(collect(keys(ranks_dict)))
             println("Level $l: ", ranks_dict[l])
+        end
+
+        println("--- Memory Breakdown by BF Depth ---")
+        for d in sort(collect(keys(current_mem_by_depth)))
+            @printf("Depth %d: %.2f MB\n", d, current_mem_by_depth[d])
+            write(
+                log_stream,
+                @sprintf("Depth %d Memory: %.2f MB\n", d, current_mem_by_depth[d])
+            )
         end
         println("----------------------------------")
 
@@ -327,7 +396,6 @@ function run_benchmarks(
         push!(k_vals, k)
         push!(max_R_ranks, max_r_rank)
 
-        # -------------------------------------------------------------
         time_bf_str = @sprintf("Time for ButterflyFactorization: %.3f seconds", t_bf)
         println(time_bf_str)
         write(log_stream, time_bf_str * "\n")
@@ -351,16 +419,12 @@ function run_benchmarks(
         println(mv_bf_str)
         write(log_stream, mv_bf_str * "\n")
 
-        # -------------------------------------------------------------
-        # 3. Far-field Accuracy Validation (BF vs ACA)
-        # -------------------------------------------------------------
         err_bf = NaN
         if checkfarfieldaccuracy
             println(
                 "\nComputing reference ACA Far-Matrix for accuracy check (tol = $(bf_tol * 1e-2))...",
             )
 
-            # 🚀 Inject the dynamic local_isnear closure
             refmat = if disjointgeom
                 HMatrix(
                     op,
@@ -400,9 +464,6 @@ function run_benchmarks(
             write(log_stream, err_str * "\n")
         end
 
-        # -------------------------------------------------------------
-        # 4. Standard ACA Benchmark (Optional)
-        # -------------------------------------------------------------
         t_aca = NaN
         mem_aca = NaN
         t_mv_aca = NaN
@@ -410,7 +471,6 @@ function run_benchmarks(
         if acacomparison
             println("\nStarting Standard ACA ($ie_type)...")
 
-            # 🚀 Also ensure standard ACA uses the exact same admissibility condition
             if disjointgeom
                 t_aca = @elapsed begin
                     hmat = HMatrix(
@@ -461,7 +521,6 @@ function run_benchmarks(
             write(log_stream, mv_aca_str * "\n")
         end
 
-        # Push into in-memory arrays
         push!(N_vals, N)
         push!(t_aca_vals, t_aca)
         push!(t_bf_vals, t_bf)
@@ -477,10 +536,11 @@ function run_benchmarks(
         c_mem_nlogn = fit_scaling_factor(N_vals, mem_bf_total_vals, f_nlogn)
         c_mem_nlog2n = fit_scaling_factor(N_vals, mem_bf_total_vals, f_nlog2n)
         c_mv_nlogn = fit_scaling_factor(N_vals, t_mv_bf_vals, f_nlogn)
+        c_mv_nlog2n = fit_scaling_factor(N_vals, t_mv_bf_vals, f_nlog2n)
 
         shape_str = shape isa Symbol ? string(shape) : "custom"
         csv_row = @sprintf(
-            "%.4f,%d,%s,%s,%.5f,%.5f,%.5f,%.5f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3e,%.5f,%.5f,%.5f\n",
+            "%.4f,%d,%s,%s,%.5f,%.5f,%.5f,%.5f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3e,%.5f,%.5f,%.5f,%.5f\n",
             h,
             N,
             shape_str,
@@ -497,10 +557,234 @@ function run_benchmarks(
             err_bf,
             t_mv_aca,
             t_mv_bf,
-            c_mv_nlogn * f_nlogn(N)
+            c_mv_nlogn * f_nlogn(N),
+            c_mv_nlog2n * f_nlog2n(N)
         )
         write(csv_stream, csv_row)
         flush(csv_stream)
+
+        # 🚀 INCREMENTAL PLOTTING
+        ref_time_nlogn = c_time_nlogn .* f_nlogn.(N_vals)
+        ref_time_nlog2n = c_time_nlog2n .* f_nlog2n.(N_vals)
+        ref_mem_nlogn = c_mem_nlogn .* f_nlogn.(N_vals)
+        ref_mem_nlog2n = c_mem_nlog2n .* f_nlog2n.(N_vals)
+        ref_mv_nlogn = c_mv_nlogn .* f_nlogn.(N_vals)
+        ref_mv_nlog2n = c_mv_nlog2n .* f_nlog2n.(N_vals)
+
+        time_traces = [
+            scatter(;
+                x=N_vals,
+                y=t_bf_vals,
+                name="Butterfly",
+                mode="lines+markers",
+                line=attr(; color="royalblue"),
+            ),
+            scatter(;
+                x=N_vals,
+                y=ref_time_nlogn,
+                name="O(N log N) Fit",
+                mode="lines",
+                line=attr(; color="gray", dash="dash"),
+            ),
+            scatter(;
+                x=N_vals,
+                y=ref_time_nlog2n,
+                name="O(N log² N) Fit",
+                mode="lines",
+                line=attr(; color="black", dash="dot"),
+            ),
+        ]
+
+        mem_traces = [
+            scatter(;
+                x=N_vals,
+                y=mem_bf_total_vals,
+                name="Butterfly Total",
+                mode="lines+markers",
+                line=attr(; color="royalblue", width=4),
+            ),
+            scatter(;
+                x=N_vals,
+                y=mem_ButterflyFactorization_Mat_vals,
+                name="Butterfly Matrix Entries",
+                mode="lines+markers",
+                line=attr(; color="skyblue", width=3, dash="dash"),
+            ),
+            scatter(;
+                x=N_vals,
+                y=ref_mem_nlog2n,
+                name="Total O(N log² N) Fit",
+                mode="lines",
+                line=attr(; color="black", dash="dot"),
+            ),
+        ]
+
+        # 🚀 NEW: Dynamically add depth curves and their fits
+        for d in sort(collect(keys(mem_by_depth_history)))
+            vals = mem_by_depth_history[d]
+            c_fit = fit_scaling_factor(N_vals, vals, f_nlog2n)
+            ref_fit = c_fit .* f_nlog2n.(N_vals)
+
+            push!(
+                mem_traces,
+                scatter(;
+                    x=N_vals,
+                    y=vals,
+                    name="Depth $d BFs",
+                    mode="lines+markers",
+                    marker=attr(; size=6),
+                ),
+            )
+            push!(
+                mem_traces,
+                scatter(;
+                    x=N_vals,
+                    y=ref_fit,
+                    name="Depth $d Fit (O(N log² N))",
+                    mode="lines",
+                    line=attr(; dash="dot"),
+                ),
+            )
+        end
+
+        mv_traces = [
+            scatter(;
+                x=N_vals,
+                y=t_mv_bf_vals,
+                name="Butterfly",
+                mode="lines+markers",
+                line=attr(; color="royalblue"),
+            ),
+            scatter(;
+                x=N_vals,
+                y=ref_mv_nlogn,
+                name="O(N log N) Fit",
+                mode="lines",
+                line=attr(; color="gray", dash="dash"),
+            ),
+            scatter(;
+                x=N_vals,
+                y=ref_mv_nlog2n,
+                name="O(N log² N) Fit",
+                mode="lines",
+                line=attr(; color="black", dash="dot"),
+            ),
+        ]
+
+        if acacomparison
+            push!(
+                time_traces,
+                scatter(;
+                    x=N_vals,
+                    y=t_aca_vals,
+                    name="ACA",
+                    mode="lines+markers",
+                    line=attr(; color="firebrick"),
+                ),
+            )
+            push!(
+                mem_traces,
+                scatter(;
+                    x=N_vals,
+                    y=mem_aca_vals,
+                    name="ACA Total",
+                    mode="lines+markers",
+                    line=attr(; color="firebrick"),
+                ),
+            )
+            push!(
+                mv_traces,
+                scatter(;
+                    x=N_vals,
+                    y=t_mv_aca_vals,
+                    name="ACA",
+                    mode="lines+markers",
+                    line=attr(; color="firebrick"),
+                ),
+            )
+        end
+
+        p_time = plot(
+            time_traces,
+            Layout(;
+                title="Build Time vs N ($shape_str, $ie_type)",
+                xaxis_title="N (DOFs)",
+                yaxis_title="Time (s)",
+                yaxis_type="log",
+                xaxis_type="log",
+                template="plotly_white",
+            ),
+        )
+        savefig(p_time, "plot_build_time.html")
+
+        p_mem = plot(
+            mem_traces,
+            Layout(;
+                title="Memory Usage vs N Grouped by Depth ($shape_str, $ie_type)",
+                xaxis_title="N (DOFs)",
+                yaxis_title="Memory (MB)",
+                yaxis_type="log",
+                xaxis_type="log",
+                template="plotly_white",
+            ),
+        )
+        savefig(p_mem, "plot_memory_usage.html")
+
+        p_mv = plot(
+            mv_traces,
+            Layout(;
+                title="Mat-Vec Time vs N ($shape_str, $ie_type)",
+                xaxis_title="N (DOFs)",
+                yaxis_title="Time (s)",
+                yaxis_type="log",
+                xaxis_type="log",
+                template="plotly_white",
+            ),
+        )
+        savefig(p_mv, "plot_mat_vec_time.html")
+
+        p_err = plot(
+            [
+                scatter(;
+                    x=N_vals,
+                    y=err_bf_vals,
+                    name="Butterfly Far-Field Rel Error",
+                    mode="lines+markers",
+                    line=attr(; color="seagreen"),
+                ),
+            ],
+            Layout(;
+                title="Accuracy vs N ($shape_str, $ie_type)",
+                xaxis_title="N (DOFs)",
+                yaxis_title="Relative Error",
+                yaxis_type="log",
+                xaxis_type="log",
+                template="plotly_white",
+            ),
+        )
+        savefig(p_err, "plot_accuracy.html")
+
+        p_rank_vs_k = plot(
+            [
+                scatter(;
+                    x=k_vals,
+                    y=max_R_ranks,
+                    mode="lines+markers",
+                    line=attr(; color="purple", width=3),
+                    marker=attr(; size=8),
+                ),
+            ],
+            Layout(;
+                title="Max R-Block Rank vs. Wavenumber (k) | $shape_str, $ie_type",
+                xaxis_title="Wavenumber (k)",
+                yaxis_title="Maximum Rank in R Factors",
+                xaxis_type="log",
+                yaxis_type="linear",
+                template="plotly_white",
+                yaxis=attr(; rangemode="tozero"),
+            ),
+        )
+        savefig(p_rank_vs_k, "plot_max_R_rank_vs_k.html")
 
         end_str = @sprintf(
             "================================================ End of Round %-1d =======================================================\n",
@@ -556,221 +840,26 @@ function run_benchmarks(
     write(log_stream, header1 * "\n")
     close(log_stream)
 
-    final_c_time_nlogn = fit_scaling_factor(N_vals, t_bf_vals, f_nlogn)
-    final_c_time_nlog2n = fit_scaling_factor(N_vals, t_bf_vals, f_nlog2n)
-    final_c_mem_nlogn = fit_scaling_factor(N_vals, mem_bf_total_vals, f_nlogn)
-    final_c_mem_nlog2n = fit_scaling_factor(N_vals, mem_bf_total_vals, f_nlog2n)
-    final_c_mv_nlogn = fit_scaling_factor(N_vals, t_mv_bf_vals, f_nlogn)
-
-    ref_time_nlogn = final_c_time_nlogn .* f_nlogn.(N_vals)
-    ref_time_nlog2n = final_c_time_nlog2n .* f_nlog2n.(N_vals)
-    ref_mem_nlogn = final_c_mem_nlogn .* f_nlogn.(N_vals)
-    ref_mem_nlog2n = final_c_mem_nlog2n .* f_nlog2n.(N_vals)
-    ref_mv_nlogn = final_c_mv_nlogn .* f_nlogn.(N_vals)
-
-    shape_str = shape isa Symbol ? string(shape) : "custom"
-
-    time_traces = [
-        scatter(;
-            x=N_vals,
-            y=t_bf_vals,
-            name="Butterfly",
-            mode="lines+markers",
-            line=attr(; color="royalblue"),
-        ),
-        scatter(;
-            x=N_vals,
-            y=ref_time_nlogn,
-            name="O(N log N) Fit",
-            mode="lines",
-            line=attr(; color="gray", dash="dash"),
-        ),
-        scatter(;
-            x=N_vals,
-            y=ref_time_nlog2n,
-            name="O(N log² N) Fit",
-            mode="lines",
-            line=attr(; color="black", dash="dot"),
-        ),
-    ]
-    mem_traces = [
-        scatter(;
-            x=N_vals,
-            y=mem_bf_total_vals,
-            name="Butterfly Total",
-            mode="lines+markers",
-            line=attr(; color="royalblue"),
-        ),
-        scatter(;
-            x=N_vals,
-            y=mem_ButterflyFactorization_Mat_vals,
-            name="Butterfly Matrix Entries",
-            mode="lines+markers",
-            line=attr(; color="skyblue", dash="dash"),
-        ),
-        scatter(;
-            x=N_vals,
-            y=ref_mem_nlogn,
-            name="O(N log N) Fit",
-            mode="lines",
-            line=attr(; color="gray", dash="dash"),
-        ),
-        scatter(;
-            x=N_vals,
-            y=ref_mem_nlog2n,
-            name="O(N log² N) Fit",
-            mode="lines",
-            line=attr(; color="black", dash="dot"),
-        ),
-    ]
-    mv_traces = [
-        scatter(;
-            x=N_vals,
-            y=t_mv_bf_vals,
-            name="Butterfly",
-            mode="lines+markers",
-            line=attr(; color="royalblue"),
-        ),
-        scatter(;
-            x=N_vals,
-            y=ref_mv_nlogn,
-            name="O(N log N) Fit",
-            mode="lines",
-            line=attr(; color="gray", dash="dash"),
-        ),
-    ]
-
-    if acacomparison
-        push!(
-            time_traces,
-            scatter(;
-                x=N_vals,
-                y=t_aca_vals,
-                name="ACA",
-                mode="lines+markers",
-                line=attr(; color="firebrick"),
-            ),
-        )
-        push!(
-            mem_traces,
-            scatter(;
-                x=N_vals,
-                y=mem_aca_vals,
-                name="ACA Total",
-                mode="lines+markers",
-                line=attr(; color="firebrick"),
-            ),
-        )
-        push!(
-            mv_traces,
-            scatter(;
-                x=N_vals,
-                y=t_mv_aca_vals,
-                name="ACA",
-                mode="lines+markers",
-                line=attr(; color="firebrick"),
-            ),
-        )
-    end
-
-    p_time = plot(
-        time_traces,
-        Layout(;
-            title="Build Time vs N ($shape_str, $ie_type)",
-            xaxis_title="N (DOFs)",
-            yaxis_title="Time (s)",
-            yaxis_type="log",
-            xaxis_type="log",
-            template="plotly_white",
-        ),
-    )
-    savefig(p_time, "plot_build_time.html")
-
-    p_mem = plot(
-        mem_traces,
-        Layout(;
-            title="Memory Usage vs N ($shape_str, $ie_type)",
-            xaxis_title="N (DOFs)",
-            yaxis_title="Memory (MB)",
-            yaxis_type="log",
-            xaxis_type="log",
-            template="plotly_white",
-        ),
-    )
-    savefig(p_mem, "plot_memory_usage.html")
-
-    p_mv = plot(
-        mv_traces,
-        Layout(;
-            title="Mat-Vec Time vs N ($shape_str, $ie_type)",
-            xaxis_title="N (DOFs)",
-            yaxis_title="Time (s)",
-            yaxis_type="log",
-            xaxis_type="log",
-            template="plotly_white",
-        ),
-    )
-    savefig(p_mv, "plot_mat_vec_time.html")
-
-    p_err = plot(
-        [
-            scatter(;
-                x=N_vals,
-                y=err_bf_vals,
-                name="Butterfly Far-Field Rel Error",
-                mode="lines+markers",
-                line=attr(; color="seagreen"),
-            ),
-        ],
-        Layout(;
-            title="Accuracy vs N ($shape_str, $ie_type)",
-            xaxis_title="N (DOFs)",
-            yaxis_title="Relative Error",
-            yaxis_type="log",
-            xaxis_type="log",
-            template="plotly_white",
-        ),
-    )
-    savefig(p_err, "plot_accuracy.html")
-
-    p_rank_vs_k = plot(
-        [
-            scatter(;
-                x=k_vals,
-                y=max_R_ranks,
-                mode="lines+markers",
-                line=attr(; color="purple", width=3),
-                marker=attr(; size=8),
-            ),
-        ],
-        Layout(;
-            title="Max R-Block Rank vs. Wavenumber (k) | $shape_str, $ie_type",
-            xaxis_title="Wavenumber (k)",
-            yaxis_title="Maximum Rank in R Factors",
-            xaxis_type="log",
-            yaxis_type="linear",
-            template="plotly_white",
-            yaxis=attr(; rangemode="tozero"),
-        ),
-    )
-    savefig(p_rank_vs_k, "plot_max_R_rank_vs_k.html")
     println("\nAll benchmarks complete! Data saved to '$csv_file'.")
 
     return p_time, p_mem, p_mv, p_err, p_rank_vs_k, p_level_ranks_all
 end
 
-h_values = [0.1, 0.05, 0.025, 0.0125]# , 0.025, 0.0125
+h_values = [0.1, 0.05, 0.025, 0.0125]#, 0.025, 0.0125
 
 p_time, p_mem, p_mv, p_err, p_rank_vs_k, p_level_ranks_all = run_benchmarks(
     h_values;
     shape=:sphere,
     ie_type=:EFIE,
     bf_tol=1e-3,
+    maxpointsbisection=100,
+    minbflvl=2, # Minimum level in the BF to start compressing (for testing)
+    adaptive=false, # Set to true to enable adaptive rank estimation
     admissibility_spec=:CenterDistanceAdmissibility, # ∈ {:CenterDistanceAdmissibility, :isFarFunctor}
     checkfarfieldaccuracy=false, # Set to true to validate far-field accuracy against ACA
-    acacomparison=true, # Set to true to benchmark against standard ACA
+    acacomparison=false, # Set to true to benchmark against standard ACA
     unbalancedints=false, # Set to true to allow unbalanced near/far interactions (for testing)
-    disjointgeom=false, # Set to true to use disjoint source/target geometries (for testing)
+    disjointgeom=true, # Set to true to use disjoint source/target geometries (for testing)
     treekind=:BisectionTree, # ∈ {:KMeansTree, :BisectionTree, :TwoNTree}
     highf=true, # Set to true to scale k with h, false to keep k constant
     leafcompression=false, # Set to true to enable leaf compression in the BF for proper farfield comparison with ACA needs to be true.... however this adds ACA scaling to the BF....

@@ -34,11 +34,11 @@
 
     tree1 = TwoNTree(T, U, lambda / 10)     #testspace, trialspace
     tree2 = TwoNTree(U, T, lambda / 10)
-    tree31 = TwoNTree(U2.pos, lambda / 2.5)
+    tree31 = TwoNTree(U2.pos, lambda / 1.25)
     tree32 = TwoNTree(T.pos, lambda / 10)
     tree3 = BlockTree(tree31, tree32)
     tree41 = TwoNTree(U.pos, lambda / 10)
-    tree42 = TwoNTree(T2.pos, lambda / 2.5)
+    tree42 = TwoNTree(T2.pos, lambda / 1.25)
     tree4 = BlockTree(tree41, tree42)
 
     farassembler1 = ButterflyFactorizations.AbstractKernelMatrix(op, T, U)
@@ -85,18 +85,10 @@
         farassembler4, tree4, 1, 1, k, 10^(-3); scheduler=OhMyThreads.DynamicScheduler()
     )
 
-    Bfly1m = ButterflyFactorizations.assemble_ButterflyFactorization_Mat(
-        farassembler1, tree1, 1, 1, k, 10^(-3)
-    )
-    Bfly2m = ButterflyFactorizations.assemble_ButterflyFactorization_Mat(
-        farassembler2, tree2, 1, 1, k, 10^(-3)
-    )
-    Bfly3m = ButterflyFactorizations.assemble_ButterflyFactorization_Mat(
-        farassembler3, tree3, 1, 1, k, 10^(-3)
-    )
-    Bfly4m = ButterflyFactorizations.assemble_ButterflyFactorization_Mat(
-        farassembler4, tree4, 1, 1, k, 10^(-3)
-    )
+    Bfly1m = ButterflyFactorizations.assemble_BF_Mat(farassembler1, tree1, 1, 1, k, 10^(-3))
+    Bfly2m = ButterflyFactorizations.assemble_BF_Mat(farassembler2, tree2, 1, 1, k, 10^(-3))
+    Bfly3m = ButterflyFactorizations.assemble_BF_Mat(farassembler3, tree3, 1, 1, k, 10^(-3))
+    Bfly4m = ButterflyFactorizations.assemble_BF_Mat(farassembler4, tree4, 1, 1, k, 10^(-3))
 
     x_test1 = zeros(ComplexF64, size(A1, 1))
     x_test2 = zeros(ComplexF64, size(A2, 1))
