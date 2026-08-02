@@ -110,12 +110,12 @@ include("Butterflyalgebra/bfsplitmul.jl")
 include("Butterflyalgebra/bfsplit.jl")
 
 # Tree Traversal & Butterfly Construction
-include("GlobalMatrixAssembly/farfieldcrit.jl")
-include("GlobalMatrixAssembly/intlists.jl")
+include("MatrixAssembly/farfieldcrit.jl")
+include("MatrixAssembly/intlists.jl")
 
 # Full Matrix Assembly
-include("GlobalMatrixAssembly/matrixstructs.jl")
-include("GlobalMatrixAssembly/petrovgalerkinbf.jl")
+include("MatrixAssembly/matrixstructs.jl")
+include("MatrixAssembly/petrovgalerkinbf.jl")
 
 # Matrix Algebra Overloads
 include("matrixalgebra/matrix_adj_tr.jl")
