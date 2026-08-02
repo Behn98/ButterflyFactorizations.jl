@@ -9,158 +9,178 @@
     using LinearAlgebra
     using ParallelKMeans
 
-    #========================================================================
-    =========================================================================
-                            Geometry and Operators
-    =========================================================================
-    =========================================================================#
+    # =========================================================================
+    # 1. Geometry and Spaces (Scaled for CI Performance)
+    # =========================================================================
+    # Force single-threaded BLAS to prevent oversubscription on CI runners
+    BLAS.set_num_threads(1)
+
     lambda = 1.0
     k = 2 * pi / lambda
+
+    @info "Generating meshes and Raviart-Thomas spaces..."
     x = meshsphere(0.25, lambda / 10)
     y = translate(x, SVector(5.0, 0.0, 0.0))
+
     x2 = meshsphere(0.25, lambda / 10)
     y2 = translate(x2, SVector(5.0, 0.0, 0.0))
+
     op = Maxwell3D.singlelayer(; wavenumber=k)
+
     T = raviartthomas(x)
     U = raviartthomas(y)
     T2 = raviartthomas(x2)
     U2 = raviartthomas(y2)
-    length(T)
-    length(T2)
 
-    ##
-    #========================================================================
-    =========================================================================
-                    Tree construction  and Kernelmatrix assembly
-    =========================================================================
-    =========================================================================#
+    @info "Degrees of Freedom: T=$(length(T)), U=$(length(U)), T2=$(length(T2)), U2=$(length(U2))"
 
-    tree1 = TwoNTree(T, U, lambda / 10)     #testspace, trialspace
+    # =========================================================================
+    # 2. Tree Construction and AbstractKernelMatrix Assembly
+    # =========================================================================
+    @info "Constructing hierarchical block trees and AbstractKernelMatrices..."
+
+    # Balanced
+    tree1 = TwoNTree(T, U, lambda / 10)
     tree2 = TwoNTree(U, T, lambda / 10)
+    # Unbalanced
     tree3 = TwoNTree(U2, T, lambda / 10)
     tree4 = TwoNTree(U, T2, lambda / 10)
 
-    @views farasm = BEAST.blockassembler(op, T, U)
-    @views function farassembler1(Z, tdata, sdata)
-        @views store(v, m, n) = (Z[m, n] += v)
-        return farasm(tdata, sdata, store)
-    end
+    # 🚀 REPLACED: Manual BEAST.blockassembler closures replaced with AbstractKernelMatrix
+    farassembler1 = ButterflyFactorizations.AbstractKernelMatrix(op, T, U)
+    farassembler2 = ButterflyFactorizations.AbstractKernelMatrix(op, U, T)
+    farassembler3 = ButterflyFactorizations.AbstractKernelMatrix(op, U2, T)
+    farassembler4 = ButterflyFactorizations.AbstractKernelMatrix(op, U, T2)
 
-    @views farasm2 = BEAST.blockassembler(op, U, T)
-    @views function farassembler2(Z, tdata, sdata)
-        @views store(v, m, n) = (Z[m, n] += v)
-        return farasm2(tdata, sdata, store)
-    end
+    # =========================================================================
+    # 3. Dense Ground Truth Assembly
+    # =========================================================================
+    @info "Assembling Dense Ground Truth Matrices..."
+    A1 = assemble(op, T, U)  # Maps U  -> T
+    A2 = assemble(op, U, T)  # Maps T  -> U
+    A3 = assemble(op, U2, T) # Maps T  -> U2
+    A4 = assemble(op, U, T2) # Maps T2 -> U
 
-    @views farasm3 = BEAST.blockassembler(op, U2, T)
-    @views function farassembler3(Z, tdata, sdata)
-        @views store(v, m, n) = (Z[m, n] += v)
-        return farasm3(tdata, sdata, store)
-    end
+    # Generate semantically correct input vectors matching the specific Codomain (Row) spaces
+    # Because A' and transpose(A) map backwards: Row Space -> Column Space
+    v_in_T = randn(ComplexF64, length(T))
+    v_in_U = randn(ComplexF64, length(U))
+    v_in_T2 = randn(ComplexF64, length(T2))
+    v_in_U2 = randn(ComplexF64, length(U2))
 
-    @views farasm4 = BEAST.blockassembler(op, U, T2)
-    @views function farassembler4(Z, tdata, sdata)
-        @views store(v, m, n) = (Z[m, n] += v)
-        return farasm4(tdata, sdata, store)
-    end
+    @info "Evaluating exact dense Adjoint and Transpose reference vectors..."
+    # Adjoints (Hermitian Transpose)
+    y_exact_adj1 = A1' * v_in_T  # Maps T  -> U
+    y_exact_adj2 = A2' * v_in_U  # Maps U  -> T
+    y_exact_adj3 = A3' * v_in_U2 # Maps U2 -> T
+    y_exact_adj4 = A4' * v_in_U  # Maps U  -> T2
 
-    #========================================================================
-    =========================================================================
-                        Assembly of Matrices and Vectors
-    =========================================================================
-    =========================================================================#
-    A1 = assemble(op, T, U)
-    A2 = assemble(op, U, T)
-    A3 = assemble(op, U2, T)
-    A4 = assemble(op, U, T2)
+    # Transposes
+    y_exact_trn1 = transpose(A1) * v_in_T
+    y_exact_trn2 = transpose(A2) * v_in_U
+    y_exact_trn3 = transpose(A3) * v_in_U2
+    y_exact_trn4 = transpose(A4) * v_in_U
 
-    x_t = randn(ComplexF64, length(T))
-    x_t2 = randn(ComplexF64, length(T2))
+    # =========================================================================
+    # 4. Butterfly Factorization Assembly (Flat Array & Sparse Matrix)
+    # =========================================================================
+    target_tol = 1e-3
 
-    x_s1a = A1' * x_t
-    x_s2a = A2' * x_t
-    x_s3a = A3' * x_t2
-    x_s4a = A4' * x_t
-
-    x_s1t = transpose(A1) * x_t
-    x_s2t = transpose(A2) * x_t
-    x_s3t = transpose(A3) * x_t2
-    x_s4t = transpose(A4) * x_t
-
-    #========================================================================
-    =========================================================================
-                            Buttefly routines calling
-    =========================================================================
-    =========================================================================#
-
+    @info "Assembling Flat-Array Butterfly Blocks..."
     Bfly1 = ButterflyFactorizations.assemble_BF(
-        farassembler1, tree1, 1, 1, k, 10^(-3); scheduler=OhMyThreads.DynamicScheduler()
+        farassembler1, tree1, 1, 1, k, target_tol; scheduler=OhMyThreads.StaticScheduler()
     )
     Bfly2 = ButterflyFactorizations.assemble_BF(
-        farassembler2, tree2, 1, 1, k, 10^(-3); scheduler=OhMyThreads.DynamicScheduler()
+        farassembler2, tree2, 1, 1, k, target_tol; scheduler=OhMyThreads.StaticScheduler()
     )
     Bfly3 = ButterflyFactorizations.assemble_BF(
-        farassembler3, tree3, 1, 1, k, 10^(-3); scheduler=OhMyThreads.DynamicScheduler()
+        farassembler3, tree3, 1, 1, k, target_tol; scheduler=OhMyThreads.StaticScheduler()
     )
     Bfly4 = ButterflyFactorizations.assemble_BF(
-        farassembler4, tree4, 1, 1, k, 10^(-3); scheduler=OhMyThreads.DynamicScheduler()
+        farassembler4, tree4, 1, 1, k, target_tol; scheduler=OhMyThreads.StaticScheduler()
     )
 
-    Bfly1m = ButterflyFactorizations.assemble_ButterflyFactorization_Mat(
-        farassembler1, tree1, 1, 1, k, 10^(-3)
+    @info "Assembling Sparse-Matrix Butterfly Blocks..."
+    Bfly1m = ButterflyFactorizations.assemble_BF_Mat(
+        farassembler1, tree1, 1, 1, k, target_tol
     )
-    Bfly2m = ButterflyFactorizations.assemble_ButterflyFactorization_Mat(
-        farassembler2, tree2, 1, 1, k, 10^(-3)
+    Bfly2m = ButterflyFactorizations.assemble_BF_Mat(
+        farassembler2, tree2, 1, 1, k, target_tol
     )
-    Bfly3m = ButterflyFactorizations.assemble_ButterflyFactorization_Mat(
-        farassembler3, tree3, 1, 1, k, 10^(-3)
+    Bfly3m = ButterflyFactorizations.assemble_BF_Mat(
+        farassembler3, tree3, 1, 1, k, target_tol
     )
-    Bfly4m = ButterflyFactorizations.assemble_ButterflyFactorization_Mat(
-        farassembler4, tree4, 1, 1, k, 10^(-3)
+    Bfly4m = ButterflyFactorizations.assemble_BF_Mat(
+        farassembler4, tree4, 1, 1, k, target_tol
     )
 
-    x_test1 = zeros(ComplexF64, size(A1, 2))
-    x_test2 = zeros(ComplexF64, size(A2, 2))
-    x_test3 = zeros(ComplexF64, size(A3, 2))
-    x_test4 = zeros(ComplexF64, size(A4, 2))
+    # =========================================================================
+    # 5. Testing Adjoints (Flat & Sparse)
+    # =========================================================================
+    @info "Testing Adjoints (A')..."
 
-    @views mul!(x_test1, Bfly1', x_t)
-    @views mul!(x_test2, Bfly2', x_t)
-    @views mul!(x_test3, Bfly3', x_t2)
-    @views mul!(x_test4, Bfly4', x_t)
+    y_test1 = zeros(ComplexF64, size(A1, 2))
+    y_test2 = zeros(ComplexF64, size(A2, 2))
+    y_test3 = zeros(ComplexF64, size(A3, 2))
+    y_test4 = zeros(ComplexF64, size(A4, 2))
 
-    @test norm(x_test1 - x_s1a) / norm(x_s1a) < 10^(-2)
-    @test norm(x_test2 - x_s2a) / norm(x_s2a) < 10^(-2)
-    @test norm(x_test3 - x_s3a) / norm(x_s3a) < 10^(-2)
-    @test norm(x_test4 - x_s4a) / norm(x_s4a) < 10^(-2)
+    # Flat Array Adjoints
+    mul!(y_test1, Bfly1', v_in_T)
+    mul!(y_test2, Bfly2', v_in_U)
+    mul!(y_test3, Bfly3', v_in_U2)
+    mul!(y_test4, Bfly4', v_in_U)
 
-    @views mul!(x_test1[Bfly1m'.PermP], Bfly1m', x_t[Bfly1m'.PermQ])
-    @views mul!(x_test2[Bfly2m'.PermP], Bfly2m', x_t[Bfly2m'.PermQ])
-    @views mul!(x_test3[Bfly3m'.PermP], Bfly3m', x_t2[Bfly3m'.PermQ])
-    @views mul!(x_test4[Bfly4m'.PermP], Bfly4m', x_t[Bfly4m'.PermQ])
+    @test norm(y_test1 - y_exact_adj1) / norm(y_exact_adj1) < 1e-2
+    @test norm(y_test2 - y_exact_adj2) / norm(y_exact_adj2) < 1e-2
+    @test norm(y_test3 - y_exact_adj3) / norm(y_exact_adj3) < 1e-2
+    @test norm(y_test4 - y_exact_adj4) / norm(y_exact_adj4) < 1e-2
 
-    @test norm(x_test1 - x_s1a) / norm(x_s1a) < 10^(-2)
-    @test norm(x_test2 - x_s2a) / norm(x_s2a) < 10^(-2)
-    @test norm(x_test3 - x_s3a) / norm(x_s3a) < 10^(-2)
-    @test norm(x_test4 - x_s4a) / norm(x_s4a) < 10^(-2)
+    # Sparse Matrix Adjoints
+    fill!.((y_test1, y_test2, y_test3, y_test4), 0.0)
+    B1m_adj, B2m_adj, B3m_adj, B4m_adj = Bfly1m', Bfly2m', Bfly3m', Bfly4m'
 
-    @views mul!(x_test1, transpose(Bfly1), x_t)
-    @views mul!(x_test2, transpose(Bfly2), x_t)
-    @views mul!(x_test3, transpose(Bfly3), x_t2)
-    @views mul!(x_test4, transpose(Bfly4), x_t)
+    # Note: We query permP and permQ on the newly returned adjoint objects
+    @views mul!(y_test1[B1m_adj.permP], B1m_adj, v_in_T[B1m_adj.permQ])
+    @views mul!(y_test2[B2m_adj.permP], B2m_adj, v_in_U[B2m_adj.permQ])
+    @views mul!(y_test3[B3m_adj.permP], B3m_adj, v_in_U2[B3m_adj.permQ])
+    @views mul!(y_test4[B4m_adj.permP], B4m_adj, v_in_U[B4m_adj.permQ])
 
-    @test norm(x_test1 - x_s1t) / norm(x_s1t) < 10^(-2)
-    @test norm(x_test2 - x_s2t) / norm(x_s2t) < 10^(-2)
-    @test norm(x_test3 - x_s3t) / norm(x_s3t) < 10^(-2)
-    @test norm(x_test4 - x_s4t) / norm(x_s4t) < 10^(-2)
+    @test norm(y_test1 - y_exact_adj1) / norm(y_exact_adj1) < 1e-2
+    @test norm(y_test2 - y_exact_adj2) / norm(y_exact_adj2) < 1e-2
+    @test norm(y_test3 - y_exact_adj3) / norm(y_exact_adj3) < 1e-2
+    @test norm(y_test4 - y_exact_adj4) / norm(y_exact_adj4) < 1e-2
 
-    @views mul!(x_test1[Bfly1m.PermQ], transpose(Bfly1m), x_t[Bfly1m.PermP])
-    @views mul!(x_test2[Bfly2m.PermQ], transpose(Bfly2m), x_t[Bfly2m.PermP])
-    @views mul!(x_test3[Bfly3m.PermQ], transpose(Bfly3m), x_t2[Bfly3m.PermP])
-    @views mul!(x_test4[Bfly4m.PermQ], transpose(Bfly4m), x_t[Bfly4m.PermP])
+    # =========================================================================
+    # 6. Testing Transposes (Flat & Sparse)
+    # =========================================================================
+    @info "Testing Transposes (transpose(A))..."
 
-    @test norm(x_test1 - x_s1t) / norm(x_s1t) < 10^(-2)
-    @test norm(x_test2 - x_s2t) / norm(x_s2t) < 10^(-2)
-    @test norm(x_test3 - x_s3t) / norm(x_s3t) < 10^(-2)
-    @test norm(x_test4 - x_s4t) / norm(x_s4t) < 10^(-2)
+    fill!.((y_test1, y_test2, y_test3, y_test4), 0.0)
+
+    # Flat Array Transposes
+    mul!(y_test1, transpose(Bfly1), v_in_T)
+    mul!(y_test2, transpose(Bfly2), v_in_U)
+    mul!(y_test3, transpose(Bfly3), v_in_U2)
+    mul!(y_test4, transpose(Bfly4), v_in_U)
+
+    @test norm(y_test1 - y_exact_trn1) / norm(y_exact_trn1) < 1e-2
+    @test norm(y_test2 - y_exact_trn2) / norm(y_exact_trn2) < 1e-2
+    @test norm(y_test3 - y_exact_trn3) / norm(y_exact_trn3) < 1e-2
+    @test norm(y_test4 - y_exact_trn4) / norm(y_exact_trn4) < 1e-2
+
+    # Sparse Matrix Transposes
+    fill!.((y_test1, y_test2, y_test3, y_test4), 0.0)
+    B1m_trn, B2m_trn, B3m_trn, B4m_trn = transpose(Bfly1m),
+    transpose(Bfly2m), transpose(Bfly3m),
+    transpose(Bfly4m)
+
+    @views mul!(y_test1[B1m_trn.permP], B1m_trn, v_in_T[B1m_trn.permQ])
+    @views mul!(y_test2[B2m_trn.permP], B2m_trn, v_in_U[B2m_trn.permQ])
+    @views mul!(y_test3[B3m_trn.permP], B3m_trn, v_in_U2[B3m_trn.permQ])
+    @views mul!(y_test4[B4m_trn.permP], B4m_trn, v_in_U[B4m_trn.permQ])
+
+    @test norm(y_test1 - y_exact_trn1) / norm(y_exact_trn1) < 1e-2
+    @test norm(y_test2 - y_exact_trn2) / norm(y_exact_trn2) < 1e-2
+    @test norm(y_test3 - y_exact_trn3) / norm(y_exact_trn3) < 1e-2
+    @test norm(y_test4 - y_exact_trn4) / norm(y_exact_trn4) < 1e-2
 end

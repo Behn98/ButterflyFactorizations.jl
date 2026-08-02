@@ -53,7 +53,7 @@ function assemble_BF(
     Cε=tree_parameters(cluster_testtree(blktree)).Cε,
     adaptive=false,
     compressor=ButterflyFactorizations.PartialQR(),
-    scheduler=OhMyThreads.DynamicScheduler(),
+    scheduler=OhMyThreads.StaticScheduler(),
     acctype=ComplexF64,
 )
     # --- Trees & Helpers ---

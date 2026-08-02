@@ -8,40 +8,56 @@ using LinearMaps: LinearMaps
 @views function LinearAlgebra.mul!(
     y::AbstractVecOrMat,
     A::ButterflyFactorizations.PetrovGalerkinBF{T},
-    x::AbstractVector{T};
-    scheduler=OhMyThreads.StaticScheduler(), # 🚀 StaticScheduler is required for threadid() safety
+    x::AbstractVector{T},
+    α::Number=1,
+    β::Number=0,
 ) where {T}
     LinearMaps.check_dim_mul(y, A, x)
 
-    # 1. Near Interactions (Zero-allocation evaluation)
-    # mul! with β=0 completely overwrites `y` without allocating a temporary vector
-    mul!(y, A.nearinteractions, x, 1, 0)
+    # 1. Handle scaling or zeroing of the output vector y based on β
+    if β == 0
+        fill!(y, zero(T))
+    elseif β != 1
+        rmul!(y, β)
+    end
 
-    # 2. Far Interactions (Looping over all the individual BFs)
+    # 2. Evaluate Near-Field (accumulate with α scaling if needed, or standard 1, 1 if β was handled)
+    # To be fully general with α and β:
+    # We can compute the application into a temporary or handle near/far carefully.
+    # A cleaner approach for LinearMaps compatibility:
+
+    # Let's compute near-field contribution
+    # (If α != 1, we scale accordingly)
+    if α == 1
+        mul!(y, A.nearinteractions, x, 1, 1) # adds to y
+    else
+        # Temporary buffer or direct scaling
+        y_near = A.nearinteractions * x
+        y .+= α .* y_near
+    end
+
+    # 3. Far-Field Butterfly Evaluation
     if !isempty(A.BFs)
-        # Clear out thread buffers
         for buf in A.y_thread_buffers
             fill!(buf, zero(T))
         end
 
-        @tasks for i in 1:length(A.BFs)
-            @set scheduler = scheduler
-
-            # What OS thread is executing this specific iteration?
+        Threads.@threads :static for i in 1:length(A.BFs)
             tid = Threads.threadid()
-
-            # Grab the workspace and y-buffer assigned to this thread
             y_local = A.y_thread_buffers[tid]
             ws_local = A.thread_workspaces[tid]
             bf = A.BFs[i]
 
-            # The thread re-uses its personal workspace to evaluate this BF block.
             mul!(y_local, bf, x, ws_local, 1, 1)
         end
 
-        # 3. Reduction: Sum all the thread local vectors back into the main `y`
+        # Reduction back to global vector with α scaling factor
         for buf in A.y_thread_buffers
-            y .+= buf
+            if α == 1
+                y .+= buf
+            else
+                y .+= α .* buf
+            end
         end
     end
 
@@ -56,11 +72,18 @@ end
     y::AbstractVecOrMat,
     A::ButterflyFactorizations.PetrovGalerkinBF_Mat,
     x::AbstractVector{T},
+    α::Number=1,
+    β::Number=0,
 ) where {T}
+    if β == 0
+        fill!(y, zero(T))
+    elseif β != 1
+        rmul!(y, β)
+    end
     LinearMaps.check_dim_mul(y, A, x)
 
     # Zero-allocation near-field
-    mul!(y, A.nearinteractions, x, 1, 0)
+    mul!(y, A.nearinteractions, x, α, β)
 
     for i in eachindex(A.BFs)
         y[A.BFs[i].permP] .+= applyButterflyFactorization_Mat(A.BFs[i], x[A.BFs[i].permQ])
@@ -72,10 +95,18 @@ end
     y::AbstractVecOrMat,
     At::LinearMaps.TransposeMap{<:Any,<:ButterflyFactorizations.PetrovGalerkinBF_Mat},
     x::AbstractVector{T},
+    α::Number=1,
+    β::Number=0,
 ) where {T}
     LinearMaps.check_dim_mul(y, At.lmap, x)
 
-    mul!(y, transpose(At.lmap.nearinteractions), x, 1, 0)
+    if β == 0
+        fill!(y, zero(T))
+    elseif β != 1
+        rmul!(y, β)
+    end
+
+    mul!(y, transpose(At.lmap.nearinteractions), x, α, β)
 
     for i in eachindex(At.lmap.BFs)
         y[At.lmap.BFs[i].permQ] .+= applyButterflyFactorization_Mat(
@@ -89,10 +120,18 @@ end
     y::AbstractVecOrMat,
     At::LinearMaps.AdjointMap{<:Any,<:ButterflyFactorizations.PetrovGalerkinBF_Mat},
     x::AbstractVector{T},
+    α::Number=1,
+    β::Number=0,
 ) where {T}
     LinearMaps.check_dim_mul(y, At.lmap, x)
 
-    mul!(y, adjoint(At.lmap.nearinteractions), x, 1, 0)
+    if β == 0
+        fill!(y, zero(T))
+    elseif β != 1
+        rmul!(y, β)
+    end
+
+    mul!(y, adjoint(At.lmap.nearinteractions), x, α, β)
 
     for i in eachindex(At.lmap.BFs)
         y[At.lmap.BFs[i].permQ] .+= applyButterflyFactorization_Mat(

@@ -56,6 +56,24 @@ function blockdiag(blk_A::ButterflyBlock{T}, blk_B::ButterflyBlock{T}) where {T}
 end
 
 """
+    sparse_blockdiag(blk_A::ButterflyBlock{T}, blk_B::ButterflyBlock{T}) where {T}
+
+Merges two `ButterflyBlock`s that share the exact same routing keys into a single
+block-diagonal `ButterflyBlock`. This is highly useful for compressing and grouping
+independent interactions.
+"""
+function sparse_blockdiag(blk_A::ButterflyBlock{T}, blk_B::ButterflyBlock{T}) where {T}
+    @assert blk_A.obs_out == blk_B.obs_out && blk_A.src_out == blk_B.src_out
+    @assert blk_A.obs_in == blk_B.obs_in && blk_A.src_in == blk_B.src_in
+
+    new_data = sparse_blockdiag(blk_A.data, blk_B.data)
+
+    return ButterflyBlock(
+        blk_A.obs_out, blk_A.src_out, blk_A.obs_in, blk_A.src_in, new_data
+    )
+end
+
+"""
     clear!(logger::RankLogger)
 
 Empties all thread-local buffers within the `RankLogger`, preparing it for a new

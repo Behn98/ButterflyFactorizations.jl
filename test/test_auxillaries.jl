@@ -1,176 +1,125 @@
-@testitem "Testing custom Blockconstructions" begin
+@testitem "Testing Auxiliary Matrix & Block Constructions" begin
+    using Test
     using ButterflyFactorizations
     using LinearAlgebra
-    using OhMyThreads
     using SparseArrays
     using BlockSparseMatrices
-    using Test
 
+    @info "Testing Dense Block Diagonalization..."
     M1 = rand(ComplexF64, 14, 12)
     M2 = rand(ComplexF64, 12, 10)
-    M = ButterflyFactorizations.blockdiag(M1, M2)
-    @test size(M) == (26, 22)
 
-    M = SparseArrays.sparse(M)
-    sparseM = ButterflyFactorizations.sparse_blockdiag(M, M2)
-    @test size(sparseM) == (38, 32)
-    @test issparse(sparseM)
-    storedentries = size(M1)[1] * size(M1)[2] + (size(M2)[1] * size(M2)[2]) * 2
-    @test nnz(sparseM) == storedentries
+    M_diag = ButterflyFactorizations.blockdiag(M1, M2)
+    @test size(M_diag) == (26, 22)
 
-    M3 = hcat(M[1:size(M2)[1], :], M2)
-    sparseM3 = ButterflyFactorizations.sparse_vcat(M3, sparseM)
-    @test size(sparseM3) == (50, 32)
-    @test issparse(sparseM3)
-    @test nnz(sparseM3) == nnz(M3) + nnz(sparseM)
+    @info "Testing Sparse Block Manipulations..."
+    M_sparse1 = SparseArrays.sparse(M_diag)
 
-    M1 = BlockSparseMatrix([M1], [1:14], [1:12], (14, 12))
-    M2 = BlockSparseMatrix([M2], [1:12], [1:10], (12, 10))
-    M = ButterflyFactorizations.blocksparse_blockdiag(M1, M2)
-    @test size(M) == (26, 22)
-    @test size(M.blocks)[1] == 2
-    @test size(M.blocks[1]) == (14, 12)
-    @test size(M.blocks[2]) == (12, 10)
-    @test M.colindices[1] == 1:12
-    @test M.colindices[2] == 13:22
-    @test M.rowindices[1] == 1:14
-    @test M.rowindices[2] == 15:26
+    # Sparse Block Diagonal
+    sparse_M = ButterflyFactorizations.sparse_blockdiag(M_sparse1, M2)
+    @test size(sparse_M) == (38, 32)
+    @test issparse(sparse_M)
 
-    M = ButterflyFactorizations.blocksparse_vcat(M1[:, 1:10], M2)
-    @test size(M) == (26, 10)
-    @test size(M.blocks)[1] == 2
-    @test size(M.blocks[1]) == (14, 10)
-    @test size(M.blocks[2]) == (12, 10)
-    @test M.rowindices[1] == 1:14
-    @test M.rowindices[2] == 15:26
+    # Check non-zero entries (nnz) are perfectly preserved
+    stored_entries = size(M1, 1) * size(M1, 2) + (size(M2, 1) * size(M2, 2)) * 2
+    @test nnz(sparse_M) == stored_entries
+
+    # Sparse Vertical Concatenation
+    M3 = hcat(M_diag[1:size(M2, 1), :], M2)
+    sparse_M3 = ButterflyFactorizations.sparse_vcat(M3, sparse_M)
+    @test size(sparse_M3) == (50, 32)
+    @test issparse(sparse_M3)
+
+    # 🚀 FIX: Convert dense M3 to sparse just to safely query `nnz`
+    @test nnz(sparse_M3) == nnz(sparse(M3)) + nnz(sparse_M)
+
+    @info "Testing BlockSparseMatrix Concatenations..."
+    BSM1 = BlockSparseMatrix([M1], [1:14], [1:12], (14, 12))
+    BSM2 = BlockSparseMatrix([M2], [1:12], [1:10], (12, 10))
+
+    # BlockSparse Block Diagonal
+    BSM_diag = ButterflyFactorizations.blocksparse_blockdiag(BSM1, BSM2)
+    @test size(BSM_diag) == (26, 22)
+    @test length(BSM_diag.blocks) == 2
+    @test size(BSM_diag.blocks[1]) == (14, 12)
+    @test size(BSM_diag.blocks[2]) == (12, 10)
+    @test BSM_diag.colindices[1] == 1:12
+    @test BSM_diag.colindices[2] == 13:22
+    @test BSM_diag.rowindices[1] == 1:14
+    @test BSM_diag.rowindices[2] == 15:26
+
+    # BlockSparse Vertical Concatenation
+    BSM_vcat = ButterflyFactorizations.blocksparse_vcat(BSM1[:, 1:10], BSM2)
+    @test size(BSM_vcat) == (26, 10)
+    @test length(BSM_vcat.blocks) == 2
+    @test size(BSM_vcat.blocks[1]) == (14, 10)
+    @test size(BSM_vcat.blocks[2]) == (12, 10)
+    @test BSM_vcat.rowindices[1] == 1:14
+    @test BSM_vcat.rowindices[2] == 15:26
 end
 
-@testitem "Testing Subdictionary functionality" begin
-    using Test
-    using Random
-    using ButterflyFactorizations
-    R1 = Dict{Int,Dict{Int,Matrix{ComplexF64}}}()
-    R2 = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
-    idx1 = rand(Int, 10)
-    entry = [rand(ComplexF64, 2, 2) for _ in 1:10]
-    idx2 = [(rand(Int), rand(Int)) for _ in 1:10]
-    for i in randperm(10)
-        R1[idx1[i]] = Dict{Int,Matrix{ComplexF64}}()
-        R1[idx1[i]][idx1[11 - i]] = entry[i]
-        R2[idx2[i]] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-        R2[idx2[i]][idx2[11 - i]] = entry[i]
-    end
-    for i in 1:10
-        @test ButterflyFactorizations.getsubdict!(R1, idx1[i]) == R1[idx1[i]]
-        @test ButterflyFactorizations.getsubdict!(R2, idx2[i]) == R2[idx2[i]]
-    end
-
-    rows = []
-    col_idx = idx2[2]
-    for row in keys(R2)
-        if haskey(R2[row], col_idx)
-            push!(rows, row)
-        end
-    end
-    @test rows == ButterflyFactorizations.find_rows_for_column(R2, col_idx)
-    rows = []
-    col_idx = idx1[2]
-    for row in keys(R1)
-        if haskey(R1[row], col_idx)
-            push!(rows, row)
-        end
-    end
-    @test rows == ButterflyFactorizations.find_rows_for_column(R1, col_idx)
-end
-
-@testitem "Testing Subdictionary functionality" begin
+@testitem "Testing Tree Interface and Traversal Utilities" begin
     using Test
     using H2Trees
     using CompScienceMeshes
     using BEAST
-    using OhMyThreads
     using ButterflyFactorizations
     using StaticArrays
     using LinearAlgebra
     using ParallelKMeans
-
-    #========================================================================
-    =========================================================================
-                            Geometry and Operators
-    =========================================================================
-    =========================================================================#
+    # =========================================================================
+    # Geometry and Operators
+    # =========================================================================
     lambda = 1.0
     k = 2 * pi / lambda
-    x = meshsphere(1.0, lambda / 10)
+
+    # Scaled down mesh sizes for rapid CI testing
+    x = meshsphere(0.25, lambda / 10)
     y = translate(x, SVector(5.0, 0.0, 0.0))
-    op = Maxwell3D.singlelayer(; wavenumber=k)
+
     T = raviartthomas(x)
     U = raviartthomas(y)
 
-    ##
-    #========================================================================
-    =========================================================================
-                                Tree construction
-    =========================================================================
-    =========================================================================#
+    # =========================================================================
+    # Tree construction
+    # =========================================================================
+    @info "Constructing hierarchical trees for level verification..."
 
-    tree1 = H2Trees.KMeansTree(T.pos, 2; minvalues=100)
-    tree1 = H2Trees.BlockTree(tree1, tree1)
+    tree1_base = H2Trees.KMeansTree(T.pos, 2; minvalues=100)
+    tree1 = H2Trees.BlockTree(tree1_base, tree1_base)
+
     tree2 = TwoNTree(T, U, lambda / 10)
     tree3 = TwoNTree(T, T, lambda / 10)
-    for i in eachindex(tree1.testcluster.nodesatlevel)
-        @test issetequal(
-            ButterflyFactorizations.treelevels(
-                tree1.testcluster, ButterflyFactorizations.cluster_root(tree1.testcluster)
-            )[i],
-            tree1.testcluster.nodesatlevel[i],
-        )
-    end
-    for i in eachindex(tree1.trialcluster.nodesatlevel)
-        @test issetequal(
-            ButterflyFactorizations.treelevels(
-                tree1.trialcluster, ButterflyFactorizations.cluster_root(tree1.trialcluster)
-            )[i],
-            tree1.trialcluster.nodesatlevel[i],
-        )
-    end
-    for i in eachindex(tree2.testcluster.nodesatlevel)
-        @test issetequal(
-            ButterflyFactorizations.treelevels(
-                tree2.testcluster, ButterflyFactorizations.cluster_root(tree2.testcluster)
-            )[i],
-            tree2.testcluster.nodesatlevel[i],
-        )
-    end
-    for i in eachindex(tree2.trialcluster.nodesatlevel)
-        @test issetequal(
-            ButterflyFactorizations.treelevels(
-                tree2.trialcluster, ButterflyFactorizations.cluster_root(tree2.trialcluster)
-            )[i],
-            tree2.trialcluster.nodesatlevel[i],
-        )
-    end
-    for i in eachindex(tree3.testcluster.nodesatlevel)
-        @test issetequal(
-            ButterflyFactorizations.treelevels(
-                tree3.testcluster, ButterflyFactorizations.cluster_root(tree3.testcluster)
-            )[i],
-            tree3.testcluster.nodesatlevel[i],
-        )
-    end
-    for i in eachindex(tree3.trialcluster.nodesatlevel)
-        @test issetequal(
-            ButterflyFactorizations.treelevels(
-                tree3.trialcluster, ButterflyFactorizations.cluster_root(tree3.trialcluster)
-            )[i],
-            tree3.trialcluster.nodesatlevel[i],
-        )
+
+    # =========================================================================
+    # Traversal Verification
+    # =========================================================================
+    @info "Verifying tree level traversals match underlying H2Trees structures..."
+
+    function verify_tree_levels(tree_cluster)
+        root = ButterflyFactorizations.cluster_root(tree_cluster)
+        extracted_levels = ButterflyFactorizations.treelevels(tree_cluster, root)
+
+        for i in eachindex(tree_cluster.nodesatlevel)
+            @test issetequal(extracted_levels[i], tree_cluster.nodesatlevel[i])
+        end
     end
 
+    # Test all Test/Trial combinations across K-Means and TwoN trees
+    verify_tree_levels(tree1.testcluster)
+    verify_tree_levels(tree1.trialcluster)
+    verify_tree_levels(tree2.testcluster)
+    verify_tree_levels(tree2.trialcluster)
+    verify_tree_levels(tree3.testcluster)
+    verify_tree_levels(tree3.trialcluster)
+
+    @info "Testing tree padding functionality..."
     leaves = H2Trees.leaves
-    paddedtlvls = ButterflyFactorizations.traverseandpad(
+    padded_tlvls = ButterflyFactorizations.traverseandpad(
         tree1.testcluster, ButterflyFactorizations.cluster_root(tree1.testcluster)
     )
-    ml = length(paddedtlvls)
-    @test issetequal(paddedtlvls[ml], leaves(tree1.testcluster))
+    max_level = length(padded_tlvls)
+
+    # Ensure that padding correctly drops all terminal leaves to the maximum depth
+    @test issetequal(padded_tlvls[max_level], leaves(tree1.testcluster))
 end

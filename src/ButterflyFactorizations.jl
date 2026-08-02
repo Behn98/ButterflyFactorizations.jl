@@ -64,6 +64,7 @@ using Random
 using OhMyThreads
 using LowRankApprox
 using SparseArrays
+using H2Trees
 
 # Export Global Operators & Assembly
 export PetrovGalerkinBF, PetrovGalerkinBF_Mat

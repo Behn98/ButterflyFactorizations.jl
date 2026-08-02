@@ -12,7 +12,35 @@ using Random
 using SparseArrays
 using StaticArrays
 using OhMyThreads
+using Logging
 
+# Define a custom logger to count max-rank warnings globally
+struct WarningCounterLogger <: AbstractLogger
+    parent::AbstractLogger
+    count::Base.RefValue{Int}
+end
+
+# THE FIX: These must exactly match the AbstractLogger interface!
+Logging.min_enabled_level(l::WarningCounterLogger) = Logging.min_enabled_level(l.parent)
+Logging.shouldlog(l::WarningCounterLogger, level, _module, group, id) =
+    Logging.shouldlog(l.parent, level, _module, group, id)
+Logging.catch_exceptions(l::WarningCounterLogger) = Logging.catch_exceptions(l.parent)
+
+function Logging.handle_message(
+    l::WarningCounterLogger, level, message, _module, group, id, file, line; kwargs...
+)
+    if level == Logging.Warn
+        msg_str = lowercase(string(message))
+        # Catch standard ACA max rank warnings
+        if occursin("rank", msg_str) || occursin("max", msg_str)
+            l.count[] += 1
+        end
+    end
+    # Pass the message through so it still prints to the console
+    return Logging.handle_message(
+        l.parent, level, message, _module, group, id, file, line; kwargs...
+    )
+end
 # --- Fitting Helper Functions ---
 f_nlogn(N) = N * log2(N)
 f_nlog2n(N) = N * (log2(N))^2
@@ -157,6 +185,8 @@ function run_benchmarks(
     csv_file::String="benchmark_results.csv",
     log_file_path::String="benchmark_log.txt",
     scheduler=OhMyThreads.DynamicScheduler(),
+    acamaxrank::Int=60,
+    refacamaxrank::Int=100,
 )
     BLAS.set_num_threads(1)
 
@@ -420,36 +450,45 @@ function run_benchmarks(
         write(log_stream, mv_bf_str * "\n")
 
         err_bf = NaN
+        ref_aca_warnings = 0
         if checkfarfieldaccuracy
             println(
                 "\nComputing reference ACA Far-Matrix for accuracy check (tol = $(bf_tol * 1e-2))...",
             )
 
-            refmat = if disjointgeom
-                HMatrix(
-                    op,
-                    Y,
-                    X,
-                    blktree;
-                    tol=bf_tol * 1e-2,
-                    spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
-                    scheduler=scheduler,
-                    maxrank=100,
-                    isnear=local_isnear,
-                )
-            else
-                HMatrix(
-                    op,
-                    X,
-                    X,
-                    blktree;
-                    tol=bf_tol * 1e-2,
-                    spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
-                    scheduler=scheduler,
-                    maxrank=100,
-                    isnear=local_isnear,
-                )
+            # Initialize the warning tracker
+            ref_aca_logger = WarningCounterLogger(current_logger(), Ref(0))
+
+            # Execute ACA inside the logger and return the matrix
+            refmat = with_logger(ref_aca_logger) do
+                if disjointgeom
+                    HMatrix(
+                        op,
+                        Y,
+                        X,
+                        blktree;
+                        tol=bf_tol * 1e-2,
+                        spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
+                        scheduler=scheduler,
+                        maxrank=refacamaxrank,
+                        isnear=local_isnear,
+                    )
+                else
+                    HMatrix(
+                        op,
+                        X,
+                        X,
+                        blktree;
+                        tol=bf_tol * 1e-2,
+                        spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
+                        scheduler=scheduler,
+                        maxrank=refacamaxrank,
+                        isnear=local_isnear,
+                    )
+                end
             end
+
+            ref_aca_warnings = ref_aca_logger.count[]
 
             ref_far = AdaptiveCrossApproximation.farmatrix(refmat)
             bf_far = ButterflyFactorizations.farmatrix(Bfmat)
@@ -459,46 +498,59 @@ function run_benchmarks(
 
             err_bf = norm(y_exact_far - y_bf_far) / norm(y_exact_far)
 
-            err_str = @sprintf("Relative error of Far-field mat-vec: %.2e", err_bf)
+            err_str = @sprintf(
+                "Relative error of Far-field mat-vec: %.2e | Ref ACA MaxRank Warnings: %d",
+                err_bf,
+                ref_aca_warnings
+            )
             println(err_str)
             write(log_stream, err_str * "\n")
         end
-
         t_aca = NaN
         mem_aca = NaN
         t_mv_aca = NaN
+        aca_warnings = 0
 
         if acacomparison
             println("\nStarting Standard ACA ($ie_type)...")
 
-            if disjointgeom
-                t_aca = @elapsed begin
-                    hmat = HMatrix(
-                        op,
-                        Y,
-                        X,
-                        ACAblktree;
-                        tol=bf_tol,
-                        spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
-                        scheduler=scheduler,
-                        maxrank=60,
-                    )
-                end
-            else
-                t_aca = @elapsed begin
-                    hmat = HMatrix(
-                        op,
-                        X,
-                        X,
-                        ACAblktree;
-                        tol=bf_tol,
-                        spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
-                        scheduler=scheduler,
-                        maxrank=60,
-                    )
+            aca_logger = WarningCounterLogger(current_logger(), Ref(0))
+
+            t_aca = @elapsed begin
+                hmat = with_logger(aca_logger) do
+                    if disjointgeom
+                        HMatrix(
+                            op,
+                            Y,
+                            X,
+                            ACAblktree;
+                            tol=bf_tol,
+                            spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
+                            scheduler=scheduler,
+                            maxrank=acamaxrank,
+                        )
+                    else
+                        HMatrix(
+                            op,
+                            X,
+                            X,
+                            ACAblktree;
+                            tol=bf_tol,
+                            spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
+                            scheduler=scheduler,
+                            maxrank=acamaxrank,
+                        )
+                    end
                 end
             end
-            time_aca_str = @sprintf("Time for HMatrix (ACA): %.3f seconds", t_aca)
+
+            aca_warnings = aca_logger.count[]
+
+            time_aca_str = @sprintf(
+                "Time for HMatrix (ACA): %.3f seconds | ACA MaxRank Warnings: %d",
+                t_aca,
+                aca_warnings
+            )
             println(time_aca_str)
             write(log_stream, time_aca_str * "\n")
 
@@ -845,7 +897,7 @@ function run_benchmarks(
     return p_time, p_mem, p_mv, p_err, p_rank_vs_k, p_level_ranks_all
 end
 
-h_values = [0.1, 0.05, 0.025, 0.0125]#, 0.025, 0.0125
+h_values = [0.025, 0.0125, 0.00625]#0.05, 0.025, 0.0125, 0.00625
 
 p_time, p_mem, p_mv, p_err, p_rank_vs_k, p_level_ranks_all = run_benchmarks(
     h_values;
@@ -853,16 +905,18 @@ p_time, p_mem, p_mv, p_err, p_rank_vs_k, p_level_ranks_all = run_benchmarks(
     ie_type=:EFIE,
     bf_tol=1e-3,
     maxpointsbisection=100,
-    minbflvl=2, # Minimum level in the BF to start compressing (for testing)
-    adaptive=false, # Set to true to enable adaptive rank estimation
+    minbflvl=3, # Minimum level in the BF to start compressing, however this is bypassed entirely if leafcompression = true
+    adaptive=true, # Set to true to enable adaptive rank estimation
     admissibility_spec=:CenterDistanceAdmissibility, # ∈ {:CenterDistanceAdmissibility, :isFarFunctor}
-    checkfarfieldaccuracy=false, # Set to true to validate far-field accuracy against ACA
-    acacomparison=false, # Set to true to benchmark against standard ACA
+    checkfarfieldaccuracy=true, # Set to true to validate far-field accuracy against ACA
+    acacomparison=true, # Set to true to benchmark against standard ACA
     unbalancedints=false, # Set to true to allow unbalanced near/far interactions (for testing)
-    disjointgeom=true, # Set to true to use disjoint source/target geometries (for testing)
+    disjointgeom=false, # Set to true to use disjoint source/target geometries (for testing)
     treekind=:BisectionTree, # ∈ {:KMeansTree, :BisectionTree, :TwoNTree}
     highf=true, # Set to true to scale k with h, false to keep k constant
-    leafcompression=false, # Set to true to enable leaf compression in the BF for proper farfield comparison with ACA needs to be true.... however this adds ACA scaling to the BF....
+    leafcompression=true, # Set to true to enable leaf compression in the BF. For proper farfield comparison with ACA, this needs to be true
+    refacamaxrank=100, # Maximum rank for the reference ACA matrix used for far-field accuracy check
+    acamaxrank=60, # Maximum rank for the ACA matrix used for comparison
     scheduler=OhMyThreads.DynamicScheduler(),
     csv_file="benchmark_results.csv",
     log_file_path="benchmark_log.txt",
