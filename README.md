@@ -22,7 +22,7 @@
  
 ## Overview
  
-ButterflyFactorizations.jl is a research-oriented implementation of a Butterfly Factorization framework for high-frequency electromagnetic applications.
+ButterflyFactorizations.jl is a high-performance, research-oriented implementation of a Butterfly Factorization framework designed for high-frequency electromagnetic applications.
  
 The project focuses on compressing far-field interactions arising in the discretization of integral equations, particularly in the context of Method of Moments (MoM) formulations of electromagnetic scattering problems.
  
@@ -42,18 +42,17 @@ In high-frequency regimes, conventional low-rank compression methods become incr
 **Core techniques**
 
 - Butterfly factorization
-- Hierarchical trees
-- Skeleton DoFs
-- RRQR compression
-- Method of Moments (MoM)
-- EFIE discretization
+- Hierarchical trees (via H2Trees integration)
+- Skeleton DoFs and RRQR compression
+- Thread-safe flat-array workspaces
+- Method of Moments (MoM) & EFIE discretization
 
 ### Main Goals
  
 - Efficient compression of far-field interactions
 - Reduced memory consumption for large scattering problems
-- Faster matrix-vector products for iterative solvers
-- Foundation for future butterfly algebra and direct solvers
+- Fast, zero-allocation matrix-vector products for iterative solvers via static thread-local workspaces
+- Foundation for butterfly algebra operations (addition, recompression)
 - Scalable implementation for electrically large problems
  
 ---
@@ -82,7 +81,7 @@ In low-frequency settings, matrix blocks are often compressed using low-rank app
 
 However, in the high-frequency regime, singular values deteriorate but do not vanish sufficiently fast, making classical low-rank approximations increasingly inefficient.
 
-Butterfly factorization addresses this challenge by exploiting the structured interactions between sufficiently separated source and observer domains.
+Butterfly factorization addresses this challenge by exploiting structured interactions between sufficiently separated source and observer domains.
 
 ---
 
@@ -104,13 +103,11 @@ The butterfly approach reduces:
 
 for large-scale scattering problems.
 
-> Exact asymptotic scaling and benchmark numbers will be updated as the implementation matures.
-
 ---
 
 ## Algorithm Overview
 
-At a high level, the butterfly factorization proceeds through a hierarchical decomposition of source and observer domains.
+At a high level, the butterfly factorization proceeds through a hierarchical decomposition of source and observer domains, supported externally via `H2Trees`.
 
 ### 1. Hierarchical Domain Decomposition
 
@@ -210,35 +207,34 @@ h = discretization stepsize,
   <img src="assets/storage_scaling.png" width="750" alt="Storage scaling"/>
 </p>
 
-Additional benchmarks and performance evaluations will be added as development progresses.
+Additional benchmarks and performance evaluations will be added soon.
         
 ---
-        
+
 ## Current Status
         
-### Implemented
-        
-✅ Compression of far-field interactions  
-✅ Inclusion of near- and far-field interactions with controllable error  
-✅ Hierarchical tree decomposition  
-✅ Matrix-vector product support  
-✅ Numerical validation framework  
+### Implemented 
+
+✅ Dictionary-free, flat-array architecture with thread-safe workspaces
+✅ Compression of far-field interactions with controllable error bounds
+✅ Near- and far-field integration (Petrov-Galerkin formulations)
+✅ Hierarchical tree decomposition via H2Trees integration
+✅ High-performance, statically threaded matrix-vector products
+✅ Butterfly algebra modules (recompression, addition and multiplication for balanced trees)
+✅ Benchmarking, rank evaluation, and admissibility plotting framework
+
 
 ### Work in Progress
 
-The current development roadmap focuses on:
+The development roadmap focuses on:
 
-1. **Parallelization**
-   - Multi-threaded butterfly construction
+1. **Advanced Butterfly Algebra**
+   - Completing split multiplication rules
    - Improved scaling for large systems
 
-2. **Butterfly Algebra**
-   - Matrix construction from butterfly factors
-   - Towards direct solver support
-
-3. **Performance Engineering**
+2. **Performance Engineering**
    - Profiling bottlenecks
-   - Memory optimization
+   - Further profiling memory footprints for massive meshes
    - Improved benchmark coverage
         
 ---
@@ -284,7 +280,7 @@ blktree = TwoNTree(X, X, lambda / 10)
     k;
     compressor=ButterflyFactorizations.PartialQR(),
     tol=1e-3,
-    α=2,
+    scheduler=OhMyThreads.StaticScheduler(),
 )
 A = assemble(op, X, X)
 xtest = rand(ComplexF64, size(Bfmat, 2))
@@ -317,5 +313,4 @@ Special thanks to the scientific literature and open research community that ena
         
 ## License
         
-Choose a license before publishing:
 - MIT
