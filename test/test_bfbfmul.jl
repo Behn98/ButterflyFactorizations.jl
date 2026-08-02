@@ -1,184 +1,145 @@
-@testitem "Testing Multiplication of Butterflies" begin
+@testset "Algebraic Multiplication of Butterfly Factorizations" begin
     using Test
     using H2Trees
-    using OhMyThreads
     using CompScienceMeshes
     using BEAST
     using ButterflyFactorizations
     using StaticArrays
     using LinearAlgebra
-
-    #========================================================================
-    =========================================================================
-                            Geometry and Operators
-    =========================================================================
-    =========================================================================#
-
-    lambda = 1.0
-    k = 2 * pi / lambda
-    x = meshsphere(0.25, lambda / 10)
-    y = translate(x, SVector(5.0, 0.0, 0.0))
-    z = translate(x, SVector(8.0, 0.0, 0.0))
-    op = Maxwell3D.singlelayer(; wavenumber=k)
-    T = raviartthomas(x)
-    U = raviartthomas(y)
-    V = raviartthomas(z)
-    #========================================================================
-    =========================================================================
-                    Tree construction  and Kernelmatrix assembly
-    =========================================================================
-    =========================================================================#
-
-    tree1 = TwoNTree(T, U, lambda / 10)     #testspace, trialspace
-    tree2 = TwoNTree(U, V, lambda / 10)
-
-    @views farasm1 = BEAST.blockassembler(op, T, U)
-    @views function farassembler1(Z, tdata, sdata)
-        @views store(v, m, n) = (Z[m, n] += v)
-        return farasm1(tdata, sdata, store)
-    end
-
-    @views farasm2 = BEAST.blockassembler(op, U, V)
-    @views function farassembler2(Z, tdata, sdata)
-        @views store(v, m, n) = (Z[m, n] += v)
-        return farasm2(tdata, sdata, store)
-    end
-
-    #========================================================================
-    =========================================================================
-                        Assembly of Matrices and Vectors
-    =========================================================================
-    =========================================================================#
-
-    A1 = assemble(op, T, U)
-    A2 = assemble(op, U, V)
-    x_t = randn(ComplexF64, length(T))
-
-    x_s1 = A1 * (A2 * x_t)
-
-    #========================================================================
-    =========================================================================
-                            Buttefly routines calling
-    =========================================================================
-    =========================================================================#
-
-    Bfly1 = ButterflyFactorizations.subroutine_BF(farassembler1, tree1, 1, 1, k, 10^(-4))
-    Bfly2 = ButterflyFactorizations.subroutine_BF(farassembler2, tree2, 1, 1, k, 10^(-4))
-
-    Bfly1A = ButterflyFactorizations.mulBFs(Bfly1, Bfly2, 10^-4)
-
-    x_bfly1 = zeros(ComplexF64, size(Bfly1, 1))
-
-    @views mul!(x_bfly1, Bfly1A, x_t)
-
-    @test norm(x_bfly1 - x_s1) / norm(x_s1) < 10^(-3)
-end
-#=
-@testitem "Testing Multiplication of a low rank Butterfly cluster with a higher rank Butterfly" begin
-    using H2Trees
-    using Test
-    using CompScienceMeshes
-    using BEAST
-    using ButterflyFactorizations
-    using StaticArrays
-    using LinearAlgebra
-    using ParallelKMeans
-    using BlockSparseMatrices
-    using LinearMaps
-    using Random
     using OhMyThreads
-
-    #========================================================================
-    =========================================================================
-                            Geometry and Operators
-    =========================================================================
-    =========================================================================#
+    # =========================================================================
+    # 1. Geometry and Spaces (Scaled for CI Performance)
+    # =========================================================================
+    # Force single-threaded BLAS to prevent oversubscription on CI runners
+    BLAS.set_num_threads(1)
 
     lambda = 1.0
     k = 2 * pi / lambda
-    x = meshsphere(1.0, lambda / 10)
-    y = translate(x, SVector(5.0, 0.0, 0.0))
+
+    # Create three distinct, well-separated spheres.
+    # Mesh size (0.15) is kept deliberately coarse to ensure rapid CI execution
+    # while still generating enough elements to build a multi-level tree.
+    @info "Generating meshes and Raviart-Thomas spaces..."
+    x = meshsphere(0.25, 0.15)                   # Centered at 0
+    y = translate(x, SVector(3.0, 0.0, 0.0))     # Centered at 3
+    z = translate(x, SVector(-3.0, 0.0, 0.0))    # Centered at -3
+
+    # Define the function spaces.
+    # Note the strict mapping convention: Operators map from Column Space (Source)
+    # to Row Space (Observer).
+    T = raviartthomas(x) # Row space (Observer) for Left Operator
+    U = raviartthomas(y) # Column space for Left, Row space for Right
+    V = raviartthomas(z) # Column space (Source) for Right Operator
+
+    @info "Degrees of Freedom per space: $(length(T))"
+
+    # Standard Single Layer Maxwell operator
     op = Maxwell3D.singlelayer(; wavenumber=k)
-    T = raviartthomas(x)
-    U = raviartthomas(y)
-    #========================================================================
-    =========================================================================
-                    Tree construction  and Kernelmatrix assembly
-    =========================================================================
-    =========================================================================#
-    tree1 = TwoNTree(T, U, lambda / 10)     #testspace, trialspace
-    kernelmatrix1 = ButterflyFactorizations.AbstractKernelMatrix(op, T, U)
-    firstlvl = collect(H2Trees.children(tree1.trialcluster, 1))
-    parent1 = firstlvl[1]
-    parent2 = firstlvl[2]
-    schildren = collect(H2Trees.children(tree1.trialcluster, parent2))
-    gsc = sort!(H2Trees.values(tree1.trialcluster, parent2))
-    ochildren = collect(H2Trees.children(tree1.testcluster, parent2))
-    goc = sort!(H2Trees.values(tree1.testcluster, parent2))
-    Bfcluster = Matrix{ButterflyFactorizations.BF}(
-        undef, length(ochildren), length(schildren)
-    )
-    higherkBF = ButterflyFactorizations.subroutine_BF(
-        kernelmatrix1,
-        tree1,
-        parent2,
-        parent1,
+
+    # =========================================================================
+    # 2. Tree Construction and BlockTrees
+    # =========================================================================
+    # Create BisectionTrees for all three spaces.
+    # max_points=5 ensures the tree gets deep enough to test the R-factor hierarchy
+    Ttree = BisectionTree(T.pos; max_points=5)
+    Utree = BisectionTree(U.pos; max_points=5) # <-- The critical shared intermediate tree!
+    Vtree = BisectionTree(V.pos; max_points=5)
+
+    # Left Operator: Maps from U (Column Space) -> T (Row Space)
+    blktree_left = H2Trees.BlockTree(Ttree, Utree)
+    farassembler_left = ButterflyFactorizations.AbstractKernelMatrix(op, T, U)
+
+    # Right Operator: Maps from V (Column Space) -> U (Row Space)
+    blktree_right = H2Trees.BlockTree(Utree, Vtree)
+    farassembler_right = ButterflyFactorizations.AbstractKernelMatrix(op, U, V)
+
+    # =========================================================================
+    # 3. Assembly of Dense Ground Truth Matrices
+    # =========================================================================
+    @info "Assembling Dense Ground Truth Matrices..."
+    A_left = assemble(op, T, U)
+    A_right = assemble(op, U, V)
+
+    # The ground truth matrix product
+    A_prod = A_left * A_right
+
+    # =========================================================================
+    # 4. Assembly of Butterfly Factorizations
+    # =========================================================================
+    tol = 1e-4
+
+    @info "Assembling Left Butterfly Factorization..."
+    Bfly_left = ButterflyFactorizations.assemble_BF(
+        farassembler_left,
+        blktree_left,
+        1,
+        1,
         k,
-        1e-4;
-        compressor=ButterflyFactorizations.PartialQR(),
-        scheduler=OhMyThreads.DynamicScheduler(),
+        tol;
+        scheduler=OhMyThreads.StaticScheduler(),
     )
-    gsk = sort!(H2Trees.values(tree1.trialcluster, 2))
-    gok = sort!(H2Trees.values(tree1.testcluster, 73))
-    for (i, oc) in enumerate(ochildren)
-        for (j, sc) in enumerate(schildren)
-            Bfcluster[i, j] = ButterflyFactorizations.subroutine_BF(
-                kernelmatrix1,
-                tree1,
-                oc,
-                sc,
-                k,
-                1e-4;
-                compressor=ButterflyFactorizations.PartialQR(),
-                scheduler=OhMyThreads.DynamicScheduler(),
-            )
-        end
-    end
-    A1 = zeros(ComplexF64, length(goc), length(gsc))
-    kernelmatrix1(A1, goc, gsc)
-    A2 = zeros(ComplexF64, length(gok), length(gsk))
-    kernelmatrix1(A2, gok, gsk)
-    x_t = randn(ComplexF64, length(T))
-    y_exact1 = zeros(ComplexF64, length(T))
-    y_exact2 = zeros(ComplexF64, length(T))
-    y_exact1[goc] = A1 * x_t[gsc]
-    y_exact2[gok] = A2 * x_t[gsk]
 
-    ycluster = zeros(ComplexF64, length(T))
-    for i in eachindex(ochildren)
-        for j in eachindex(schildren)
-            ycluster .+= Bfcluster[i, j] * x_t
-        end
-    end
+    @info "Assembling Right Butterfly Factorization..."
+    Bfly_right = ButterflyFactorizations.assemble_BF(
+        farassembler_right,
+        blktree_right,
+        1,
+        1,
+        k,
+        tol;
+        scheduler=OhMyThreads.StaticScheduler(),
+    )
 
-    @test reldif1 = norm(y_exact1 - ycluster) / norm(y_exact1) < 1e-3
+    # =========================================================================
+    # 5. Testing the Multiplication Pipeline
+    # =========================================================================
+    @info "Multiplying Butterflies (Structural Algebraic Product)..."
 
-    ycluster2 = higherkBF * x_t
-    @test reldif2 = norm(y_exact2 - ycluster2) / norm(y_exact2) < 1e-3
+    # 1. Compute the recompressed algebraic product (O(N log N) complexity)
+    Bfly_prod = Bfly_left * Bfly_right
 
-    y_exact3 = zeros(ComplexF64, length(T))
-    y_exact3[goc] = A1 * y_exact2[gsc]
-    ycluster3 = zeros(ComplexF64, length(T))
-    for i in eachindex(ochildren)
-        for j in eachindex(schildren)
-            ycluster3 .+= Bfcluster[i, j] * ycluster2
-        end
-    end
-    @test reldif3 = norm(y_exact3 - ycluster3) / norm(y_exact3) < 1e-3
+    # 2. Compute the trivial (uncompressed) cascade for baseline comparison
+    trivprod = ButterflyFactorizations.trivialmul(Bfly_left, Bfly_right)
 
-    splitbfprod = ButterflyFactorizations.splitmulbf(Bfcluster, higherkBF, 1e-2)
-    y_cluster4 = splitbfprod * x_t
+    # Generate a random excitation vector on the far-right column space (V)
+    v_in = randn(ComplexF64, length(V))
 
-    @test reldif4 = norm(y_exact3 - y_cluster4) / norm(y_exact3) < 1e-1
+    # Evaluate the cascading operations
+    y_dense = A_prod * v_in                     # 1. True dense matrix multiplication
+    y_bf_chain = Bfly_left * (Bfly_right * v_in) # 2. Sequential matrix-vector products
+    y_bf_product = Bfly_prod * v_in             # 3. Our compressed algebraic operator product
+    y_bf_trivprod = trivprod * v_in             # 4. Uncompressed algebraic cascade
+
+    # =========================================================================
+    # 6. Verification & Memory Profiling
+    # =========================================================================
+    err_chain = norm(y_bf_chain - y_dense) / norm(y_dense)
+    err_product = norm(y_bf_product - y_dense) / norm(y_dense)
+    err_trivprod = norm(y_bf_trivprod - y_dense) / norm(y_dense)
+
+    @info """
+    --- Matrix-Vector Evaluation Accuracy ---
+    Tolerance target: $tol
+    Error (Chained mat-vec)    : $(round(err_chain, sigdigits=4))
+    Error (Trivial product)    : $(round(err_trivprod, sigdigits=4))
+    Error (Recompressed prod)  : $(round(err_product, sigdigits=4))
+    """
+
+    @info """
+    --- Memory Footprint Analysis ---
+    Dense product memory : $(round(Base.summarysize(A_prod) / 1024^2, digits=3)) MB
+    Left BF memory       : $(round(Base.summarysize(Bfly_left) / 1024^2, digits=3)) MB
+    Right BF memory      : $(round(Base.summarysize(Bfly_right) / 1024^2, digits=3)) MB
+    Trivial prod memory  : $(round(Base.summarysize(trivprod) / 1024^2, digits=3)) MB
+    Recompressed memory  : $(round(Base.summarysize(Bfly_prod) / 1024^2, digits=3)) MB
+    """
+
+    # Ensure the algebraic multiplication maintains the target precision
+    # (Allowing a factor of 10 for error accumulation across deep trees)
+    @test err_chain < tol * 10
+    @test err_trivprod < tol * 10
+    @test err_product < tol * 10
+
+    # Ensure the recompression actually saved memory compared to the trivial cascade
+    @test Base.summarysize(Bfly_prod) < Base.summarysize(trivprod)
 end
-=#

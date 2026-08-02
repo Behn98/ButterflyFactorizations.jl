@@ -1,43 +1,62 @@
 """
     ButterflyFactorizations
 
-A Julia module for constructing, manipulating, and applying Butterfly Factorizations.
+A high-performance Julia module for constructing, manipulating, and applying Butterfly Factorizations.
 
-This package provides hierarchical low-rank approximation techniques typically used for
-highly oscillatory integral operators. It leverages tree-based domain partitioning and
-includes functionality for:
+This package provides hierarchical low-rank approximation techniques designed for highly
+oscillatory integral operators. It leverages tree-based domain partitioning to achieve
+``O(N \\log N)`` complexity for both storage and matrix-vector evaluations.
 
-  - Structured matrix-vector and matrix-matrix products.
-  - Algebraic operations on butterfly structures (addition, multiplication, and
-    recompression).
-  - Petrov-Galerkin block matrix assembly of kernel matrices, with extension support for
-    boundary element frameworks.
+# Core Architecture
+
+The package features a dual-format architecture to balance performance and flexibility:
+
+ 1. **Flat-Array Format (Production):** Highly optimized, dictionary-free data structures
+    (`ButterflyFactorization`) coupled with zero-allocation memory pools (`ThreadButterflyWorkspace`).
+    This format is designed for maximum cache-efficiency and multi-threaded scaling.
+ 2. **Sparse Matrix Format (Debugging & Direct Linear Algebra):** Explicit block-diagonal
+    sparse matrices (`ButterflyFactorization_Mat`). While slightly more memory-intensive,
+    this format allows for seamless integration with standard Julia sparse linear algebra routines.
+
+# Key Features
+
+  - **Zero-Allocation Mat-Vec:** Highly optimized `mul!` overloads utilizing pre-allocated thread workspaces.
+  - **Algebraic Composition:** Native support for adding (`+`), multiplying (`*`), and recompressing (`recompress_BF`) entire hierarchical butterfly operators without inflating them to dense matrices.
+  - **Structural Transformations:** Native `adjoint` and `transpose` overloads that physically reverse the tree routing mappings.
+  - **Petrov-Galerkin Assembly:** `PetrovGalerkinBF` constructs global linear operators by splitting near-field (dense evaluations) and far-field (butterfly-compressed) interactions using customizable admissibility rules.
+  - **Extensibility:** Agnostic tree interfaces allowing integration with packages like `H2Trees.jl`, and abstract kernel interfaces for evaluating custom integral operators (e.g., `BEAST.jl`).
 
 # Main API
 
+**Global Operators:**
+
+  - [`PetrovGalerkinBF`](@ref), [`PetrovGalerkinBF_Mat`](@ref)
+
+**Local Factorizations:**
+
+  - [`ButterflyFactorization`](@ref), [`ButterflyFactorization_Mat`](@ref)
+  - [`assemble_BF`](@ref), [`assemble_BF_Mat`](@ref)
+
+**Workspaces (Zero-Allocation):**
+
+  - [`ThreadButterflyWorkspace`](@ref), [`ButterflyWorkspace`](@ref)
+
 **Compressors:**
 
-  - [`PartialQR`](@ref): QR-based low-rank approximation
+  - [`PartialQR`](@ref)
 
-**Kernel matrices:**
+**Algebraic Operations:**
 
-  - [`BEASTKernelMatrix`](@ref): BEAST boundary integral operator matrices
+  - [`mulBFs`](@ref), [`add_eqbfs`](@ref), [`recompress_BF`](@ref)
 
 # Example
 
-check the test folder/Readme.md for example usage of the API, including how to construct a
-`PetrovGalerkinBF` from a BEAST operator and apply it to a vector.
-
-# See also
-
-  - BEAST.jl for boundary integral operators
-  - H2Trees.jl for hierarchical clustering
-  - BlockSparseMatrices.jl or Sparse SparseArrays.jl for sparse block storage
+Check the `test/` folder or `README.md` for example usage, including how to construct a
+`PetrovGalerkinBF` from a BEAST operator, apply it to a vector, and perform algebraic recompression.
 """
 module ButterflyFactorizations
 
 using BlockSparseMatrices
-using H2Trees
 using LinearAlgebra
 using LinearMaps
 using StaticArrays
@@ -45,42 +64,66 @@ using Random
 using OhMyThreads
 using LowRankApprox
 using SparseArrays
+using H2Trees
 
-export PetrovGalerkinBF, PetrovGalerkinBF_mats, subroutine_BF, subroutine_BF_mats, PartialQR
-export mulBFs, add_eqbfs, recompress_BF, apply_BF, FlatBF, splitmulbf
+# Export Global Operators & Assembly
+export PetrovGalerkinBF, PetrovGalerkinBF_Mat
+export assemble_BF, assemble_BF_Mat
 
-#Helper funcitons
+# Export Core Data Structures
+export ButterflyFactorization, ButterflyFactorization_Mat
+export ButterflyBlock, ButterflyLevel
+export ThreadButterflyWorkspace, ButterflyWorkspace
+
+# Export Compressors
+export PartialQR
+
+# Export Algebra
+export mulBFs, add_eqbfs, recompress_BF
+
+# ------------------------------------------------------------------
+# Includes
+# ------------------------------------------------------------------
+
+include("treeinterface.jl")
 include("auxillaries.jl")
 
-#Kernelmatrix import
+# Kernel Matrix Import
 include("kernelmatrix/abstractkernelmatrix.jl")
 include("kernelmatrix/beastkernelmatrix.jl")
 
-#Butterfly algebra --> any Block related functions
-include("Butterflyalgebra/bfstructs.jl")
-include("Butterflyalgebra/flatbf.jl")
+# Butterfly Factorization Assembly
+include("ButterflyFactorization/bfstructs.jl")
+include("ButterflyFactorization/bfstructfcts.jl")
+include("ButterflyFactorization/compressors.jl")
+include("ButterflyFactorization/bfassembly.jl")
+
+# Butterfly Algebra
 include("Butterflyalgebra/bfadjtr.jl")
 include("Butterflyalgebra/bfdims.jl")
 include("Butterflyalgebra/bfvector.jl")
 include("Butterflyalgebra/bfmatrix.jl")
 include("Butterflyalgebra/algrecomp.jl")
-include("Butterflyalgebra/bfbfadd.jl")
-include("Butterflyalgebra/bfbfmul.jl")
+include("Butterflyalgebra/bfaddbf.jl")
+include("Butterflyalgebra/bfmulbf.jl")
+include("Butterflyalgebra/bfsplitmul.jl")
 include("Butterflyalgebra/bfsplit.jl")
 
-#Tree traversale and Butterfly construction
-include("intlists.jl")
-include("compressors.jl")
-include("subroutines.jl")
+# Tree Traversal & Butterfly Construction
+include("GlobalMatrixAssembly/farfieldcrit.jl")
+include("GlobalMatrixAssembly/intlists.jl")
 
-#Full Matrix Assembly
-include("ButterflyFactorization/matrixstructs.jl")
-include("ButterflyFactorization/petrovgalerkinbf.jl")
+# Full Matrix Assembly
+include("GlobalMatrixAssembly/matrixstructs.jl")
+include("GlobalMatrixAssembly/petrovgalerkinbf.jl")
 
+# Matrix Algebra Overloads
+include("matrixalgebra/matrix_adj_tr.jl")
 include("matrixalgebra/dims.jl")
-include("matrixalgebra/csrmatrix.jl")
-include("matrixalgebra/indexing.jl")
 include("matrixalgebra/matrixvector.jl")
 include("matrixalgebra/matrixmatrix.jl")
 
-end
+# I/O and Display
+include("showfcts.jl")
+
+end # module ButterflyFactorizations

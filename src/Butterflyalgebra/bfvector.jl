@@ -1,365 +1,363 @@
-@views function LinearAlgebra.mul!(
-    y::AbstractVector, Butterfly::BF, x::AbstractVector{T}
-) where {T}
-    LinearMaps.check_dim_mul(y, Butterfly, x)
-    fill!(y, zero(T))
-    y .= apply_BF(Butterfly, x)
-    return y
-end
+import LinearAlgebra: mul!, adjoint, transpose
 
-@views function LinearAlgebra.mul!(
-    y::AbstractVector,
-    At::LinearMaps.TransposeMap{<:Any,<:ButterflyFactorizations.BF},
-    x::AbstractVector{T},
-) where {T}
-    LinearMaps.check_dim_mul(y, transposed(At.lmap), x)
-    fill!(y, zero(T))
-    y .= applyBF(transpose(At.lmap), x)
-    return y
-end
-
-@views function LinearAlgebra.mul!(
-    y::AbstractVector,
-    At::LinearMaps.AdjointMap{<:Any,<:ButterflyFactorizations.BF},
-    x::AbstractVector{T},
-) where {T}
-    LinearMaps.check_dim_mul(y, At.lmap, x)
-    fill!(y, zero(T))
-    y .= applyBF(At.lmap', x)
-    return y
-end
-
-function Base.:*(Butterfly::BF, x::AbstractVector)
-    return apply_BF(Butterfly, x)
-end
-
+# ------------------------------------------------------------------
+# 1. Raw Dictionary Evaluation (Unindexed)
+# ------------------------------------------------------------------
 """
-    apply_BF(Butterfly::BF, v::AbstractVector)
+    mul!(y, BF::ButterflyFactorization, x, α=1, β=0)
 
-Applies the sequence of Butterfly Factorization factors (`Q`, `R`, and `P`) to a vector `v`
-and returns the resulting vector. Do note that this function is optimized for the structure
-of `BF` and uses a "ping-pong" strategy to minimize memory allocations during the sequential
-application of the `R` factors. The indices of the dictionaries are matching the row and
-column indices of the skeleton associated with the underlying Matrix structure thus we can
-perform a block by block matrix vector product using the well known algebra for matrices,
-while retaining the semantical structure of the corresponding clusters.
+Computes `y = α * BF * x + β * y` using on-the-fly dictionary allocations.
+Traverses the butterfly factorization: `Q -> R^1 -> ... -> R^{L-1} -> P`.
+
+This method dynamically allocates dictionaries for intermediate states. It is highly
+flexible for algebraically modified trees but is not recommended for performance-critical
+inner loops (use a `ButterflyWorkspace` or `ThreadButterflyWorkspace` instead).
 """
-function apply_BF(
-    Butterfly::BF, v::AbstractVector; scheduler=OhMyThreads.DynamicScheduler()
-)
-    Q = Butterfly.Q
-    R = Butterfly.R
-    P = Butterfly.P
-    NO = Butterfly.NO
-    NS = Butterfly.NS
-    otree = Butterfly.otree
-    stree = Butterfly.stree
+function LinearAlgebra.mul!(
+    y::AbstractVector,
+    BF::ButterflyFactorization{T,M},
+    x::AbstractVector,
+    α::Number=1,
+    β::Number=0;
+) where {T,M}
+    trialT = cluster_trialtree(BF.tree)
+    testT  = cluster_testtree(BF.tree)
 
-    #old_blas = BLAS.get_num_threads()
-    #BLAS.set_num_threads(1)
-
-    # ------------------------------------------------------------
-    # Leaf initialization (Q)
-    # ------------------------------------------------------------
-    q_keys = collect(keys(Q))
-    q_results = tmap(q_keys; scheduler=scheduler) do qkey
-        srcvals = H2Trees.values(stree, qkey[2])
-        out = Vector{ComplexF64}(undef, size(Q[qkey], 1))
-        @views mul!(out, Q[qkey], v[srcvals])
-        return (qkey, out)
+    # Scale the initial y vector
+    if β != 1
+        β == 0 ? fill!(y, 0) : rmul!(y, β)
     end
 
-    coeffs_current = Dict{Tuple{Int,Int},Vector{ComplexF64}}(q_results)
+    # Intermediate skeleton states
+    T_val = promote_type(T, eltype(x))
+    x_curr = Dict{Tuple{Int,Int},Vector{T_val}}()
+    x_next = Dict{Tuple{Int,Int},Vector{T_val}}()
 
-    # Step 2: Sequentially apply R factors (Ping-Pong strategi)
-    for l in eachindex(R)
-        r_keys = collect(keys(R[l]))
-        r_results = let coeffs_current = coeffs_current
-            tmap(r_keys; scheduler=scheduler) do row
-                cols = collect(keys(R[l][row]))
-
-                # Skapa ny vektor för första kolumn-bidraget
-                if !isempty(R[l][row][cols[1]])
-                    out = Vector{ComplexF64}(undef, size(R[l][row][cols[1]], 1))
-                    @views mul!(out, R[l][row][cols[1]], coeffs_current[cols[1]])
-                else
-                    out = coeffs_current[cols[1]]
-                end
-                # Om fler kolumner ska slås ihop för denna "row"
-                if length(cols) > 1
-                    coeff_temp = Vector{ComplexF64}(undef, length(out))
-                    for i in 2:length(cols)
-                        in_vec_next = coeffs_current[cols[i]]
-
-                        #if isempty(R[l][row][cols[i]])
-                        #    out .+= in_vec_next
-                        #else
-                        @views mul!(coeff_temp, R[l][row][cols[i]], in_vec_next)
-                        out .+= coeff_temp
-                        #end
-                    end
-                end
-
-                return (row, out)
-            end
-        end
-
-        # Uppdatera next till current inför nästa nivå
-        coeffs_current = Dict{Tuple{Int,Int},Vector{ComplexF64}}(r_results)
+    # 1. Forward Q: Leaf Sources -> Source Skeletons
+    for block in BF.Q
+        src_idx = cluster_values(trialT, block.src_in)
+        v_in = x[src_idx]
+        x_next[(block.obs_out, block.src_out)] = block.data * v_in
     end
 
-    # Step 3: Apply P to the result from the last R factor
-    # ------------------------------------------------------------
-    # Final assembly
-    # ------------------------------------------------------------
-    p_keys = collect(keys(P))
-    p_results = let coeffs_current = coeffs_current
-        tmap(p_keys; scheduler=scheduler) do pkey
-            if !haskey(coeffs_current, pkey)
-                println(
-                    "Warning: No coefficients found for P key ",
-                    pkey,
-                    ". This may indicate a mismatch in the factorization structure.",
-                )
-            end
-            inds = H2Trees.values(otree, pkey[1])
-            out = Vector{ComplexF64}(undef, size(P[pkey], 1))
-            # Kör Mat-vekt mult på den lokala out
-            mul!(out, P[pkey], coeffs_current[pkey])
-            return (inds, out)
-        end
-    end
+    # 2. Traverse R levels (Basis changing)
+    for level in BF.R
+        x_curr = x_next
+        x_next = Dict{Tuple{Int,Int},Vector{T_val}}()
 
-    # Säker ihopslagnig på slutet i Main tråden!
-    result = zeros(ComplexF64, length(H2Trees.values(Butterfly.otree, 1)))
-    for (inds, out) in p_results
-        result[inds] .+= out
-    end
-    return result
-end
+        for block in level.blocks
+            in_key  = (block.obs_in, block.src_in)
+            out_key = (block.obs_out, block.src_out)
 
-function mul_flat_bf!(
-    y::AbstractVector{ComplexF64}, bf::FlatBF, x::AbstractVector{ComplexF64}
-)
-    # 1. Zero out the pre-allocated workspace
-    for v in bf.layer_vectors
-        fill!(v, zero(ComplexF64))
-    end
+            v_in = x_curr[in_key]
+            v_out_part = block.data * v_in
 
-    # Aliases for clarity
-    layer_vectors = bf.layer_vectors
-
-    # --- STEG 1: Applicera Q ---
-    r1_in = layer_vectors[1]
-    for i in 1:length(bf.Q.blocks)
-        B = bf.Q.blocks[i]
-        c_start = bf.Q.col_offsets[i]
-        p = bf.Q.perm[i]
-
-        # Fast memory mapping (consider writing a manual loop if blocks are tiny!)
-        @views mul!(r1_in[c_start:(c_start + size(B, 1) - 1)], B, x[p], 1.0, 1.0)
-    end
-
-    # --- STEG 2: Loopa igenom alla R-nivåer ---
-    for l in 1:length(bf.R)
-        layer = bf.R[l]
-        v_in = layer_vectors[l]
-        v_out = layer_vectors[l + 1]
-
-        # Native for-loops (no tforeach overhead)
-        @inbounds for i in 1:(length(layer.row_ptr) - 1)
-            r_start = layer.row_offsets[i]
-
-            for b in layer.row_ptr[i]:(layer.row_ptr[i + 1] - 1)
-                j = layer.col_idx[b]
-                c_start = layer.col_offsets[j]
-                B = layer.blocks[b]
-
-                if isempty(B)
-                    nr = if (i < length(layer.row_offsets))
-                        (layer.row_offsets[i + 1] - r_start)
-                    else
-                        (length(v_out) - r_start + 1)
-                    end
-                    @views v_out[r_start:(r_start + nr - 1)] .+= v_in[c_start:(c_start + nr - 1)]
-                    continue
-                end
-
-                nr, nc = size(B)
-                @views mul!(
-                    v_out[r_start:(r_start + nr - 1)],
-                    B,
-                    v_in[c_start:(c_start + nc - 1)],
-                    1.0,
-                    1.0,
-                )
+            if haskey(x_next, out_key)
+                x_next[out_key] .+= v_out_part
+            else
+                x_next[out_key] = v_out_part
             end
         end
     end
 
-    # --- STEG 3: Applicera P (writes directly to global y) ---
-    rend_out = layer_vectors[end]
-    for i in 1:length(bf.P.blocks)
-        B = bf.P.blocks[i]
-        r_start = bf.P.row_offsets[i]
-        p = bf.P.perm[i]
+    # 3. Forward P: Observer Skeletons -> Leaf Observers
+    x_curr = x_next
+    for block in BF.P
+        in_key  = (block.obs_in, block.src_in)
+        obs_idx = cluster_values(testT, block.obs_out)
 
-        # Safe because PermP represents disjoint leaves
-        @views mul!(y[p], B, rend_out[r_start:(r_start + size(B, 2) - 1)], 1.0, 1.0)
-    end
+        v_in = x_curr[in_key]
 
-    return nothing # Writes directly to y
-end
-
-function mul_flat_bf_p(
-    bf::FlatBF, x::AbstractVector{ComplexF64}; scheduler=OhMyThreads.SerialScheduler()
-)
-    # 1. Allokera temporära arbetsvektorer baserat på lagrens storlek
-    # (Detta kan optimeras ytterligare genom att återanvända minne mellan MV-anrop)
-    layer_vectors = Vector{Vector{ComplexF64}}(undef, length(bf.R) + 1)
-    if length(bf.R) == 0
-        # Räkna ut exakt hur stor den mellanliggande vektorn måste vara
-        int_size = if isempty(bf.Q.blocks)
-            0
+        if α == 1
+            y[obs_idx] .+= block.data * v_in
         else
-            (bf.Q.col_offsets[end] + size(bf.Q.blocks[end], 1) - 1)
-        end
-        layer_vectors[1] = zeros(ComplexF64, int_size)
-    else
-        layer_vectors[1] = zeros(ComplexF64, bf.R[1].in_size)
-        for l in 1:length(bf.R)
-            layer_vectors[l + 1] = zeros(ComplexF64, bf.R[l].out_size)
+            y[obs_idx] .+= α .* (block.data * v_in)
         end
     end
-    y = zeros(ComplexF64, bf.dim[1])
-    # --- STEG 1: Applicera Q ---
-    r1_in = layer_vectors[1]
-    tforeach(1:length(bf.Q.blocks); scheduler=scheduler) do i
-        B = bf.Q.blocks[i]
-        c_start = bf.Q.col_offsets[i]
-        p = bf.Q.perm[i]
 
-        # Byt ut mot BLAS gemv! för maximal prestanda:
-        @views mul!(r1_in[c_start:(c_start + size(B, 1) - 1)], B, x[p], 1.0, 1.0)
+    return y
+end
+
+# ------------------------------------------------------------------
+# 2. Cached Dictionary Workspace Evaluation
+# ------------------------------------------------------------------
+"""
+    ButterflyWorkspace(BF::ButterflyFactorization)
+
+Constructs a cached dictionary workspace for a specific `ButterflyFactorization`.
+Pre-allocates the exact memory sizes required for all intermediate hierarchical skeletons.
+"""
+function ButterflyWorkspace(BF::ButterflyFactorization{T}) where {T}
+    num_levels = length(BF.R) + 1
+    buffers = [Dict{Tuple{Int,Int},Vector{T}}() for _ in 1:num_levels]
+
+    for b in BF.Q
+        key = (b.obs_out, b.src_out)
+        size_out = b.data isa UniformScaling ? 0 : size(b.data, 1)
+        buffers[1][key] = Vector{T}(undef, size_out)
     end
 
-    # --- STEG 2: Loopa igenom alla R-nivåer ---
-    for l in 1:length(bf.R)
-        layer = bf.R[l]
-        v_in = layer_vectors[l]
-        v_out = layer_vectors[l + 1]
-
-        # Denna loop är helt trådsäker eftersom trådarna skriver till helt olika segment i v_out!
-        # CPU-prefetchern kommer att älska denna sekventiella minnesläsning.
-        tforeach(1:(length(layer.row_ptr) - 1); scheduler=scheduler) do i
-            r_start = layer.row_offsets[i]
-
-            for b in layer.row_ptr[i]:(layer.row_ptr[i + 1] - 1)
-                j = layer.col_idx[b]
-                c_start = layer.col_offsets[j]
-                B = layer.blocks[b]
-                if isempty(B)
-                    # FIX: Eftersom storleken av B är (0,0), räkna fram storleken
-                    # genom att titta på var NÄSTA rad offset börjar.
-                    # Om det är den sista raden lånar vi storleken via v_out:s längd.
-                    nr = if (i < length(layer.row_offsets))
-                        (layer.row_offsets[i + 1] - r_start)
-                    else
-                        (length(v_out) - r_start + 1)
-                    end
-
-                    # Identitetsmatris. Kopiera direkt från in till ut!
-                    @views v_out[r_start:(r_start + nr - 1)] .+= v_in[c_start:(c_start + nr - 1)]
-                    continue
+    for (l, level) in enumerate(BF.R)
+        for b in level.blocks
+            key = (b.obs_out, b.src_out)
+            if !haskey(buffers[l + 1], key)
+                size_out = if b.data isa UniformScaling
+                    size(buffers[l][(b.obs_in, b.src_in)], 1)
+                else
+                    size(b.data, 1)
                 end
-                nr, nc = size(B)
-
-                @views mul!(
-                    v_out[r_start:(r_start + nr - 1)],
-                    B,
-                    v_in[c_start:(c_start + nc - 1)],
-                    1.0,
-                    1.0,
-                )
+                buffers[l + 1][key] = Vector{T}(undef, size_out)
             end
         end
     end
 
-    # --- STEG 3: Applicera P ---
-    rend_out = layer_vectors[end]
-    tforeach(1:length(bf.P.blocks); scheduler=scheduler) do i
-        B = bf.P.blocks[i]
-        r_start = bf.P.row_offsets[i]
-        p = bf.P.perm[i]
+    return ButterflyWorkspace(buffers)
+end
 
-        # Eftersom PermP representerar disjunkta löv krockar inte trådarna i globala y
-        @views mul!(y[p], B, rend_out[r_start:(r_start + size(B, 2) - 1)], 1.0, 1.0)
+"""
+    mul!(y, BF, x, ws::ButterflyWorkspace, α=1, β=0)
+
+Computes the matrix-vector product using pre-allocated cached dictionaries.
+Significantly faster than the raw `mul!` due to zero-allocation BLAS calls.
+"""
+function LinearAlgebra.mul!(
+    y::AbstractVector{T},
+    BF::ButterflyFactorization{T,M},
+    x::AbstractVector{T},
+    ws::ButterflyWorkspace{T},
+    α::Number=1,
+    β::Number=0;
+) where {T,M}
+    trialT = cluster_trialtree(BF.tree)
+    testT  = cluster_testtree(BF.tree)
+
+    if β != 1
+        β == 0 ? fill!(y, 0) : rmul!(y, β)
+    end
+
+    # 1. Leaf Level Q
+    buf_Q = ws.level_buffers[1]
+    for block in BF.Q
+        src_idx = cluster_values(trialT, block.src_in)
+        v_out   = buf_Q[(block.obs_out, block.src_out)]
+        v_in    = view(x, src_idx)
+
+        if block.data isa UniformScaling
+            copyto!(v_out, v_in)
+        else
+            mul!(v_out, block.data, v_in)
+        end
+    end
+
+    # 2. Intermediate R Levels
+    for (l, level) in enumerate(BF.R)
+        buf_in  = ws.level_buffers[l]
+        buf_out = ws.level_buffers[l + 1]
+
+        for v in Base.values(buf_out)
+            fill!(v, 0)
+        end
+
+        for block in level.blocks
+            v_in  = buf_in[(block.obs_in, block.src_in)]
+            v_out = buf_out[(block.obs_out, block.src_out)]
+
+            if block.data isa UniformScaling
+                v_out .+= v_in
+            else
+                mul!(v_out, block.data, v_in, 1, 1)
+            end
+        end
+    end
+
+    # 3. Leaf Level P
+    last_buf = ws.level_buffers[end]
+    for block in BF.P
+        v_in    = last_buf[(block.obs_in, block.src_in)]
+        obs_idx = cluster_values(testT, block.obs_out)
+        y_view  = view(y, obs_idx)
+
+        if block.data isa UniformScaling
+            y_view .+= α .* v_in
+        else
+            mul!(y_view, block.data, v_in, α, 1)
+        end
     end
 
     return y
 end
 
-@views function LinearAlgebra.mul!(
-    y::AbstractVecOrMat, Butterfly::ButterflyFactorizations.FlatBF, x::AbstractVector{T}
-) where {T}
-    LinearMaps.check_dim_mul(y, Butterfly, x)
-    fill!(y, zero(T))
-    y .= mul_flat_bf(Butterfly, x; scheduler=OhMyThreads.DynamicScheduler())
+# ------------------------------------------------------------------
+# 3. High-Performance Flat Array Evaluation
+# ------------------------------------------------------------------
+"""
+    mul!(y, BF, x, ws::ThreadButterflyWorkspace, α=1, β=0)
+
+Computes the matrix-vector product using a flat-array workspace.
+This is the fastest, cache-friendly implementation designed for production.
+It utilizes execution pointers to bypass dictionary lookups entirely.
+"""
+function LinearAlgebra.mul!(
+    y::AbstractVector{T},
+    BF::ButterflyFactorization{T,M},
+    x::AbstractVector{T},
+    ws::ThreadButterflyWorkspace{T},
+    α::Number=1,
+    β::Number=0;
+) where {T,M}
+    trialT = cluster_trialtree(BF.tree)
+    testT  = cluster_testtree(BF.tree)
+
+    if β != 1
+        β == 0 ? fill!(y, 0) : rmul!(y, β)
+    end
+
+    num_levels = length(BF.R) + 1
+
+    if length(ws.level_buffers) < num_levels
+        old_len = length(ws.level_buffers)
+        resize!(ws.level_buffers, num_levels)
+        resize!(ws.level_lengths, num_levels)
+        for i in (old_len + 1):num_levels
+            ws.level_buffers[i] = Vector{Vector{T}}()
+            ws.level_lengths[i] = Vector{Int}()
+        end
+    end
+
+    # 1. Leaf Level Q
+    buf_Q = ws.level_buffers[1]
+    len_Q = ws.level_lengths[1]
+
+    for block in BF.Q
+        src_idx = cluster_values(trialT, block.src_in)
+        v_in = view(x, src_idx)
+
+        req_size = block.data isa UniformScaling ? length(src_idx) : size(block.data, 1)
+        v_out = get_buffer_and_set_len!(buf_Q, len_Q, block.out_ptr, req_size)
+        v_out_view = view(v_out, 1:req_size)
+
+        if block.data isa UniformScaling
+            copyto!(v_out_view, v_in)
+        else
+            mul!(v_out_view, block.data, v_in)
+        end
+    end
+
+    # 2. Intermediate R Levels
+    for (l, level) in enumerate(BF.R)
+        buf_in = ws.level_buffers[l]
+        len_in = ws.level_lengths[l]
+
+        buf_out = ws.level_buffers[l + 1]
+        len_out = ws.level_lengths[l + 1]
+
+        for block in level.blocks
+            in_size = len_in[block.in_ptr]
+            req_size = block.data isa UniformScaling ? in_size : size(block.data, 1)
+
+            v_out = get_buffer_and_set_len!(buf_out, len_out, block.out_ptr, req_size)
+            fill!(view(v_out, 1:req_size), 0)
+        end
+
+        for block in level.blocks
+            in_size = len_in[block.in_ptr]
+            v_in = view(buf_in[block.in_ptr], 1:in_size)
+
+            req_size = block.data isa UniformScaling ? in_size : size(block.data, 1)
+            v_out = view(buf_out[block.out_ptr], 1:req_size)
+
+            if block.data isa UniformScaling
+                v_out .+= v_in
+            else
+                mul!(v_out, block.data, v_in, 1, 1)
+            end
+        end
+    end
+
+    # 3. Leaf Level P
+    last_buf = ws.level_buffers[num_levels]
+    last_len = ws.level_lengths[num_levels]
+
+    for block in BF.P
+        in_size = last_len[block.in_ptr]
+        v_in = view(last_buf[block.in_ptr], 1:in_size)
+
+        obs_idx = cluster_values(testT, block.obs_out)
+        y_view = view(y, obs_idx)
+
+        if block.data isa UniformScaling
+            y_view .+= α .* v_in
+        else
+            mul!(y_view, block.data, v_in, α, 1)
+        end
+    end
+
     return y
 end
 
-function Base.:*(Butterfly::ButterflyFactorizations.FlatBF, x::AbstractVector)
-    return mul_flat_bf(Butterfly, x)
+# ------------------------------------------------------------------
+# Standard Operator Overloads
+# ------------------------------------------------------------------
+
+"""
+    *(BF::ButterflyFactorization, x::AbstractVector)
+
+Base allocation wrapper for `mul!`. Allocates the correct output vector type
+and calculates the result.
+"""
+function Base.:*(BF::ButterflyFactorization{T,M}, x::AbstractVector) where {T,M}
+    rows, _ = size(BF)
+    T_val = promote_type(T, eltype(x))
+    y = zeros(T_val, rows)
+    mul!(y, BF, x)
+    return y
 end
 
 @views function LinearAlgebra.mul!(
-    y::AbstractVecOrMat, Butterfly::BF_Mats, x::AbstractVector{T}
+    y::AbstractVecOrMat, Butterfly::ButterflyFactorization_Mat, x::AbstractVector{T}
 ) where {T}
     LinearMaps.check_dim_mul(y, Butterfly, x)
     fill!(y, zero(T))
-    y .= applyBF_Mats(Butterfly, x)
+    y .= applyButterflyFactorization_Mat(Butterfly, x)
     return y
 end
 
 @views function LinearAlgebra.mul!(
     y::AbstractVecOrMat,
-    At::LinearMaps.TransposeMap{<:Any,<:ButterflyFactorizations.BF_Mats},
+    At::LinearMaps.TransposeMap{<:Any,<:ButterflyFactorizations.ButterflyFactorization_Mat},
     x::AbstractVector{T},
 ) where {T}
-    LinearMaps.check_dim_mul(y, transposed(At.lmap), x)
+    LinearMaps.check_dim_mul(y, transpose(At.lmap), x)
     fill!(y, zero(T))
-    y .= applyBF_Mats(transpose(At.lmap), x)
+    y .= applyButterflyFactorization_Mat(transpose(At.lmap), x)
     return y
 end
 
 @views function LinearAlgebra.mul!(
     y::AbstractVecOrMat,
-    At::LinearMaps.AdjointMap{<:Any,<:ButterflyFactorizations.BF_Mats},
+    At::LinearMaps.AdjointMap{<:Any,<:ButterflyFactorizations.ButterflyFactorization_Mat},
     x::AbstractVector{T},
 ) where {T}
     LinearMaps.check_dim_mul(y, At.lmap, x)
     fill!(y, zero(T))
-    y .= applyBF_Mats(At.lmap', x)
+    y .= applyButterflyFactorization_Mat(At.lmap', x)
     return y
 end
 
-function Base.:*(Butterfly::BF_Mats, x::AbstractVector)
-    return applyBF_Mats(Butterfly, x)
+function Base.:*(Butterfly::ButterflyFactorization_Mat, x::AbstractVector)
+    return applyButterflyFactorization_Mat(Butterfly, x)
 end
 
 """
-    applyBF_Mats(t::BF_Mats, v::AbstractVector)
+    applyButterflyFactorization_Mat(t::ButterflyFactorization_Mat, v::AbstractVector)
 
-Applies the sequential matrix operations (`Q`, `R` layers, and `P`) of a
-`BF_Mats` factorization to a vector `v` and returns the output vector.
+Applies the sequential sparse block matrix operations (`Q`, `R` layers, and `P`)
+to a vector `v`.
 """
-function applyBF_Mats(t::BF_Mats, v::AbstractVector)
-    y = v
-    y = t.Q * y
+function applyButterflyFactorization_Mat(t::ButterflyFactorization_Mat, v::AbstractVector)
+    y = t.Q * v
     for R_block in t.R
         y = R_block * y
     end
-    result = zeros(ComplexF64, size(t, 1))
-    result = t.P * y
-    return result
+    return t.P * y
 end

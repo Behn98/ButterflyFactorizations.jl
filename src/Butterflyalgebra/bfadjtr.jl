@@ -1,199 +1,127 @@
-function Base.adjoint(B::ButterflyFactorizations.BF)
-    R_adj = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(
-        undef, length(B.R)
-    )
+import LinearAlgebra: mul!, adjoint, transpose
 
-    for l in eachindex(B.R)
-        newl = length(B.R) - l + 1
-        R_adj[newl] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
-        for nodeS in keys(B.R[l])
-            for nodeO in keys(B.R[l][nodeS])
-                if !haskey(R_adj[newl], reverse(nodeO))
-                    R_adj[newl][reverse(nodeO)] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-                end
-                R_adj[newl][reverse(nodeO)][reverse(nodeS)] = adjoint(B.R[l][nodeS][nodeO])
-            end
-        end
-    end
+"""
+    transform_block(b::ButterflyBlock{T}, op) where {T}
 
-    Q_adj = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-    for k in keys(B.Q)
-        Q_adj[reverse(k)] = adjoint(B.Q[k])
-    end
+Applies a linear algebra operation (like `adjoint` or `transpose`) to a single
+`ButterflyBlock`.
 
-    P_adj = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-    for k in keys(B.P)
-        P_adj[reverse(k)] = adjoint(B.P[k])
-    end
+It structurally swaps the input and output routing keys to reflect the inverted
+domain and codomain, and mathematically applies the operation to the underlying
+matrix data. Identity blocks (`UniformScaling`) are passed through safely.
+"""
+function transform_block(b::ButterflyBlock{T}, op) where {T}
+    # Handle UniformScaling (Identity): I' = I, transpose(I) = I
+    new_data = b.data isa UniformScaling ? b.data : Matrix(op(b.data))
 
-    return BF(
-        P_adj, R_adj, Q_adj, (B.dim[2], B.dim[1]), B.NO, B.NS, B.k, B.τ, B.otree, B.stree
+    return ButterflyBlock(
+        b.src_in,   # new obs_out (was in)
+        b.obs_in,   # new src_out (was in)
+        b.src_out,  # new obs_in  (was out)
+        b.obs_out,  # new src_in  (was out)
+        new_data,
     )
 end
 
-function Base.transpose(B::ButterflyFactorizations.BF)
-    R_tr = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(
-        undef, length(B.R)
-    )
+"""
+    reverse_tree(blktree)
 
-    for l in eachindex(B.R)
-        newl = length(B.R) - l + 1
-        R_tr[newl] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
-        for nodeS in keys(B.R[l])
-            for nodeO in keys(B.R[l][nodeS])
-                if !haskey(R_tr[newl], reverse(nodeO))
-                    R_tr[newl][reverse(nodeO)] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-                end
-                R_tr[newl][reverse(nodeO)][reverse(nodeS)] = transpose(B.R[l][nodeS][nodeO])
-            end
-        end
+Reverses a coupled block-tree by swapping the source (trial) and observer (test) trees.
+Required for mathematically transposing or taking the adjoint of a Butterfly Factorization.
+"""
+function reverse_tree(blktree)
+    # Reverse the block tree by swapping source and target trees
+    return cluster_blktree(cluster_trialtree(blktree), cluster_testtree(blktree))
+end
+
+"""
+    Base.adjoint(BF::ButterflyFactorization)
+
+Explicitly constructs the Adjoint (Hermitian transpose) of a flat-array ButterflyFactorization.
+Reverses the cascaded order of the factors and computes the adjoint of every block.
+"""
+function Base.adjoint(BF::ButterflyFactorization{T,M}) where {T,M}
+    # 1. P_adj becomes Q'
+    Q_adj = [transform_block(b, adjoint) for b in BF.P]
+
+    # 2. Reversed R levels
+    L_minus_1 = length(BF.R)
+    R_adj = Vector{ButterflyLevel{T}}(undef, L_minus_1)
+
+    for l in 1:L_minus_1
+        # Map level l to level (L - l) of the original factorization
+        orig_level = BF.R[L_minus_1 - l + 1]
+
+        new_blocks = [transform_block(b, adjoint) for b in orig_level.blocks]
+        R_adj[l] = ButterflyLevel(new_blocks)
     end
 
-    Q_tr = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-    for k in keys(B.Q)
-        Q_tr[reverse(k)] = transpose(B.Q[k])
+    # 3. Q_adj becomes P'
+    P_adj = [transform_block(b, adjoint) for b in BF.Q]
+
+    return ButterflyFactorization(Q_adj, R_adj, P_adj, reverse_tree(BF.tree), BF.k, BF.τ)
+end
+
+"""
+    Base.transpose(BF::ButterflyFactorization)
+
+Explicitly constructs the Transpose of a flat-array ButterflyFactorization.
+Reverses the cascaded order of the factors and computes the transpose of every block.
+"""
+function Base.transpose(BF::ButterflyFactorization{T,M}) where {T,M}
+    Q_trans = [transform_block(b, transpose) for b in BF.P]
+
+    L_minus_1 = length(BF.R)
+    R_trans = Vector{ButterflyLevel{T}}(undef, L_minus_1)
+
+    for l in 1:L_minus_1
+        orig_level = BF.R[L_minus_1 - l + 1]
+
+        new_blocks = [transform_block(b, transpose) for b in orig_level.blocks]
+        R_trans[l] = ButterflyLevel(new_blocks)
     end
 
-    P_tr = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-    for k in keys(B.P)
-        P_tr[reverse(k)] = transpose(B.P[k])
-    end
+    P_trans = [transform_block(b, transpose) for b in BF.Q]
 
-    return BF(
-        P_tr, R_tr, Q_tr, (B.dim[2], B.dim[1]), B.NO, B.NS, B.k, B.τ, B.otree, B.stree
+    return ButterflyFactorization(
+        Q_trans, R_trans, P_trans, reverse_tree(BF.tree), BF.k, BF.τ
     )
 end
 
-function Base.adjoint(t::ButterflyFactorizations.BF_Mats)
-    return BF_Mats(
-        t.P',                                                      # Q becomes P'
-        AbstractMatrix{ComplexF64}[r' for r in Iterators.reverse(t.R)], # Reverse and map R
-        t.Q',                                                      # P becomes Q'
-        t.NO,                                                      # NS and NO swap roles
-        t.NS,
+"""
+    Base.adjoint(t::ButterflyFactorization_Mat)
+
+Explicitly constructs the Adjoint (Hermitian transpose) of a sparse-matrix ButterflyFactorization.
+"""
+function Base.adjoint(t::ButterflyFactorizations.ButterflyFactorization_Mat{T}) where {T}
+    return ButterflyFactorization_Mat(
+        t.P',                                           # Q becomes P'
+        AbstractMatrix{T}[r' for r in Iterators.reverse(t.R)], # Reverse and map R
+        t.Q',                                           # P becomes Q'
+        t.no,                                           # ns and no swap roles
+        t.ns,
         t.k,
         t.τ,
-        t.PermQ,                                                   # Permutations swap roles
-        t.PermP,
+        t.permQ,                                        # Permutations swap roles
+        t.permP,
     )
 end
 
-function Base.transpose(t::ButterflyFactorizations.BF_Mats)
-    return BF_Mats(
+"""
+    Base.transpose(t::ButterflyFactorization_Mat)
+
+Explicitly constructs the Transpose of a sparse-matrix ButterflyFactorization.
+"""
+function Base.transpose(t::ButterflyFactorizations.ButterflyFactorization_Mat{T}) where {T}
+    return ButterflyFactorization_Mat(
         transpose(t.P),
-        AbstractMatrix{ComplexF64}[transpose(r) for r in Iterators.reverse(t.R)],
+        AbstractMatrix{T}[transpose(r) for r in Iterators.reverse(t.R)],
         transpose(t.Q),
-        t.NO,
-        t.NS,
+        t.no,
+        t.ns,
         t.k,
         t.τ,
-        t.PermQ,
-        t.PermP,
+        t.permQ,
+        t.permP,
     )
 end
-
-function Base.adjoint(B::ButterflyFactorizations.AlgBF{T}) where {T} # 1. Added {T} here
-    lr = length(B.R)
-    R_adj = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(undef, lr)
-
-    # 2. Fix: Parameterize this vector with {T} so it is not a UnionAll vector
-    Rf_adj = Vector{R_factor{T}}(undef, lr)
-
-    for l in eachindex(B.R)
-        newl = lr - l + 1
-        R_adj[newl] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
-        for skel1 in keys(B.R[l].Dict)
-            for skel2 in keys(B.R[l].Dict[skel1])
-                if !haskey(R_adj[newl], reverse(skel2))
-                    R_adj[newl][reverse(skel2)] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-                end
-                R_adj[newl][reverse(skel2)][reverse(skel1)] = adjoint(
-                    B.R[l].Dict[skel1][skel2]
-                )
-            end
-        end
-
-        # 3. Explicitly construct R_factor with {T}
-        Rf_adj[newl] = R_factor(
-            R_adj[newl],
-            reverse(B.R[l].olvl),
-            reverse(B.R[l].slvl),
-            B.R[l].colotree,
-            B.R[l].colstree,
-            B.R[l].rowstree,
-            B.R[l].rowotree,
-        )
-    end
-
-    Q_adj = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-    for k in keys(B.Q.Dict)
-        Q_adj[reverse(k)] = adjoint(B.Q.Dict[k])
-    end
-    # 4. Explicitly construct P_factor with {T}
-    Qf_adj = P_factor(Q_adj, B.Q.stree)
-
-    P_adj = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-    for k in keys(B.P.Dict)
-        P_adj[reverse(k)] = adjoint(B.P.Dict[k])
-    end
-    # 5. Explicitly construct Q_factor with {T}
-    Pf_adj = Q_factor(P_adj, B.P.otree)
-
-    return AlgBF(reverse(B.dim), Pf_adj, Rf_adj, Qf_adj)
-end
-
-function Base.transpose(B::ButterflyFactorizations.AlgBF{T}) where {T}
-    lr = length(B.R)
-    R_adj = Vector{Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}}(undef, lr)
-    Rf_adj = Vector{R_factor{T}}(undef, lr)
-    for l in eachindex(B.R)
-        newl = lr - l + 1
-        R_adj[newl] = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}()
-        for skel1 in keys(B.R[l].Dict)
-            for skel2 in keys(B.R[l].Dict[skel1])
-                if !haskey(R_adj[newl], reverse(skel2))
-                    R_adj[newl][reverse(skel2)] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-                end
-                R_adj[newl][reverse(skel2)][reverse(skel1)] = transpose(
-                    B.R[l].Dict[skel1][skel2]
-                )
-            end
-        end
-        Rf_adj[newl] = R_factor(
-            R_adj[newl],
-            reverse(B.R[l].olvl),
-            reverse(B.R[l].slvl),
-            B.R[l].colotree,
-            B.R[l].colstree,
-            B.R[l].rowotree,
-            B.R[l].rowstree,
-        )
-    end
-
-    Q_adj = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-    for k in keys(B.Q.Dict)
-        Q_adj[reverse(k)] = transpose(B.Q.Dict[k])
-    end
-    Qf_adj = P_factor(Q_adj, B.Q.stree)
-
-    P_adj = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-    for k in keys(B.P.Dict)
-        P_adj[reverse(k)] = transpose(B.P.Dict[k])
-    end
-    Pf_adj = Q_factor(P_adj, B.P.otree)
-    return AlgBF(reverse(B.dim), Pf_adj, Rf_adj, Qf_adj)
-end
-
-"""
-    adjoint(bf::FlatBF)
-
-Returnerar en ny `FlatBF` som representerar det konjugerade transponatet (Aᴴ).
-"""
-Base.adjoint(bf::FlatBF) = transform_bf(bf, true)
-
-"""
-    transpose(bf::FlatBF)
-
-Returnerar en ny `FlatBF` som representerar transponatet (Aᵀ).
-"""
-Base.transpose(bf::FlatBF) = transform_bf(bf, false)

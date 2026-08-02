@@ -1,136 +1,148 @@
-import H2Trees: values, center, halfsize, children, isleaf, trialtree, testtree
-function recompress_BF_left(Butterfly::AlgBF, τ)
-    return recompress_BF_right(Butterfly', τ)'
-end
+"""
+    recompress_BF(Butterfly::ButterflyFactorization, τ)
 
-function recompress_BF(Butterfly::AlgBF, τ)
+Recompresses a structural Butterfly Factorization (`BF`) by extracting its algebraic
+factors, recompressing them with tolerance `τ`, and restructuring the output back into a `BF`.
+
+This process involves two main steps: first, the right factors are recompressed using
+a QR-based approach, and then the left factors are recompressed by transposing the
+structure, applying the same right recompression, and transposing back.
+
+The resulting `BF` maintains the same hierarchical structure but with potentially reduced
+ranks in the `R` factors, leading to improved efficiency in storage and matrix-vector
+products while preserving the overall accuracy within the specified tolerance.
+
+*Note:* Algebraic recompression is only supported for the dictionary-based versions
+of the butterflies. The matrix-based format is not designed for such manipulations and
+would require a complete restructuring of its underlying data representation.
+"""
+function recompress_BF(Butterfly::ButterflyFactorization, τ)
     return recompress_BF_left(recompress_BF_right(Butterfly, τ), τ)
 end
 
 """
-    recompress_BF(Butterfly::BF, τ)
+    recompress_BF_left(Butterfly::ButterflyFactorization, τ)
 
-Recompresses a structural Butterfly Factorization (`BF`) by extracting its algebraic
-factors, recompressing them with tolerance `τ`, and restructuring the output back into a
-`BF`. This process involves two main steps: first, the right factors are recompressed using
-a QR-based approach, and then the left factors are recompressed by transposing the
-structure, applying the same right recompression, and transposing back. The resulting `BF`
-maintains the same hierarchical structure but with potentially reduced ranks in the `R`
-factors, leading to improved efficiency in storage and matrix-vector products while
-preserving the overall accuracy within the specified tolerance. Any of the algebraic
-operations is only supported for the Dictionary versions of the Butterflies, as the
-matrix-based format is not designed for algebraic manipulations and would require a complete
-restructuring of the underlying data representation to support such operations effectively.
+Recompresses the left-hand side factors of a Butterfly Factorization by taking its adjoint,
+applying right-recompression, and taking the adjoint again.
 """
-function recompress_BF(Butterfly::BF, τ)
-    Q = Butterfly.Q
-    R = Butterfly.R
-    P = Butterfly.P
-    BFalg = AlgBF(Butterfly)
-    BFalg = recompress_BF(BFalg, τ)
-    return BF(
-        BFalg,
-        Butterfly.NS,
-        Butterfly.NO,
-        Butterfly.k,
-        Butterfly.τ,
-        Butterfly.stree,
-        Butterfly.otree,
-    )
+function recompress_BF_left(Butterfly::ButterflyFactorization, τ)
+    return recompress_BF_right(Butterfly', τ)'
 end
 
-function recompress_BF_right(Butterfly_init::AlgBF, τ)
-    Butterfly = deepcopy(Butterfly_init)
-    Q = Butterfly.Q.Dict
-    R = [Butterfly.R[r].Dict for r in eachindex(Butterfly.R)]
-    P = Butterfly.P.Dict
-    lr = length(R)
+# Helper functions to extract domains (columns) and codomains (rows)
+_col_key(b::ButterflyBlock) = (b.obs_in, b.src_in)
+_row_key(b::ButterflyBlock) = (b.obs_out, b.src_out)
 
-    for l in eachindex(R[1:(lr - 1)])
+"""
+    recompress_BF_right(Butterfly_init::ButterflyFactorization, τ::Float64; scheduler)
+
+Applies QR-based rank reduction to the right-hand side hierarchical `R` factors of the
+Butterfly Factorization. Processes interacting chunks in parallel using `OhMyThreads`
+to maintain high assembly performance.
+"""
+function recompress_BF_right(
+    Butterfly_init::ButterflyFactorization{T,M},
+    τ::Float64;
+    scheduler=OhMyThreads.SerialScheduler(),
+) where {T,M}
+
+    # 1. Deepcopy the R factors so we can safely mutate them
+    R_factors = [
+        ButterflyLevel([
+            ButterflyBlock(b.obs_out, b.src_out, b.obs_in, b.src_in, copy(b.data)) for
+            b in lvl.blocks
+        ]) for lvl in Butterfly_init.R
+    ]
+
+    lr = length(R_factors)
+
+    for l in 1:(lr - 1)
         lold = lr - l + 1
+        current_blocks = R_factors[lold].blocks
 
-        # Bulletproof: Flatten R_u to map the full col_idx tuple directly to its matrix
-        R_u = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()#Dict{Tuple{Int,Int},}
+        # 2. Sort to group by column space
+        sort!(current_blocks; by=_col_key)
 
-        # 1. Map column skeletons to all associated row skeletons at this level
-        col_to_rows = Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}()
-        for row_skel in keys(R[lold])
-            for col_idx in keys(R[lold][row_skel])
-                if !haskey(col_to_rows, col_idx)
-                    col_to_rows[col_idx] = Vector{Tuple{Int,Int}}()
-                end
-                push!(col_to_rows[col_idx], row_skel)
+        # 3. Identify chunk boundaries sequentially (very fast O(N) pass)
+        chunks = Tuple{Int,Int,Tuple{Int,Int}}[]
+        n_blocks = length(current_blocks)
+        i = 1
+        while i <= n_blocks
+            start_idx = i
+            c_key = _col_key(current_blocks[i])
+            while i <= n_blocks && _col_key(current_blocks[i]) == c_key
+                i += 1
             end
+            push!(chunks, (start_idx, i - 1, c_key))
         end
 
-        # 2. Process each unique column space
-        for (col_idx, rows_with_col) in col_to_rows
-            #parent_groups = group_by_parents(testtree(tree), rows_with_col, 1)
+        # 4. Process chunks in parallel using OhMyThreads
+        chunk_results = tmap(chunks; scheduler=scheduler) do (start_idx, end_idx, c_key)
+            # Extract matrices
+            blocks_to_compress = [current_blocks[k].data for k in start_idx:end_idx]
+            row_sizes = [size(mat, 1) for mat in blocks_to_compress]
 
-            #for (parent_node, local_rows) in parent_groups
-            R_k = Vector{Matrix{ComplexF64}}()
-            row_spc = Vector{Int}()
+            # Concatenate and QR
+            A_k = vcat(blocks_to_compress...)
+            Q_mat, R_mat, p = pqr(A_k; rtol=τ)
 
-            for row_skel in rows_with_col #local_rows
-                block = R[lold][row_skel][col_idx]
-                push!(R_k, block)
-                push!(row_spc, size(block, 1))
-            end
-            A_k = vcat(R_k...)
-            QRA = pqr(A_k; rtol=τ)
+            # Local transfer matrix
+            T_mat = R_mat[:, invperm(p)]
 
-            # Extract the local transfer matrix
-            T_mat = QRA[2][:, invperm(QRA[3])]
-            R_u[col_idx] = T_mat
-            last_idx = 0
-            for (j, row_skel) in enumerate(rows_with_col) #local_rows
-                #delete!(R[lold][row_skel], col_idx) # Remove the old column entry
-                R[lold][row_skel][col_idx] = Matrix(    #(parent_node, col_idx[2])
-                    QRA[1][(last_idx + 1):(last_idx + row_spc[j]), :],
+            # Construct updated blocks
+            new_blocks = Vector{ButterflyBlock{T}}(undef, end_idx - start_idx + 1)
+            last_row = 0
+            for (j, k) in enumerate(start_idx:end_idx)
+                slice_rows = row_sizes[j]
+                old_b = current_blocks[k]
+                new_data = Matrix(Q_mat[(last_row + 1):(last_row + slice_rows), :])
+
+                new_blocks[j] = ButterflyBlock(
+                    old_b.obs_out, old_b.src_out, old_b.obs_in, old_b.src_in, new_data
                 )
-                last_idx += row_spc[j]
+                last_row += slice_rows
             end
-            #end
+
+            return (c_key, T_mat, start_idx, new_blocks)
         end
 
-        # 3. Propagate the accumulated R_u transformations
-        #if l < lr
-        R[lold - 1] = update_next_level_R_right(R_u, R[lold - 1])
-        #else
-        #    Q = update_next_level_R_right(R_u, Q)
-        #end
-    end
-
-    return AlgBF(Butterfly, Q, R, P)
-end
-
-# Overload 1: Updating intermediate R factors (Clean 1:1 matching)
-function update_next_level_R_right(
-    R_u::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
-    rightfactor::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}},
-)
-    for row in keys(rightfactor)
-        # Because the row key of rightfactor is exactly the col_idx of the previous level
-        if haskey(R_u, row)
-            T_mat = R_u[row]
-            for col in keys(rightfactor[row])
-                rightfactor[row][col] = T_mat * rightfactor[row][col]
+        # 5. Gather results sequentially
+        R_u = Dict{Tuple{Int,Int},Matrix{T}}()
+        for (c_key, T_mat, start_idx, new_blocks) in chunk_results
+            R_u[c_key] = T_mat
+            for (j, b) in enumerate(new_blocks)
+                current_blocks[start_idx + j - 1] = b
             end
         end
-    end
-    return rightfactor
-end
 
-# Overload 2: Updating the terminal Q factor
-function update_next_level_R_right(
-    R_u::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
-    rightfactor::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
-)
-    for col_idx in keys(R_u)
-        nodeS = col_idx[2] # Pull out the source leaf node ID directly
-        if haskey(rightfactor, nodeS)
-            rightfactor[nodeS] = R_u[col_idx] * rightfactor[nodeS]
+        # 6. Apply R_u to the next level (lold - 1) in parallel
+        next_blocks = R_factors[lold - 1].blocks
+
+        tmap!(next_blocks, next_blocks; scheduler=scheduler) do block
+            r_key = _row_key(block)
+            if haskey(R_u, r_key)
+                # Apply transfer matrix update
+                return ButterflyBlock(
+                    block.obs_out,
+                    block.src_out,
+                    block.obs_in,
+                    block.src_in,
+                    R_u[r_key] * block.data,
+                )
+            else
+                return block
+            end
         end
     end
-    return rightfactor
+
+    # Return new factorization
+    return ButterflyFactorization(
+        Butterfly_init.Q,
+        R_factors,
+        Butterfly_init.P,
+        Butterfly_init.tree,
+        Butterfly_init.k,
+        Butterfly_init.τ,
+    )
 end

@@ -1,235 +1,116 @@
-@views function LinearAlgebra.mul!(
-    y::AbstractVecOrMat, A::ButterflyFactorizations.PetrovGalerkinBF, x::AbstractVector{T}
-) where {T}
-    LinearMaps.check_dim_mul(y, A, x)
-    fill!(y, zero(T))
-    y_near = A.nearinteractions * x
-    y .+= y_near
+import LinearAlgebra: mul!, adjoint, transpose
+using LinearMaps: LinearMaps
 
-    n_chunks = min(length(A.BFs), Threads.nthreads() * 4)
-    chunk_size = cld(length(A.BFs), n_chunks)
-    y_locals = Vector{Vector{T}}(undef, n_chunks)
-
-    @tasks for c in 1:n_chunks
-        @set scheduler = DynamicScheduler()
-        y_local = zeros(T, length(y))
-        start_idx = (c - 1) * chunk_size + 1
-        end_idx = min(c * chunk_size, length(A.BFs))
-
-        for i in start_idx:end_idx
-            bf = A.BFs[i]
-            res = apply_BF(bf, x; scheduler=OhMyThreads.SerialScheduler())
-
-            y_local .+= res
-        end
-        y_locals[c] = y_local
-    end
-
-    for c in 1:n_chunks
-        y .+= y_locals[c]
-    end
-    return y
-end
+# ------------------------------------------------------------------
+# Forward Matrix-Vector Product (Flat Array BF)
+# ------------------------------------------------------------------
 
 @views function LinearAlgebra.mul!(
     y::AbstractVecOrMat,
-    At::LinearMaps.AdjointMap{<:Any,<:ButterflyFactorizations.PetrovGalerkinBF},
+    A::ButterflyFactorizations.PetrovGalerkinBF{T},
     x::AbstractVector{T},
-) where {T}
-    LinearMaps.check_dim_mul(y, At.lmap, x)
-    fill!(y, zero(T))
-    y .+= adjoint(At.lmap.nearinteractions) * x
-
-    n_chunks = min(length(At.lmap.BFs), Threads.nthreads() * 4)
-    chunk_size = cld(length(At.lmap.BFs), n_chunks)
-    y_locals = Vector{Vector{T}}(undef, n_chunks)
-
-    @tasks for c in 1:n_chunks
-        @set scheduler = DynamicScheduler()
-        y_local = zeros(T, length(y))
-        start_idx = (c - 1) * chunk_size + 1
-        end_idx = min(c * chunk_size, length(At.lmap.BFs))
-
-        for i in start_idx:end_idx
-            bf = At.lmap.BFs[i]
-
-            res = apply_BF(bf', x; scheduler=OhMyThreads.SerialScheduler())
-
-            y_local .+= res
-        end
-        y_locals[c] = y_local
-    end
-
-    for c in 1:n_chunks
-        y .+= y_locals[c]
-    end
-    return y
-end
-
-@views function LinearAlgebra.mul!(
-    y::AbstractVecOrMat,
-    At::LinearMaps.TransposeMap{<:Any,<:ButterflyFactorizations.PetrovGalerkinBF},
-    x::AbstractVector{T},
-) where {T}
-    LinearMaps.check_dim_mul(y, At.lmap, x)
-    fill!(y, zero(T))
-    y .+= transpose(At.lmap.nearinteractions) * x
-
-    n_chunks = min(length(At.lmap.BFs), Threads.nthreads() * 4)
-    chunk_size = cld(length(At.lmap.BFs), n_chunks)
-    y_locals = Vector{Vector{T}}(undef, n_chunks)
-
-    @tasks for c in 1:n_chunks
-        @set scheduler = DynamicScheduler()
-        y_local = zeros(T, length(y))
-        start_idx = (c - 1) * chunk_size + 1
-        end_idx = min(c * chunk_size, length(At.lmap.BFs))
-
-        for i in start_idx:end_idx
-            bf = At.lmap.BFs[i]
-
-            res = apply_BF(transpose(bf), x; scheduler=OhMyThreads.SerialScheduler())
-
-            y_local .+= res
-        end
-        y_locals[c] = y_local
-    end
-
-    for c in 1:n_chunks
-        y .+= y_locals[c]
-    end
-    return y
-end
-
-@views function LinearAlgebra.mul!(
-    y::AbstractVecOrMat, A::ButterflyFactorizations.FlatPGBF, x::AbstractVector{T}
+    α::Number=1,
+    β::Number=0,
 ) where {T}
     LinearMaps.check_dim_mul(y, A, x)
-    fill!(y, zero(T))
-    y_near = A.nearinteractions * x
-    y .+= y_near
 
-    n_chunks = min(length(A.BFs), Threads.nthreads() * 4)
-    chunk_size = cld(length(A.BFs), n_chunks)
-    y_locals = Vector{Vector{T}}(undef, n_chunks)
+    # 1. Handle scaling or zeroing of the output vector y based on β
+    if β == 0
+        fill!(y, zero(T))
+    elseif β != 1
+        rmul!(y, β)
+    end
 
-    @tasks for c in 1:n_chunks
-        @set scheduler = DynamicScheduler()
-        y_local = zeros(T, length(y))
-        start_idx = (c - 1) * chunk_size + 1
-        end_idx = min(c * chunk_size, length(A.BFs))
+    # 2. Evaluate Near-Field (accumulate with α scaling if needed, or standard 1, 1 if β was handled)
+    # To be fully general with α and β:
+    # We can compute the application into a temporary or handle near/far carefully.
+    # A cleaner approach for LinearMaps compatibility:
 
-        for i in start_idx:end_idx
+    # Let's compute near-field contribution
+    # (If α != 1, we scale accordingly)
+    if α == 1
+        mul!(y, A.nearinteractions, x, 1, 1) # adds to y
+    else
+        # Temporary buffer or direct scaling
+        y_near = A.nearinteractions * x
+        y .+= α .* y_near
+    end
+
+    # 3. Far-Field Butterfly Evaluation
+    if !isempty(A.BFs)
+        for buf in A.y_thread_buffers
+            fill!(buf, zero(T))
+        end
+
+        Threads.@threads :static for i in 1:length(A.BFs)
+            tid = Threads.threadid()
+            y_local = A.y_thread_buffers[tid]
+            ws_local = A.thread_workspaces[tid]
             bf = A.BFs[i]
 
-            mul_flat_bf!(y_local, bf, x)
+            mul!(y_local, bf, x, ws_local, 1, 1)
         end
-        y_locals[c] = y_local
+
+        # Reduction back to global vector with α scaling factor
+        for buf in A.y_thread_buffers
+            if α == 1
+                y .+= buf
+            else
+                y .+= α .* buf
+            end
+        end
     end
 
-    for c in 1:n_chunks
-        y .+= y_locals[c]
-    end
     return y
 end
 
-@views function LinearAlgebra.mul!(
-    y::AbstractVecOrMat,
-    At::LinearMaps.TransposeMap{<:Any,<:ButterflyFactorizations.FlatPGBF},
-    x::AbstractVector{T},
-) where {T}
-    LinearMaps.check_dim_mul(y, At.lmap, x)
-    fill!(y, zero(T))
-    y .+= transpose(At.lmap.nearinteractions) * x
-
-    n_chunks = min(length(At.lmap.BFs), Threads.nthreads() * 4)
-    chunk_size = cld(length(At.lmap.BFs), n_chunks)
-    y_locals = Vector{Vector{T}}(undef, n_chunks)
-
-    @tasks for c in 1:n_chunks
-        @set scheduler = DynamicScheduler()
-        y_local = zeros(T, length(y))
-        start_idx = (c - 1) * chunk_size + 1
-        end_idx = min(c * chunk_size, length(At.lmap.BFs))
-
-        for i in start_idx:end_idx
-            bf = At.lmap.BFs[i]
-
-            res = mul_flat_bf(transpose(bf), x; scheduler=OhMyThreads.SerialScheduler())
-
-            y_local .+= res
-        end
-        y_locals[c] = y_local
-    end
-
-    for c in 1:n_chunks
-        y .+= y_locals[c]
-    end
-    return y
-end
+# ------------------------------------------------------------------
+# Legacy / Sparse Matrix Overloads
+# ------------------------------------------------------------------
 
 @views function LinearAlgebra.mul!(
     y::AbstractVecOrMat,
-    At::LinearMaps.AdjointMap{<:Any,<:ButterflyFactorizations.FlatPGBF},
+    A::ButterflyFactorizations.PetrovGalerkinBF_Mat,
     x::AbstractVector{T},
+    α::Number=1,
+    β::Number=0,
 ) where {T}
-    LinearMaps.check_dim_mul(y, At.lmap, x)
-    fill!(y, zero(T))
-    y .+= adjoint(At.lmap.nearinteractions) * x
-
-    n_chunks = min(length(At.lmap.BFs), Threads.nthreads() * 4)
-    chunk_size = cld(length(At.lmap.BFs), n_chunks)
-    y_locals = Vector{Vector{T}}(undef, n_chunks)
-
-    @tasks for c in 1:n_chunks
-        @set scheduler = DynamicScheduler()
-        y_local = zeros(T, length(y))
-        start_idx = (c - 1) * chunk_size + 1
-        end_idx = min(c * chunk_size, length(At.lmap.BFs))
-
-        for i in start_idx:end_idx
-            bf = At.lmap.BFs[i]
-
-            res = mul_flat_bf(bf', x; scheduler=OhMyThreads.SerialScheduler())
-
-            y_local .+= res
-        end
-        y_locals[c] = y_local
+    if β == 0
+        fill!(y, zero(T))
+    elseif β != 1
+        rmul!(y, β)
     end
-
-    for c in 1:n_chunks
-        y .+= y_locals[c]
-    end
-    return y
-end
-
-# ... (Här börjar dina orörda funktioner för PetrovGalerkinBF_mats) ...
-@views function LinearAlgebra.mul!(
-    y::AbstractVecOrMat,
-    A::ButterflyFactorizations.PetrovGalerkinBF_mats,
-    x::AbstractVector{T},
-) where {T}
     LinearMaps.check_dim_mul(y, A, x)
-    fill!(y, zero(T))
-    y .+= A.nearinteractions * x
+
+    # Zero-allocation near-field
+    mul!(y, A.nearinteractions, x, α, β)
 
     for i in eachindex(A.BFs)
-        y[A.BFs[i].PermP] .+= applyBF_Mats(A.BFs[i], x[A.BFs[i].PermQ])
+        y[A.BFs[i].permP] .+= applyButterflyFactorization_Mat(A.BFs[i], x[A.BFs[i].permQ])
     end
     return y
 end
 
 @views function LinearAlgebra.mul!(
     y::AbstractVecOrMat,
-    At::LinearMaps.TransposeMap{<:Any,<:ButterflyFactorizations.PetrovGalerkinBF_mats},
+    At::LinearMaps.TransposeMap{<:Any,<:ButterflyFactorizations.PetrovGalerkinBF_Mat},
     x::AbstractVector{T},
+    α::Number=1,
+    β::Number=0,
 ) where {T}
     LinearMaps.check_dim_mul(y, At.lmap, x)
-    fill!(y, zero(T))
-    y .+= transpose(At.lmap.nearinteractions) * x
+
+    if β == 0
+        fill!(y, zero(T))
+    elseif β != 1
+        rmul!(y, β)
+    end
+
+    mul!(y, transpose(At.lmap.nearinteractions), x, α, β)
+
     for i in eachindex(At.lmap.BFs)
-        y[At.lmap.BFs[i].PermQ] .+= applyBF_Mats(
-            transpose(At.lmap.BFs[i]), x[At.lmap.BFs[i].PermP]
+        y[At.lmap.BFs[i].permQ] .+= applyButterflyFactorization_Mat(
+            transpose(At.lmap.BFs[i]), x[At.lmap.BFs[i].permP]
         )
     end
     return y
@@ -237,14 +118,25 @@ end
 
 @views function LinearAlgebra.mul!(
     y::AbstractVecOrMat,
-    At::LinearMaps.AdjointMap{<:Any,<:ButterflyFactorizations.PetrovGalerkinBF_mats},
+    At::LinearMaps.AdjointMap{<:Any,<:ButterflyFactorizations.PetrovGalerkinBF_Mat},
     x::AbstractVector{T},
+    α::Number=1,
+    β::Number=0,
 ) where {T}
     LinearMaps.check_dim_mul(y, At.lmap, x)
-    fill!(y, zero(T))
-    y .+= adjoint(At.lmap.nearinteractions) * x
+
+    if β == 0
+        fill!(y, zero(T))
+    elseif β != 1
+        rmul!(y, β)
+    end
+
+    mul!(y, adjoint(At.lmap.nearinteractions), x, α, β)
+
     for i in eachindex(At.lmap.BFs)
-        y[At.lmap.BFs[i].PermQ] .+= applyBF_Mats(At.lmap.BFs[i]', x[At.lmap.BFs[i].PermP])
+        y[At.lmap.BFs[i].permQ] .+= applyButterflyFactorization_Mat(
+            At.lmap.BFs[i]', x[At.lmap.BFs[i].permP]
+        )
     end
     return y
 end

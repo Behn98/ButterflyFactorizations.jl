@@ -1,90 +1,41 @@
-function Base.size(A::ButterflyFactorizations.PetrovGalerkinBF, dim=nothing)
-    if dim === nothing
-        return (A.dim[1], A.dim[2])
-    elseif dim == 1
+import Base: size
+
+# ------------------------------------------------------------------
+# Size Overloads
+# ------------------------------------------------------------------
+
+"""
+    Base.size(A::PetrovGalerkinBF) -> Tuple{Int, Int}
+    Base.size(A::PetrovGalerkinBF, dim::Integer) -> Int
+
+Returns the spatial dimensions (rows, columns) of the global Butterfly operator.
+"""
+Base.size(A::ButterflyFactorizations.PetrovGalerkinBF) = A.dim
+
+function Base.size(A::ButterflyFactorizations.PetrovGalerkinBF, dim::Integer)
+    if dim == 1
         return A.dim[1]
     elseif dim == 2
         return A.dim[2]
     else
-        error("dim must be either 1 or 2")
+        throw(ArgumentError("dim must be either 1 or 2"))
     end
 end
 
-function Base.size(
-    A::Adjoint{<:Any,<:ButterflyFactorizations.PetrovGalerkinBF}, dim=nothing
-)
-    P = parent(A)
-    if dim === nothing
-        return (P.dim[2], P.dim[1])
-    elseif dim == 1
-        return P.dim[2]
-    elseif dim == 2
-        return P.dim[1]
-    else
-        error("dim must be either 1 or 2")
-    end
-end
+"""
+    Base.size(A::PetrovGalerkinBF_Mat) -> Tuple{Int, Int}
+    Base.size(A::PetrovGalerkinBF_Mat, dim::Integer) -> Int
 
-function Base.size(A::ButterflyFactorizations.FlatPGBF, dim=nothing)
-    if dim === nothing
-        return (A.dim[1], A.dim[2])
-    elseif dim == 1
+Returns the spatial dimensions (rows, columns) of the sparse-matrix global operator.
+"""
+Base.size(A::ButterflyFactorizations.PetrovGalerkinBF_Mat) = A.dim
+
+function Base.size(A::ButterflyFactorizations.PetrovGalerkinBF_Mat, dim::Integer)
+    if dim == 1
         return A.dim[1]
     elseif dim == 2
         return A.dim[2]
     else
-        error("dim must be either 1 or 2")
-    end
-end
-
-function Base.size(A::Adjoint{<:Any,<:ButterflyFactorizations.FlatPGBF}, dim=nothing)
-    P = parent(A)
-    if dim === nothing
-        return (P.dim[2], P.dim[1])
-    elseif dim == 1
-        return P.dim[2]
-    elseif dim == 2
-        return P.dim[1]
-    else
-        error("dim must be either 1 or 2")
-    end
-end
-
-function Base.size(A::ButterflyFactorizations.PetrovGalerkinBF_mats, dim=nothing)
-    if dim === nothing
-        return (A.dim[1], A.dim[2])
-    elseif dim == 1
-        return A.dim[1]
-    elseif dim == 2
-        return A.dim[2]
-    else
-        error("dim must be either 1 or 2")
-    end
-end
-
-function Base.size(
-    A::Adjoint{<:Any,<:ButterflyFactorizations.PetrovGalerkinBF_mats}, dim=nothing
-)
-    P = parent(A)
-    if dim === nothing
-        return (P.dim[2], P.dim[1])
-    elseif dim == 1
-        return P.dim[2]
-    elseif dim == 2
-        return P.dim[1]
-    else
-        error("dim must be either 1 or 2")
-    end
-end
-
-function Base.size(A::AbstractBlockView, dim=nothing)
-    if dim === nothing
-        return A.dim
-    elseif dim == 1
-        return A.dim[1]
-    elseif dim == 2
-        return A.dim[2]
-    else
-        error("dim must be either 1 or 2")
+        throw(ArgumentError("dim must be either 1 or 2"))
     end
 end

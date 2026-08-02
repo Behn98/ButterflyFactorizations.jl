@@ -1,4 +1,3 @@
-import H2Trees: values, center, halfsize, children, isleaf, trialtree, testtree
 """
     blockdiag(blocks::AbstractMatrix...)
 
@@ -56,7 +55,6 @@ with off-diagonal blocks remaining empty (structural zeros).
 """
 function sparse_blockdiag(blocks::AbstractMatrix...)
     isempty(blocks) && return spzeros(ComplexF64, 0, 0)
-
     # Convert blocks to sparse to utilize SparseArrays.blockdiag
     sparse_blocks = map(sparse, blocks)
     return SparseArrays.blockdiag(sparse_blocks...)
@@ -94,6 +92,7 @@ Constructs a block diagonal matrix specifically handling `BlockSparseMatrix` ins
 This function extends the standard block diagonal logic to keep track of the internal
 row and column indices essential for the `BlockSparseMatrix` custom type, allowing
 seamless combination of both regular matrices and block-sparse matrices.
+Uses `reduce` to efficiently merge blocks without recursive splatting allocations.
 
 **Arguments:**
 
@@ -113,26 +112,29 @@ function blocksparse_blockdiag(blocks...)
     get_colidx(b) = hasproperty(b, :colindices) ? b.colindices : [1:size(b, 2)]
     get_blocks(b) = hasproperty(b, :blocks) ? b.blocks : [b]
 
-    if length(blocks) == 1
-        b = blocks[1]
-        return BlockSparseMatrix(get_blocks(b), get_rowidx(b), get_colidx(b), size(b))
-    elseif length(blocks) > 2
-        return blocksparse_blockdiag(
-            blocksparse_blockdiag(blocks[1], blocks[2]), blocks[3:end]...
+    # Initialize the accumulator with the first block standardized
+    first_b = blocks[1]
+    init_matrix = BlockSparseMatrix(
+        get_blocks(first_b), get_rowidx(first_b), get_colidx(first_b), size(first_b)
+    )
+
+    length(blocks) == 1 && return init_matrix
+
+    # Pairwise combiner for reduce
+    function combine(b1, b2)
+        s1 = size(b1)
+        s2 = size(b2)
+
+        rowindices = vcat(get_rowidx(b1), [vs .+ s1[1] for vs in get_rowidx(b2)])
+        colindices = vcat(get_colidx(b1), [vs .+ s1[2] for vs in get_colidx(b2)])
+        combined_blocks = vcat(get_blocks(b1), get_blocks(b2))
+
+        return BlockSparseMatrix(
+            combined_blocks, rowindices, colindices, (s1[1] + s2[1], s1[2] + s2[2])
         )
     end
 
-    s1 = size(blocks[1])
-    s2 = size(blocks[2])
-
-    rowindices = vcat(get_rowidx(blocks[1]), [vs .+ s1[1] for vs in get_rowidx(blocks[2])])
-    colindices = vcat(get_colidx(blocks[1]), [vs .+ s1[2] for vs in get_colidx(blocks[2])])
-
-    combined_blocks = vcat(get_blocks(blocks[1]), get_blocks(blocks[2]))
-
-    return BlockSparseMatrix(
-        combined_blocks, rowindices, colindices, (s1[1] + s2[1], s1[2] + s2[2])
-    )
+    return reduce(combine, blocks[2:end]; init=init_matrix)
 end
 
 """
@@ -143,6 +145,7 @@ Vertically concatenates regular matrices and `BlockSparseMatrix` instances.
 It ensures that the resulting `BlockSparseMatrix` maintains the correct structure
 by appropriately combining the row indices while keeping the column indices
 consistent across the blocks.
+Uses `reduce` to efficiently merge blocks without recursive splatting allocations.
 
 **Arguments:**
 
@@ -161,25 +164,30 @@ function blocksparse_vcat(blocks...)
     get_colidx(b) = hasproperty(b, :colindices) ? b.colindices : [1:size(b, 2)]
     get_blocks(b) = hasproperty(b, :blocks) ? b.blocks : [b]
 
-    if length(blocks) == 1
-        b = blocks[1]
-        return BlockSparseMatrix(get_blocks(b), get_rowidx(b), get_colidx(b), size(b))
-    elseif length(blocks) > 2
-        return blocksparse_vcat(blocksparse_vcat(blocks[1], blocks[2]), blocks[3:end]...)
+    # Initialize the accumulator with the first block standardized
+    first_b = blocks[1]
+    init_matrix = BlockSparseMatrix(
+        get_blocks(first_b), get_rowidx(first_b), get_colidx(first_b), size(first_b)
+    )
+
+    length(blocks) == 1 && return init_matrix
+
+    # Pairwise combiner for reduce
+    function combine(b1, b2)
+        s1 = size(b1)
+        s2 = size(b2)
+        @assert s1[2] == s2[2] "All blocks must have the same number of columns."
+
+        rowindices = vcat(get_rowidx(b1), [vs .+ s1[1] for vs in get_rowidx(b2)])
+        colindices = get_colidx(b1) # colindices remain the same for vcat
+        combined_blocks = vcat(get_blocks(b1), get_blocks(b2))
+
+        return BlockSparseMatrix(
+            combined_blocks, rowindices, colindices, (s1[1] + s2[1], s1[2])
+        )
     end
 
-    s1 = size(blocks[1])
-    s2 = size(blocks[2])
-    @assert s1[2] == s2[2] "All blocks must have the same number of columns."
-
-    rowindices = vcat(get_rowidx(blocks[1]), [vs .+ s1[1] for vs in get_rowidx(blocks[2])])
-    colindices = get_colidx(blocks[1])
-
-    combined_blocks = vcat(get_blocks(blocks[1]), get_blocks(blocks[2]))
-
-    return BlockSparseMatrix(
-        combined_blocks, rowindices, colindices, (s1[1] + s2[1], s1[2])
-    )
+    return reduce(combine, blocks[2:end]; init=init_matrix)
 end
 
 """
@@ -241,9 +249,9 @@ function find_rows_for_column(R::Dict{T,Dict{T,U}}, col_idx::T) where {T,U}
 end
 
 """
-    h2treelevels(tree, root)
+    treelevels(tree, root)
 
-Computes the breath-first hierarchical levels of an `H2Trees.TwoNTree`.
+Computes the breadth-first hierarchical levels of a tree.
 
 Starting from a specified `root` node, it traverses the tree level by level,
 collecting the nodes at each depth.
@@ -252,10 +260,7 @@ collecting the nodes at each depth.
 
   - A `Vector{Vector{Int}}` where each inner vector represents the node IDs at that level.
 """
-function h2treelevels(tree::T, root::Int64) where {T}
-    isleaf = H2Trees.isleaf
-    getchildren = H2Trees.children
-
+function treelevels(tree::T, root::Int64) where {T}
     levels = Vector{Vector{Int}}()
     current = [root]
 
@@ -264,8 +269,8 @@ function h2treelevels(tree::T, root::Int64) where {T}
         next = Int[]
 
         for node in current
-            if !isleaf(tree, node)
-                append!(next, getchildren(tree, node))
+            if !cluster_isleaf(tree, node)
+                append!(next, cluster_children(tree, node))
             end
         end
 
@@ -275,26 +280,35 @@ function h2treelevels(tree::T, root::Int64) where {T}
     return levels
 end
 
-function h2emptynodes(tree::T, root::Int64) where {T}
-    isleaf = H2Trees.isleaf
-    getchildren = H2Trees.children
-    getvalues = H2Trees.values
+"""
+    emptynodes(tree, root)
 
-    # Stores the empty nodes per level
+Traverses the tree level-by-level to identify and collect nodes that contain no physical
+degrees of freedom (DoFs).
+
+**Arguments:**
+
+  - `tree`: The hierarchical block tree.
+  - `root`: The ID of the root node to begin traversal.
+
+**Returns:**
+
+  - A `Vector{Vector{Int}}` where each inner vector contains the IDs of the empty nodes at that level.
+"""
+function emptynodes(tree::T, root::Int64) where {T}
     empty_levels = Vector{Vector{Int}}()
-
     current = [root]
 
     while !isempty(current)
-        # Hitta alla tomma noder på den aktuella nivån
-        empty_current = filter(node -> isempty(getvalues(tree, node)), current)
+        # Find all empty nodes on the current level
+        empty_current = filter(node -> isempty(cluster_values(tree, node)), current)
         push!(empty_levels, empty_current)
 
         next = Int[]
-        # Bygg upp nästa nivå genom att samla alla barn från den nuvarande nivån
+        # Build the next level by collecting all children from the current level
         for node in current
-            if !isleaf(tree, node)
-                append!(next, getchildren(tree, node))
+            if !cluster_isleaf(tree, node)
+                append!(next, cluster_children(tree, node))
             end
         end
 
@@ -305,7 +319,7 @@ function h2emptynodes(tree::T, root::Int64) where {T}
 end
 
 """
-    traverseandpad(H2tree, root)
+    traverseandpad(tree, root)
 
 Extracts the hierarchical levels of a tree and generates "virtual" ghost nodes.
 
@@ -316,98 +330,81 @@ shallow leaf nodes down to the maximum depth of the tree block.
 
 **Arguments:**
 
-  - `H2tree`: The hierarchical block tree.
+  - `tree`: The hierarchical block tree.
   - `root`: The ID of the root node to traverse from.
 
 **Returns:**
 
   - A `Vector{Vector{Int}}` representing the padded tree nodes per level.
 """
-function traverseandpad(H2tree::T, root::Int64) where {T}
-    isleaf = H2Trees.isleaf
-    tree = h2treelevels(H2tree, root)
-    for l in 2:(length(tree) - 1)
-        for node in tree[l]
-            if isleaf(H2tree, node)
-                push!(tree[l + 1], node)
+function traverseandpad(tree::T, root::Int64) where {T}
+    treelvls = treelevels(tree, root)
+    for l in 2:(length(treelvls) - 1)
+        for node in treelvls[l]
+            if cluster_isleaf(tree, node)
+                push!(treelvls[l + 1], node)
             end
         end
     end
-    return tree
+    return treelvls
 end
 
 """
-Abstract base type defining how physical spaces inside the `H2Trees` are ordered.
+    group_by_parents(tree, childkeys, s_o)
+
+Groups a collection of interaction keys (node pairs) by their parent nodes in either
+the source or observer tree.
+
+**Arguments:**
+
+  - `tree`: The hierarchical tree structure.
+  - `childkeys`: An iterable of `(observer_node, source_node)` tuples.
+  - `s_o`: An integer flag indicating which tree to group by (`1` for observer/test, `2` for source/trial).
+
+**Returns:**
+
+  - A `Dict` mapping parent node IDs to a sorted `Vector` of child interaction tuples.
 """
-permute(space, perm) = permute!(copy(space), perm)
-
-abstract type SpaceOrderingStyle end
-
-"""
-    PermuteSpaceInPlace()
-
-A `SpaceOrderingStyle` that permutes the test and trial spaces in place
-according to the permutation derived from the tree leaf structure.
-"""
-struct PermuteSpaceInPlace <: SpaceOrderingStyle end
-function (::PermuteSpaceInPlace)(tree, testspace, trialspace)
-    testperm = permutation(testtree(tree))
-    permute!(testspace, testperm)
-
-    if testspace === trialspace && testtree(tree) === trialtree(tree)
-        return nothing
-    elseif !(testspace === trialspace) && !(testtree(tree) === trialtree(tree))
-        trialperm = permutation(trialtree(tree))
-        permute!(trialspace, trialperm)
-        return nothing
-    else
-        @warn "Risky territory: Permuting trialtree not trialspace."
-        trialperm = permutation(trialtree(tree))
-        return nothing
-    end
-end
-struct PreserveSpaceOrder <: SpaceOrderingStyle end
-function (::PreserveSpaceOrder)(tree, testspace, trialspace)
-    return nothing
-end
-
-function permutation(tree::H2Trees.H2ClusterTree)
-    perm = zeros(Int, H2Trees.numberofvalues(tree))
-    n = 1
-    for leaf in H2Trees.leaves(tree)
-        perm[n:(n + length(H2Trees.values(tree, leaf)) - 1)] = H2Trees.values(tree, leaf)
-        tree.nodes[leaf].data.values .= n:(n + length(H2Trees.values(tree, leaf)) - 1)
-        n += length(H2Trees.values(tree, leaf))
-    end
-    return perm
-end
-
-function group_by_parents(tree, childkeys, s_o::Int) #s_o = 1 for observer, 2 for source
+function group_by_parents(tree, childkeys, s_o::Int)
     parentedgrps = Dict{Int,Vector{Tuple{Int,Int}}}()
     for childkey in childkeys
-        parentnode = H2Trees.parent(tree, childkey[s_o])
+        parentnode = cluster_parent(tree, childkey[s_o])
         if !haskey(parentedgrps, parentnode)
             parentedgrps[parentnode] = Vector{Tuple{Int,Int}}()
         end
         push!(parentedgrps[parentnode], childkey)
     end
+
+    # Sort the child keys for deterministic ordering
     for (parent, keys) in parentedgrps
         sort!(keys)
     end
     return parentedgrps
 end
 
+"""
+    checkequality(trees, treeo)
+
+Verifies if the source (trial) tree and observer (test) tree represent the exact same
+hierarchical clustering of degrees of freedom.
+
+**Returns:**
+
+  - `true` if both trees have identical level structures and contain the exact same indices in all corresponding nodes.
+  - `false` otherwise.
+"""
 function checkequality(trees, treeo)
-    trialt = ButterflyFactorizations.h2treelevels(trees, 1)
-    tstt = ButterflyFactorizations.h2treelevels(treeo, 1)
+    trialt = ButterflyFactorizations.treelevels(trees, 1)
+    tstt = ButterflyFactorizations.treelevels(treeo, 1)
+
     if trialt != tstt
         return false
     end
-    commont = trialt
-    for lvl in commont
+
+    for lvl in trialt
         for node in lvl
-            trialcluster = H2Trees.values(trees, node)
-            tstcluster = H2Trees.values(treeo, node)
+            trialcluster = cluster_values(trees, node)
+            tstcluster = cluster_values(treeo, node)
             if trialcluster != tstcluster
                 return false
             end
@@ -417,196 +414,39 @@ function checkequality(trees, treeo)
     return true
 end
 
-function deep_accumulate_P!(
-    dest::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
-    src::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
-)
-    for (key, mat_src) in src
-        if !haskey(dest, key)
-            dest[key] = copy(mat_src)
-        else
-            println("Overlapping block detected at key: $key")
-            #may not happen --> preserve the existing block and append the new one
-            dest[key] = hcat(dest[key], mat_src)
-        end
-    end
-    return dest
-end
+"""
+    compute_interaction_percentages(nearints, farints, test_tree, trial_tree)
 
-function deep_accumulate_Q!(
-    dest::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
-    src::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
-)
-    for (key, mat_src) in src
-        if !haskey(dest, key)
-            dest[key] = copy(mat_src)
-        else
-            println("Overlapping block detected at key: $key")
-            #may not happen --> preserve the existing block and append the new one
-            dest[key] = vcat(dest[key], mat_src)
-        end
-    end
-    return dest
-end
+Calculates and prints the total percentage of physical matrix entries (DoFs × DoFs)
+that have been categorized as near-field versus far-field.
 
-function deep_accumulate_R!(
-    dest::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}},
-    src::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}};
-    otmap::Dict{Int,Int} = Dict{Int,Int}(),
-    stmap::Dict{Int,Int} = Dict{Int,Int}(),
-)
-    for (node_key, inner_dict_src) in src
-        if haskey(otmap, node_key[1]) && haskey(stmap, node_key[2])
-            new_node_key = (otmap[node_key[1]], stmap[node_key[2]])
-        elseif haskey(otmap, node_key[1])
-            new_node_key = (otmap[node_key[1]], node_key[2])
-        elseif haskey(stmap, node_key[2])
-            new_node_key = (node_key[1], stmap[node_key[2]])
-        else
-            new_node_key = node_key
-        end
-        if !haskey(dest, new_node_key)
-            dest[new_node_key] = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-            for (sub_key, mat_src) in inner_dict_src
-                if haskey(otmap, sub_key[1]) && haskey(stmap, sub_key[2])
-                    new_sub_key = (otmap[sub_key[1]], stmap[sub_key[2]])
-                elseif haskey(otmap, sub_key[1])
-                    new_sub_key = (otmap[sub_key[1]], sub_key[2])
-                elseif haskey(stmap, sub_key[2])
-                    new_sub_key = (sub_key[1], stmap[sub_key[2]])
-                else
-                    new_sub_key = sub_key
-                end
-                dest[new_node_key][new_sub_key] = copy(mat_src)
-            end
-        else
-            # Node key exists, merge the inner mapping level
-            inner_dict_dest = dest[new_node_key]
-            for (sub_key, mat_src) in inner_dict_src
-                if haskey(otmap, sub_key[1]) && haskey(stmap, sub_key[2])
-                    new_sub_key = (otmap[sub_key[1]], stmap[sub_key[2]])
-                elseif haskey(otmap, sub_key[1])
-                    new_sub_key = (otmap[sub_key[1]], sub_key[2])
-                elseif haskey(stmap, sub_key[2])
-                    new_sub_key = (sub_key[1], stmap[sub_key[2]])
-                else
-                    new_sub_key = sub_key
-                end
-                if !haskey(inner_dict_dest, new_sub_key)
-                    inner_dict_dest[new_sub_key] = copy(mat_src)
-                else
-                    println(
-                        "Overlapping block detected at node_key: $new_node_key, sub_key: $new_sub_key",
-                    )
-                    #may not happen --> preserve the existing block and append the new one
-                    blockdiag(inner_dict_dest[new_sub_key], mat_src)
-                end
-            end
-        end
-    end
-    return dest
-end
-
-function treemapping(a::Int, b::Int, tree)
-    mapping = Dict{Int,Int}()
-
-    # Initialize a stack with our starting pair of node IDs
-    stack = [(a, b)]
-
-    while !isempty(stack)
-        curr_a, curr_b = pop!(stack)
-
-        mapping[curr_a] = curr_b
-
-        # Push all paired children onto the stack
-        for (child_a, child_b) in zip(children(tree, curr_a), children(tree, curr_b))
-            push!(stack, (child_a, child_b))
-        end
+This is a highly useful diagnostic tool to verify the efficiency of the admissibility
+condition and the resulting compression potential.
+"""
+function compute_interaction_percentages(nearints, farints, test_tree, trial_tree)
+    near_elements = 0
+    for (snode, onode) in nearints
+        s_dofs = length(cluster_values(trial_tree, snode))
+        o_dofs = length(cluster_values(test_tree, onode))
+        near_elements += s_dofs * o_dofs
     end
 
-    return mapping
-end
-
-function retrievecolspace(
-    rmat::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}
-)
-    colspace = Dict{Tuple{Int,Int},Int}()
-    for (row, inner_dict) in rmat
-        for (col, mat) in inner_dict
-            if !haskey(colspace, col)
-                colspace[col] = size(mat, 2)
-            end
-        end
+    far_elements = 0
+    for (snode, onode) in farints
+        s_dofs = length(cluster_values(trial_tree, snode))
+        o_dofs = length(cluster_values(test_tree, onode))
+        far_elements += s_dofs * o_dofs
     end
 
-    return colspace
-end
-
-function build_supertree(roots::Vector{Int}, tree, init_super_id::Int)
-    N = length(roots)
-
-    # 1. The new Super-Tree structure
-    # Maps a Super-Node ID -> Array of child Super-Node IDs
-    supertree = Dict{Int,Vector{Int}}()
-
-    # 2. The Lifts (Mappings)
-    # An array of N dictionaries.
-    # mappings[i] maps: Original Node ID in Tree i -> Super-Node ID
-    mappings = [Dict{Int,Int}() for _ in 1:N]
-
-    # Counter to generate fresh, unique IDs for the Super-Tree
-    next_super_id = init_super_id
-
-    # Recursive traversal function
-    function traverse(curr_nodes::Vector{Union{Int,Nothing}})
-        # Allocate a new ID for this position in the Super-Tree
-        super_id = next_super_id
-        next_super_id += 1
-
-        # Initialize empty children array for this Super-Node
-        supertree[super_id] = Int[]
-
-        # Record the mapping for any tree that has a real node here
-        for i in 1:N
-            if !isnothing(curr_nodes[i])
-                mappings[i][curr_nodes[i]] = super_id
-            end
-        end
-
-        # Gather all child iterators. If a tree has no node here (nothing),
-        # it provides an empty array of children.
-        all_children = [
-            isnothing(n) ? Int[] : collect(children(tree, n)) for n in curr_nodes
-        ]
-
-        # The union must account for the widest branch at this level across all N trees
-        max_children = maximum(length.(all_children))
-
-        # Traverse downwards for each child index
-        for child_idx in 1:max_children
-            # Build the next layer of nodes to evaluate
-            next_nodes = Vector{Union{Int,Nothing}}(undef, N)
-
-            for i in 1:N
-                # If tree 'i' has a child at this index, grab it. Otherwise, it's a ghost.
-                if child_idx <= length(all_children[i])
-                    next_nodes[i] = all_children[i][child_idx]
-                else
-                    next_nodes[i] = nothing
-                end
-            end
-
-            # Recurse and link the resulting child Super-Node to the current one
-            child_super_id = traverse(next_nodes)
-            push!(supertree[super_id], child_super_id)
-        end
-
-        return super_id
-    end
-
-    # Initialize the traversal with our N roots
-    initial_nodes = Union{Int,Nothing}[roots[i] for i in 1:N]
-    root_super_id = traverse(initial_nodes)
-    nodaloffset = next_super_id - 1
-    return supertree, mappings, root_super_id, nodaloffset
+    total_elements = near_elements + far_elements
+    println(
+        "True Near-field fraction: ",
+        round(100 * near_elements / total_elements; digits=2),
+        "% of matrix entries",
+    )
+    return println(
+        "True Far-field fraction:  ",
+        round(100 * far_elements / total_elements; digits=2),
+        "% of matrix entries",
+    )
 end
