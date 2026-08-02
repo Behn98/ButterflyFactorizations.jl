@@ -72,8 +72,8 @@ end
 The core mathematical container for a single factorized block interaction between
 a far-field source and observer cluster.
 
-The factorization is represented as a sequence of sparse block matrices:
-\$\$ M \\approx P \\cdot R_L \\cdot R_{L-1} \\cdots R_1 \\cdot Q \$\$
+The factorization is represented as a sequence of sparse block matrices,
+approximately `M ≈ P * R_L * R_{L-1} * ... * R_1 * Q`.
 
 The inner constructor automatically wires up the `in_ptr` and `out_ptr` integers
 for every block. This transforms the complex hierarchical tree traversal into a

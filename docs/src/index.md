@@ -10,6 +10,7 @@ Documentation for [ButterflyFactorizations](https://github.com/Behn98/ButterflyF
 ```@docs
 ButterflyFactorizations
 ButterflyFactorization
+ButterflyFactorization_Mat
 PetrovGalerkinBF
 PetrovGalerkinBF_Mat
 ```
@@ -21,11 +22,13 @@ assemble_BF_Mat
 PartialQR
 ```
 
-## Workspaces & Memory Management
+## Workspaces & Internal Structures
 
 ```@docs
 ButterflyWorkspace
 ThreadButterflyWorkspace
+ButterflyBlock
+ButterflyLevel
 ```
 
 ## Algebra & Recompression
