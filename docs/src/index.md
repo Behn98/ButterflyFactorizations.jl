@@ -19,7 +19,6 @@ PetrovGalerkinBF_Mat
 assemble_BF
 assemble_BF_Mat
 PartialQR
-BEASTKernelMatrix
 ```
 
 ## Workspaces & Memory Management
@@ -27,7 +26,6 @@ BEASTKernelMatrix
 ```@docs
 ButterflyWorkspace
 ThreadButterflyWorkspace
-PartialQRWorkspace
 ```
 
 ## Algebra & Recompression
