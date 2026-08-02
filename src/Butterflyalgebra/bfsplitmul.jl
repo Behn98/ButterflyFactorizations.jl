@@ -2,7 +2,7 @@
     splitmulbf(butterflycluster_init::Matrix{BF}, higherkBF_init ::ButterflyFactorization, τ::Float64) -> BF
 
 Compute the operator product of a hierarchically divided matrix cluster of Butterflies
-(level \$k\$) and a single, larger Butterfly Factorization block (level \$k+1\$) using
+(level k) and a single, larger Butterfly Factorization block (level k+1) using
 Heldring's block-splitting algorithm.
 
 This function addresses the architectural challenge of multiplying non-uniform hierarchical
