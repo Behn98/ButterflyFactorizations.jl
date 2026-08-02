@@ -12,7 +12,6 @@ Documentation for [ButterflyFactorizations](https://github.com/Behn98/ButterflyF
 ButterflyFactorizations
 PetrovGalerkinBF
 PetrovGalerkinBF_Mat
-FlatBF
 assemble_BF
 assemble_BF_Mat
 PartialQR
@@ -25,8 +24,5 @@ BEASTKernelMatrix
 mulBFs
 add_eqbfs
 recompress_BF
-apply_BF
-splitmulbf
-flattenmatrix
 ```
 

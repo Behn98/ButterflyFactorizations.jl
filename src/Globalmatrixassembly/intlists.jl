@@ -1,16 +1,26 @@
 """
-    nearandfar(tree::H2Trees.BlockTree, α)
+    nearandfar(tree, admissible; kwargs...)
+    nearandfar(tree, α::Float64; kwargs...)
 
 Traverses a block-tree and categorizes interactions between source and observer
 clusters into "near-field" and "far-field" lists.
 
 This function acts as the entry point for the dual-tree traversal algorithm.
-It uses the admissibility condition (`isFarFunctor`) to separate interactions.
+It uses the admissibility condition (e.g., `isFarFunctor`) to separate interactions.
+If a raw `Float64` is provided instead of a functor, it automatically wraps it
+in an `isFarFunctor`.
 
 **Arguments:**
 
   - `tree`: A strictly coupled `BlockTree` containing both the test and trial trees.
-  - `α`: The geometric separation parameter.
+  - `admissible`: The functor (or float `α`) used to evaluate geometric separation.
+
+**Keyword Arguments:**
+
+  - `minbflvl`: The minimum allowable depth for far-field compression (default: 3).
+  - `unbalancedints`: If `true`, allows splitting only the functionally larger node.
+  - `leafcomp`: If `false`, leaf nodes will be forced to near-field even if admissible.
+  - `leafimbalance`: If `true`, allows interaction between a leaf and a non-leaf node.
 
 **Returns:**
 
@@ -24,8 +34,10 @@ function nearandfar(
     tsttree = cluster_testtree(tree)
     node_o = cluster_root(tsttree)
     node_s = cluster_root(srctree)
+
     nearinteractions = Vector{Tuple{Int64,Int64}}()
     farinteractions = Vector{Tuple{Int64,Int64}}()
+
     totaltreeheight = min(length(cluster_levels(tsttree)), length(cluster_levels(srctree)))
 
     process_nodes!(
@@ -42,40 +54,23 @@ function nearandfar(
         leafcomp=leafcomp,
         leafimbalance=leafimbalance,
     )
+
     return farinteractions, nearinteractions
 end
 
-#Backwards-compatible wrapper that automatically creates `isFarFunctor`
-# if a Float64 (α) is passed instead.
+# Backwards-compatible wrapper that automatically creates `isFarFunctor`
 function nearandfar(tree, α::Float64; kwargs...)
     return nearandfar(tree, isFarFunctor(α); kwargs...)
 end
 
 """
-    process_nodes!(srctree, tsttree, node_o, node_s, admissible, farinteractions, nearinteractions; leafcomp=true, unbalancedints=true)
+    process_nodes!(srctree, tsttree, node_o, node_s, admissible, farinteractions, nearinteractions, currentheight; kwargs...)
 
 Recursively analyzes the interaction between a source node and an observer node.
 
-  - If the nodes are `admissible` (well-separated), they are added to the `farinteractions` list.
-  - If they are not admissible but both are leaf nodes, their direct mesh indices are
-    extracted and appended to the near-field lists (`nearsv` and `nearov`).
-  - If they are not admissible and can be split, the functionally larger node is subdivided
-    into its children, and the process repeats.
-
-**Arguments:**
-
-  - `srctree`, `tsttree`: The tree hierarchies.
-
-  - `node_o`, `node_s`: Current observer and source node IDs.
-
-  - `admissible`: The `isFarFunctor` used to check geometric separation.
-
-  - `farinteractions`: Accumulator dictionary for far-field node pairs.
-
-  - `nearinteractions`: Accumulator vector for near-field node pairs.
-
-      + `leafcomp`: If `false`, leaf nodes will not be compressed even if admissible.
-      + `unbalancedints`: If `false`, both nodes must be split simultaneously, even if one is larger.
+  - If the nodes are `admissible` (well-separated), their IDs are added to `farinteractions`.
+  - If they are not admissible but hit recursion limits (e.g., both are leaves, or `minbflvl` is reached), they are added to `nearinteractions`.
+  - If they are not admissible and can be split, they are subdivided into their children and the process repeats.
 """
 function process_nodes!(
     srctree::T2,
@@ -116,13 +111,15 @@ function process_nodes!(
         return nothing
     end
 
-    # 4. Non-Admissible Fallbacks (Must we split, or are we forced to near-field?)
+    # 4. Non-Admissible Fallbacks
     if (both_leaves || (any_leaf && !leafimbalance))
         push!(nearinteractions, (node_o, node_s))
         return nothing
     end
-    # split the larger node
+
+    # 5. Split and Recurse
     if unbalancedints
+        # Split the functionally larger node
         if (
             largernode(tsttree, srctree, node_o, node_s) && !cluster_isleaf(tsttree, node_o)
         ) || cluster_isleaf(srctree, node_s)
@@ -135,7 +132,7 @@ function process_nodes!(
                     admissible,
                     farinteractions,
                     nearinteractions,
-                    currentheight-1;
+                    currentheight - 1;
                     minbflvl=minbflvl,
                     leafcomp=leafcomp,
                     unbalancedints=unbalancedints,
@@ -152,7 +149,7 @@ function process_nodes!(
                     admissible,
                     farinteractions,
                     nearinteractions,
-                    currentheight-1;
+                    currentheight - 1;
                     minbflvl=minbflvl,
                     leafcomp=leafcomp,
                     unbalancedints=unbalancedints,
@@ -161,6 +158,7 @@ function process_nodes!(
             end
         end
     else
+        # Balanced splitting
         if cluster_isleaf(tsttree, node_o)
             for child_s in cluster_children(srctree, node_s)
                 process_nodes!(
@@ -171,7 +169,7 @@ function process_nodes!(
                     admissible,
                     farinteractions,
                     nearinteractions,
-                    currentheight-1;
+                    currentheight - 1;
                     minbflvl=minbflvl,
                     leafcomp=leafcomp,
                     unbalancedints=unbalancedints,
@@ -188,7 +186,7 @@ function process_nodes!(
                     admissible,
                     farinteractions,
                     nearinteractions,
-                    currentheight-1;
+                    currentheight - 1;
                     minbflvl=minbflvl,
                     leafcomp=leafcomp,
                     unbalancedints=unbalancedints,
@@ -196,7 +194,7 @@ function process_nodes!(
                 )
             end
         else
-            for child_o in collect(cluster_children(tsttree, node_o))
+            for child_o in cluster_children(tsttree, node_o)
                 for child_s in cluster_children(srctree, node_s)
                     process_nodes!(
                         srctree,
@@ -206,7 +204,7 @@ function process_nodes!(
                         admissible,
                         farinteractions,
                         nearinteractions,
-                        currentheight-1;
+                        currentheight - 1;
                         minbflvl=minbflvl,
                         leafcomp=leafcomp,
                         unbalancedints=unbalancedints,

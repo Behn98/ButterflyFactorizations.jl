@@ -1,6 +1,15 @@
 import LinearAlgebra: mul!, adjoint, transpose
 
-# Helper function to flip domain/codomain and transform matrix data
+"""
+    transform_block(b::ButterflyBlock{T}, op) where {T}
+
+Applies a linear algebra operation (like `adjoint` or `transpose`) to a single
+`ButterflyBlock`.
+
+It structurally swaps the input and output routing keys to reflect the inverted
+domain and codomain, and mathematically applies the operation to the underlying
+matrix data. Identity blocks (`UniformScaling`) are passed through safely.
+"""
 function transform_block(b::ButterflyBlock{T}, op) where {T}
     # Handle UniformScaling (Identity): I' = I, transpose(I) = I
     new_data = b.data isa UniformScaling ? b.data : Matrix(op(b.data))
@@ -14,6 +23,12 @@ function transform_block(b::ButterflyBlock{T}, op) where {T}
     )
 end
 
+"""
+    reverse_tree(blktree)
+
+Reverses a coupled block-tree by swapping the source (trial) and observer (test) trees.
+Required for mathematically transposing or taking the adjoint of a Butterfly Factorization.
+"""
 function reverse_tree(blktree)
     # Reverse the block tree by swapping source and target trees
     return cluster_blktree(cluster_trialtree(blktree), cluster_testtree(blktree))
@@ -22,7 +37,8 @@ end
 """
     Base.adjoint(BF::ButterflyFactorization)
 
-Explicitly constructs the Adjoint (Hermitian transpose) ButterflyFactorization.
+Explicitly constructs the Adjoint (Hermitian transpose) of a flat-array ButterflyFactorization.
+Reverses the cascaded order of the factors and computes the adjoint of every block.
 """
 function Base.adjoint(BF::ButterflyFactorization{T,M}) where {T,M}
     # 1. P_adj becomes Q'
@@ -37,8 +53,6 @@ function Base.adjoint(BF::ButterflyFactorization{T,M}) where {T,M}
         orig_level = BF.R[L_minus_1 - l + 1]
 
         new_blocks = [transform_block(b, adjoint) for b in orig_level.blocks]
-        #sort!(new_blocks; by=block_key)
-
         R_adj[l] = ButterflyLevel(new_blocks)
     end
 
@@ -51,7 +65,8 @@ end
 """
     Base.transpose(BF::ButterflyFactorization)
 
-Explicitly constructs the Transpose ButterflyFactorization.
+Explicitly constructs the Transpose of a flat-array ButterflyFactorization.
+Reverses the cascaded order of the factors and computes the transpose of every block.
 """
 function Base.transpose(BF::ButterflyFactorization{T,M}) where {T,M}
     Q_trans = [transform_block(b, transpose) for b in BF.P]
@@ -63,8 +78,6 @@ function Base.transpose(BF::ButterflyFactorization{T,M}) where {T,M}
         orig_level = BF.R[L_minus_1 - l + 1]
 
         new_blocks = [transform_block(b, transpose) for b in orig_level.blocks]
-        #sort!(new_blocks; by=block_key)
-
         R_trans[l] = ButterflyLevel(new_blocks)
     end
 
@@ -75,30 +88,40 @@ function Base.transpose(BF::ButterflyFactorization{T,M}) where {T,M}
     )
 end
 
-function Base.adjoint(t::ButterflyFactorizations.ButterflyFactorization_Mat)
+"""
+    Base.adjoint(t::ButterflyFactorization_Mat)
+
+Explicitly constructs the Adjoint (Hermitian transpose) of a sparse-matrix ButterflyFactorization.
+"""
+function Base.adjoint(t::ButterflyFactorizations.ButterflyFactorization_Mat{T}) where {T}
     return ButterflyFactorization_Mat(
-        t.P',                                                      # Q becomes P'
-        AbstractMatrix{ComplexF64}[r' for r in Iterators.reverse(t.R)], # Reverse and map R
-        t.Q',                                                      # P becomes Q'
-        t.NO,                                                      # NS and NO swap roles
-        t.NS,
+        t.P',                                           # Q becomes P'
+        AbstractMatrix{T}[r' for r in Iterators.reverse(t.R)], # Reverse and map R
+        t.Q',                                           # P becomes Q'
+        t.no,                                           # ns and no swap roles
+        t.ns,
         t.k,
         t.τ,
-        t.PermQ,                                                   # Permutations swap roles
-        t.PermP,
+        t.permQ,                                        # Permutations swap roles
+        t.permP,
     )
 end
 
-function Base.transpose(t::ButterflyFactorizations.ButterflyFactorization_Mat)
+"""
+    Base.transpose(t::ButterflyFactorization_Mat)
+
+Explicitly constructs the Transpose of a sparse-matrix ButterflyFactorization.
+"""
+function Base.transpose(t::ButterflyFactorizations.ButterflyFactorization_Mat{T}) where {T}
     return ButterflyFactorization_Mat(
         transpose(t.P),
-        AbstractMatrix{ComplexF64}[transpose(r) for r in Iterators.reverse(t.R)],
+        AbstractMatrix{T}[transpose(r) for r in Iterators.reverse(t.R)],
         transpose(t.Q),
-        t.NO,
-        t.NS,
+        t.no,
+        t.ns,
         t.k,
         t.τ,
-        t.PermQ,
-        t.PermP,
+        t.permQ,
+        t.permP,
     )
 end

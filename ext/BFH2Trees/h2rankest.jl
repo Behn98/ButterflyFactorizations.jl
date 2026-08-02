@@ -1,7 +1,14 @@
+"""
+    estimate_rank_3d(k, trialT::H2ClusterTree, testT::H2ClusterTree, Snode, Onode, ε; kwargs...)
+
+Extends the core rank estimation logic to natively unpack `H2Trees.H2ClusterTree` structures.
+Extracts the macroscopic centers and calibrated radii to predict the mathematical rank
+required to hit the tolerance `ε`.
+"""
 function ButterflyFactorizations.estimate_rank_3d(
     k,
-    trialT::BisectionTree,
-    testT::BisectionTree,
+    trialT::H2Trees.H2ClusterTree, # Generalized from BisectionTree to handle all H2Trees
+    testT::H2Trees.H2ClusterTree,
     Snode::Int,
     Onode::Int,
     ε::Float64;
@@ -17,7 +24,7 @@ function ButterflyFactorizations.estimate_rank_3d(
     # 1. Use the actual center-to-center distance!
     d = norm(c_s .- c_o)
 
-    # Safe-guard against origin collisions, but NO sphere-gap subtraction!
+    # Safe-guard against origin collisions, NO sphere-gap subtraction!
     d_safe = max(d, 1e-4)
 
     # 2. Isolated predictor variables using pure macroscopic distance

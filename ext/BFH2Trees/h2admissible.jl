@@ -1,26 +1,18 @@
 """
     (t::isFarFunctor)(srctree, tsttree, snode, onode)
 
-Evaluates the admissibility condition between a source node and an observer node.
+Evaluates the admissibility condition between a source node and an observer node for `TwoNTree` and `BisectionTree`.
 
-The rule checks if the distance between the bounding box centers is sufficiently
-larger than the sum of their physical sizes, scaled by the separation parameter `α`
-and the maximum half-size `W` of the two clusters.
-
-**Arguments:**
-
-  - `srctree`: The tree structure containing source (trial) clusters.
-  - `tsttree`: The tree structure containing observer (test) clusters.
-  - `snode`: The ID of the source node to evaluate.
-  - `onode`: The ID of the observer node to evaluate.
-
-**Returns:**
-
-  - `true` if the nodes are well-separated (admissible for far-field compression).
-  - `false` if they are too close (must be treated as near-field or split further).
+The rule checks if the distance between the bounding boxes is sufficiently larger
+than the sum of their physical sizes, scaled by the separation parameter `α`
+and the maximum half-size `W` of the two clusters. Contains a singularity interceptor
+to prevent zero-volume node overlaps from blowing up integral evaluations.
 """
 function (t::ButterflyFactorizations.isFarFunctor)(
-    srctree::H2Trees.TwoNTree, tsttree::H2Trees.TwoNTree, snode::Int, onode::Int
+    srctree::Union{H2Trees.TwoNTree,H2Trees.BisectionTree},
+    tsttree::Union{H2Trees.TwoNTree,H2Trees.BisectionTree},
+    snode::Int,
+    onode::Int,
 )
     ocenter = ButterflyFactorizations.cluster_center(tsttree, onode)
     olength = ButterflyFactorizations.cluster_radius(tsttree, onode)
@@ -30,21 +22,28 @@ function (t::ButterflyFactorizations.isFarFunctor)(
     W = max(slength, olength)
     target_dist = t.α * W
 
-    # 1. Fast Axis-Aligned Bounding Box (AABB) Distance
-    # Calculate exact distance between the two boxes
+    # Fast Axis-Aligned Bounding Box (AABB) Distance
     mind_sq = 0.0
     for i in 1:3
-        # Distance between intervals along axis i
         dist_axis = abs(ocenter[i] - scenter[i]) - (slength + olength)
         if dist_axis > 0.0
             mind_sq += dist_axis^2
         end
     end
 
-    # If the closest points of the cubes are further than α * W, they are far-field
+    # 🚀 SINGULARITY INTERCEPTOR: Force physically touching nodes to near-field
+    if mind_sq < 1e-10
+        return false
+    end
+
     return sqrt(mind_sq) > target_dist
 end
 
+"""
+    (t::isFarFunctor)(srctree::BoundingBallTree, tsttree::BoundingBallTree, snode, onode)
+
+Evaluates standard H-matrix admissibility for bounding ball clusters based strictly on center-to-center distance.
+"""
 function (t::ButterflyFactorizations.isFarFunctor)(
     srctree::H2Trees.BoundingBallTree,
     tsttree::H2Trees.BoundingBallTree,
@@ -56,44 +55,22 @@ function (t::ButterflyFactorizations.isFarFunctor)(
     olength = ButterflyFactorizations.cluster_radius(tsttree, onode)
     slength = ButterflyFactorizations.cluster_radius(srctree, snode)
 
-    #dist = sqrt(
-    #    (scent[1]-ocenter[1])^2 + (scenter[2] - ocenter[2])^2 + (scenter[3] - ocenter[3])^2
-    #)
     dist = norm(scenter - ocenter)
-    # If you want standard H-matrix condition:
     W = max(slength, olength)
-    return dist - (olength + slength) > t.α * W
 
-    # OR: If doing pure Butterfly and needing a relative gap condition, use:
-    # return dist > (1 + t.α) * (olength + slength)
-end
-
-function (t::ButterflyFactorizations.isFarFunctor)(
-    srctree::H2Trees.BisectionTree, tsttree::H2Trees.BisectionTree, snode::Int, onode::Int
-)
-    ocenter = ButterflyFactorizations.cluster_center(tsttree, onode)
-    olength = ButterflyFactorizations.cluster_radius(tsttree, onode)
-    scenter = ButterflyFactorizations.cluster_center(srctree, snode)
-    slength = ButterflyFactorizations.cluster_radius(srctree, snode)
-
-    W = max(slength, olength)
-    target_dist = t.α * W
-
-    # 1. Fast Axis-Aligned Bounding Box (AABB) Distance
-    # Calculate exact distance between the two boxes
-    mind_sq = 0.0
-    for i in 1:3
-        # Distance between intervals along axis i
-        dist_axis = abs(ocenter[i] - scenter[i]) - (slength + olength)
-        if dist_axis > 0.0
-            mind_sq += dist_axis^2
-        end
+    if dist < 1e-5
+        return false
     end
 
-    # If the closest points of the cubes are further than α * W, they are far-field
-    return sqrt(mind_sq) > target_dist
+    return dist - (olength + slength) > t.α * W
 end
 
+"""
+    (t::CenterDistanceAdmissibility)(srctree, tsttree, snode, onode)
+
+An alternative admissibility condition relying entirely on the macroscopic center-to-center
+distance, rendering it immune to overlapping origin traps.
+"""
 function (t::ButterflyFactorizations.CenterDistanceAdmissibility)(
     srctree::H2Trees.BisectionTree, tsttree::H2Trees.BisectionTree, snode::Int, onode::Int
 )
@@ -103,9 +80,12 @@ function (t::ButterflyFactorizations.CenterDistanceAdmissibility)(
     olength = ButterflyFactorizations.cluster_radius(tsttree, onode)
     slength = ButterflyFactorizations.cluster_radius(srctree, snode)
 
-    # 1. Center-to-center distance (Immune to the origin-overlap trap!)
     dist_centers = norm(scenter - ocenter)
 
-    # 2. Standard spatial condition
+    # 🚀 SINGULARITY INTERCEPTOR
+    if dist_centers < 1e-5
+        return false
+    end
+
     return dist_centers > t.β * (slength + olength)
 end

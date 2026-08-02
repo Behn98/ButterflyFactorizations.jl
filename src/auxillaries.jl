@@ -55,7 +55,6 @@ with off-diagonal blocks remaining empty (structural zeros).
 """
 function sparse_blockdiag(blocks::AbstractMatrix...)
     isempty(blocks) && return spzeros(ComplexF64, 0, 0)
-
     # Convert blocks to sparse to utilize SparseArrays.blockdiag
     sparse_blocks = map(sparse, blocks)
     return SparseArrays.blockdiag(sparse_blocks...)
@@ -93,6 +92,7 @@ Constructs a block diagonal matrix specifically handling `BlockSparseMatrix` ins
 This function extends the standard block diagonal logic to keep track of the internal
 row and column indices essential for the `BlockSparseMatrix` custom type, allowing
 seamless combination of both regular matrices and block-sparse matrices.
+Uses `reduce` to efficiently merge blocks without recursive splatting allocations.
 
 **Arguments:**
 
@@ -112,26 +112,29 @@ function blocksparse_blockdiag(blocks...)
     get_colidx(b) = hasproperty(b, :colindices) ? b.colindices : [1:size(b, 2)]
     get_blocks(b) = hasproperty(b, :blocks) ? b.blocks : [b]
 
-    if length(blocks) == 1
-        b = blocks[1]
-        return BlockSparseMatrix(get_blocks(b), get_rowidx(b), get_colidx(b), size(b))
-    elseif length(blocks) > 2
-        return blocksparse_blockdiag(
-            blocksparse_blockdiag(blocks[1], blocks[2]), blocks[3:end]...
+    # Initialize the accumulator with the first block standardized
+    first_b = blocks[1]
+    init_matrix = BlockSparseMatrix(
+        get_blocks(first_b), get_rowidx(first_b), get_colidx(first_b), size(first_b)
+    )
+
+    length(blocks) == 1 && return init_matrix
+
+    # Pairwise combiner for reduce
+    function combine(b1, b2)
+        s1 = size(b1)
+        s2 = size(b2)
+
+        rowindices = vcat(get_rowidx(b1), [vs .+ s1[1] for vs in get_rowidx(b2)])
+        colindices = vcat(get_colidx(b1), [vs .+ s1[2] for vs in get_colidx(b2)])
+        combined_blocks = vcat(get_blocks(b1), get_blocks(b2))
+
+        return BlockSparseMatrix(
+            combined_blocks, rowindices, colindices, (s1[1] + s2[1], s1[2] + s2[2])
         )
     end
 
-    s1 = size(blocks[1])
-    s2 = size(blocks[2])
-
-    rowindices = vcat(get_rowidx(blocks[1]), [vs .+ s1[1] for vs in get_rowidx(blocks[2])])
-    colindices = vcat(get_colidx(blocks[1]), [vs .+ s1[2] for vs in get_colidx(blocks[2])])
-
-    combined_blocks = vcat(get_blocks(blocks[1]), get_blocks(blocks[2]))
-
-    return BlockSparseMatrix(
-        combined_blocks, rowindices, colindices, (s1[1] + s2[1], s1[2] + s2[2])
-    )
+    return reduce(combine, blocks[2:end]; init=init_matrix)
 end
 
 """
@@ -142,6 +145,7 @@ Vertically concatenates regular matrices and `BlockSparseMatrix` instances.
 It ensures that the resulting `BlockSparseMatrix` maintains the correct structure
 by appropriately combining the row indices while keeping the column indices
 consistent across the blocks.
+Uses `reduce` to efficiently merge blocks without recursive splatting allocations.
 
 **Arguments:**
 
@@ -160,25 +164,30 @@ function blocksparse_vcat(blocks...)
     get_colidx(b) = hasproperty(b, :colindices) ? b.colindices : [1:size(b, 2)]
     get_blocks(b) = hasproperty(b, :blocks) ? b.blocks : [b]
 
-    if length(blocks) == 1
-        b = blocks[1]
-        return BlockSparseMatrix(get_blocks(b), get_rowidx(b), get_colidx(b), size(b))
-    elseif length(blocks) > 2
-        return blocksparse_vcat(blocksparse_vcat(blocks[1], blocks[2]), blocks[3:end]...)
+    # Initialize the accumulator with the first block standardized
+    first_b = blocks[1]
+    init_matrix = BlockSparseMatrix(
+        get_blocks(first_b), get_rowidx(first_b), get_colidx(first_b), size(first_b)
+    )
+
+    length(blocks) == 1 && return init_matrix
+
+    # Pairwise combiner for reduce
+    function combine(b1, b2)
+        s1 = size(b1)
+        s2 = size(b2)
+        @assert s1[2] == s2[2] "All blocks must have the same number of columns."
+
+        rowindices = vcat(get_rowidx(b1), [vs .+ s1[1] for vs in get_rowidx(b2)])
+        colindices = get_colidx(b1) # colindices remain the same for vcat
+        combined_blocks = vcat(get_blocks(b1), get_blocks(b2))
+
+        return BlockSparseMatrix(
+            combined_blocks, rowindices, colindices, (s1[1] + s2[1], s1[2])
+        )
     end
 
-    s1 = size(blocks[1])
-    s2 = size(blocks[2])
-    @assert s1[2] == s2[2] "All blocks must have the same number of columns."
-
-    rowindices = vcat(get_rowidx(blocks[1]), [vs .+ s1[1] for vs in get_rowidx(blocks[2])])
-    colindices = get_colidx(blocks[1])
-
-    combined_blocks = vcat(get_blocks(blocks[1]), get_blocks(blocks[2]))
-
-    return BlockSparseMatrix(
-        combined_blocks, rowindices, colindices, (s1[1] + s2[1], s1[2])
-    )
+    return reduce(combine, blocks[2:end]; init=init_matrix)
 end
 
 """
@@ -242,7 +251,7 @@ end
 """
     treelevels(tree, root)
 
-Computes the breath-first hierarchical levels of an tree.
+Computes the breadth-first hierarchical levels of a tree.
 
 Starting from a specified `root` node, it traverses the tree level by level,
 collecting the nodes at each depth.
@@ -271,20 +280,32 @@ function treelevels(tree::T, root::Int64) where {T}
     return levels
 end
 
+"""
+    emptynodes(tree, root)
+
+Traverses the tree level-by-level to identify and collect nodes that contain no physical
+degrees of freedom (DoFs).
+
+**Arguments:**
+
+  - `tree`: The hierarchical block tree.
+  - `root`: The ID of the root node to begin traversal.
+
+**Returns:**
+
+  - A `Vector{Vector{Int}}` where each inner vector contains the IDs of the empty nodes at that level.
+"""
 function emptynodes(tree::T, root::Int64) where {T}
-
-    # Stores the empty nodes per level
     empty_levels = Vector{Vector{Int}}()
-
     current = [root]
 
     while !isempty(current)
-        # Hitta alla tomma noder på den aktuella nivån
+        # Find all empty nodes on the current level
         empty_current = filter(node -> isempty(cluster_values(tree, node)), current)
         push!(empty_levels, empty_current)
 
         next = Int[]
-        # Bygg upp nästa nivå genom att samla alla barn från den nuvarande nivån
+        # Build the next level by collecting all children from the current level
         for node in current
             if !cluster_isleaf(tree, node)
                 append!(next, cluster_children(tree, node))
@@ -328,7 +349,23 @@ function traverseandpad(tree::T, root::Int64) where {T}
     return treelvls
 end
 
-function group_by_parents(tree, childkeys, s_o::Int) #s_o = 1 for observer, 2 for source
+"""
+    group_by_parents(tree, childkeys, s_o)
+
+Groups a collection of interaction keys (node pairs) by their parent nodes in either
+the source or observer tree.
+
+**Arguments:**
+
+  - `tree`: The hierarchical tree structure.
+  - `childkeys`: An iterable of `(observer_node, source_node)` tuples.
+  - `s_o`: An integer flag indicating which tree to group by (`1` for observer/test, `2` for source/trial).
+
+**Returns:**
+
+  - A `Dict` mapping parent node IDs to a sorted `Vector` of child interaction tuples.
+"""
+function group_by_parents(tree, childkeys, s_o::Int)
     parentedgrps = Dict{Int,Vector{Tuple{Int,Int}}}()
     for childkey in childkeys
         parentnode = cluster_parent(tree, childkey[s_o])
@@ -337,20 +374,34 @@ function group_by_parents(tree, childkeys, s_o::Int) #s_o = 1 for observer, 2 fo
         end
         push!(parentedgrps[parentnode], childkey)
     end
+
+    # Sort the child keys for deterministic ordering
     for (parent, keys) in parentedgrps
         sort!(keys)
     end
     return parentedgrps
 end
 
+"""
+    checkequality(trees, treeo)
+
+Verifies if the source (trial) tree and observer (test) tree represent the exact same
+hierarchical clustering of degrees of freedom.
+
+**Returns:**
+
+  - `true` if both trees have identical level structures and contain the exact same indices in all corresponding nodes.
+  - `false` otherwise.
+"""
 function checkequality(trees, treeo)
     trialt = ButterflyFactorizations.treelevels(trees, 1)
     tstt = ButterflyFactorizations.treelevels(treeo, 1)
+
     if trialt != tstt
         return false
     end
-    commont = trialt
-    for lvl in commont
+
+    for lvl in trialt
         for node in lvl
             trialcluster = cluster_values(trees, node)
             tstcluster = cluster_values(treeo, node)
@@ -363,21 +414,15 @@ function checkequality(trees, treeo)
     return true
 end
 
-function retrievecolspace(
-    rmat::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}}
-)
-    colspace = Dict{Tuple{Int,Int},Int}()
-    for (row, inner_dict) in rmat
-        for (col, mat) in inner_dict
-            if !haskey(colspace, col)
-                colspace[col] = size(mat, 2)
-            end
-        end
-    end
+"""
+    compute_interaction_percentages(nearints, farints, test_tree, trial_tree)
 
-    return colspace
-end
+Calculates and prints the total percentage of physical matrix entries (DoFs × DoFs)
+that have been categorized as near-field versus far-field.
 
+This is a highly useful diagnostic tool to verify the efficiency of the admissibility
+condition and the resulting compression potential.
+"""
 function compute_interaction_percentages(nearints, farints, test_tree, trial_tree)
     near_elements = 0
     for (snode, onode) in nearints

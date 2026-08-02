@@ -1,3 +1,10 @@
+"""
+    fastkey(s::Int, o::Int) -> Int
+
+Generates a unique, highly efficient 64-bit integer key for a given source (`s`) and
+observer (`o`) node pair using bitwise shifting. This avoids the allocation overhead
+of using `Tuple{Int, Int}` as dictionary keys during assembly.
+"""
 @inline function fastkey(s::Int, o::Int)::Int
     return (s << 32) | (o & 0xFFFFFFFF)
 end
@@ -6,38 +13,40 @@ end
 # Main Assembly Routine
 # ------------------------------------------------------------------
 """
-    assemble_BF(kernelmatrix, blktree, NO, NS, k, τ; Compressor=PartialQR())
+    assemble_BF(kernelmatrix, blktree, no, ns, k, τ; kwargs...)
 
 Constructs the Butterfly Factorization for a given block in a **dictionary format**.
 
 This subroutine traverses the H2 tree structure from the leaf level moving up to the root of
 the source tree, and to the leaves of the observer tree. It computes the low-rank
-approximations to build the `Q`, `R`, and `P` factors as dictionaries. It also maps the
-necessary index permutations to allow for correct, independent Matrix-Vector (MV) products
-without permanently storing the tree.
+approximations to build the `Q`, `R`, and `P` factors.
+
+To bound the global approximation error, the user-provided tolerance `τ` is internally
+scaled by the maximum tree depth `L` (`τ / L`) to account for error accumulation across
+the cascaded factor multiplications.
 
 **Arguments:**
 
   - `kernelmatrix`: Function computing matrix entries for specified row/column indices.
   - `blktree`: The paired source-observer tree structure.
-  - `NO`, `NS`: The root IDs of the observer (test) and source (trial) spaces.
-  - `k`, `τ`: Wavenumber (crucial for rank estimation) and precision tolerance.
-  - `compressor`: Compression scheme for low-rank blocks (default: `PartialQR`).
-  - `scheduler`: Threading scheduler for parallel execution (default: `SerialScheduler`).
+  - `no`, `ns`: The root IDs of the observer (test) and source (trial) spaces.
+  - `k`, `τ`: Wavenumber and relative precision tolerance.
 
-**Why Dictionary format?** It is extremely memory efficient because it avoids the overhead
-of saving nonzero entry indices required by sparse matrices. It is deeply intuitive, makes
-algebraic manipulation (like butterfly multiplication or summation) flexible, and preserves
-the semantic structure other than a matrix format. It is ideal when still working with the
-tree structure is desired, such as in the case of recompression or algebraic operations on
-the factors. However, it requires careful handling of index permutations to ensure correct
-MV products, which is managed through the `PermQ` and `PermP` dictionaries.
+**Keyword Arguments:**
+
+  - `compressor`: Compression scheme for low-rank blocks (default: `PartialQR()`).
+  - `scheduler`: Threading scheduler for parallel execution.
+  - `acctype`: The numeric type of the matrix elements (default: `ComplexF64`).
+
+**Returns:**
+
+  - A `ButterflyFactorization` object containing the optimized flat-array blocks.
 """
 function assemble_BF(
     kernelmatrix,
     blktree,
-    NO::Int,
-    NS::Int,
+    no::Int,
+    ns::Int,
     k::Float64,
     τ::Float64;
     C=tree_parameters(cluster_testtree(blktree)).C,
@@ -45,17 +54,21 @@ function assemble_BF(
     adaptive=false,
     compressor=ButterflyFactorizations.PartialQR(),
     scheduler=OhMyThreads.DynamicScheduler(),
+    acctype=ComplexF64,
 )
     # --- Trees & Helpers ---
     trialT = cluster_trialtree(blktree)
     testT = cluster_testtree(blktree)
-    treeS = traverseandpad(trialT, NS)
-    treeO = traverseandpad(testT, NO)
+    treeS = traverseandpad(trialT, ns)
+    treeO = traverseandpad(testT, no)
 
     LS = length(treeS)
     LO = length(treeO)
     L = max(LS, LO)
-    τ = τ/L #update error tolerance for deeper tree lvls
+
+    # Scale error tolerance to account for accumulation over deep tree levels
+    τ_scaled = τ / L
+
     # Temporary workspace for skeletons: K[(Snode_id, Onode_id)] => Vector{Int}
     K = Dict{Int,Vector{Int}}()
 
@@ -63,16 +76,16 @@ function assemble_BF(
     # 1. Leaf-level Q
     # ------------------------------------------------------------------
     lS = length(treeS[end])
-    Q = Vector{ButterflyBlock{ComplexF64}}(undef, lS)
+    Q = Vector{ButterflyBlock{acctype}}(undef, lS)
 
     leaf_q_results = tmap(1:lS; scheduler=scheduler) do blockidx
         Sleaf = treeS[end][blockidx]
         srcindex = cluster_values(trialT, Sleaf)
-        obsindex = cluster_values(testT, NO)
+        obsindex = cluster_values(testT, no)
 
-        n_otilde = estimate_rank_3d(k, trialT, testT, Sleaf, NO, τ; C=C, Cε=Cε)
+        n_otilde = estimate_rank_3d(k, trialT, testT, Sleaf, no, τ_scaled; C=C, Cε=Cε)
         q_ks, k_l, _ = compressor(
-            kernelmatrix, srcindex, obsindex, n_otilde, τ; adaptive=adaptive
+            kernelmatrix, srcindex, obsindex, n_otilde, τ_scaled; adaptive=adaptive
         )
 
         return (blockidx, Sleaf, q_ks, k_l)
@@ -80,14 +93,14 @@ function assemble_BF(
 
     # Safely update Q and K sequentially after threading
     for (blockidx, Sleaf, q_ks, k_l) in leaf_q_results
-        Q[blockidx] = ButterflyBlock(NO, Sleaf, NO, Sleaf, q_ks)
-        K[fastkey(Sleaf, NO)] = k_l
+        Q[blockidx] = ButterflyBlock(no, Sleaf, no, Sleaf, q_ks)
+        K[fastkey(Sleaf, no)] = k_l
     end
 
     # ------------------------------------------------------------------
     # 2. Level Traversal (R Blocks)
     # ------------------------------------------------------------------
-    R = Vector{ButterflyLevel{ComplexF64}}(undef, L - 1)
+    R = Vector{ButterflyLevel{acctype}}(undef, L - 1)
 
     for l in 1:(L - 1)
         source_is_frozen = l >= LS
@@ -114,26 +127,28 @@ function assemble_BF(
                 kernelmatrix,
                 compressor,
                 k,
-                τ,
+                τ_scaled,
                 scheduler,
                 C,
-                Cε;
+                Cε,
+                acctype;
                 adaptive=adaptive,
             )
         elseif source_is_frozen && !obs_is_frozen
             level_R, k_updates = build_sourcefrozen_R_blocks(
                 treeO[l],
-                NS,
+                ns,
                 K,
                 trialT,
                 testT,
                 kernelmatrix,
                 compressor,
                 k,
-                τ,
+                τ_scaled,
                 scheduler,
                 C,
-                Cε;
+                Cε,
+                acctype;
                 adaptive=adaptive,
             )
         elseif !source_is_frozen && obs_is_frozen
@@ -147,10 +162,11 @@ function assemble_BF(
                 kernelmatrix,
                 compressor,
                 k,
-                τ,
+                τ_scaled,
                 scheduler,
                 C,
-                Cε;
+                Cε,
+                acctype;
                 adaptive=adaptive,
             )
         end
@@ -167,16 +183,16 @@ function assemble_BF(
     # 3. Final P blocks
     # ------------------------------------------------------------------
     lO = length(treeO[end])
-    P = Vector{ButterflyBlock{ComplexF64}}(undef, lO)
+    P = Vector{ButterflyBlock{acctype}}(undef, lO)
 
     tmap(1:lO; scheduler=scheduler) do idx
         Oleaf = treeO[end][idx]
-        col = K[fastkey(NS, Oleaf)]
+        col = K[fastkey(ns, Oleaf)]
         row = cluster_values(testT, Oleaf)
-        Z = zeros(ComplexF64, length(row), length(col))
+        Z = zeros(acctype, length(row), length(col))
         kernelmatrix(Z, row, col)
 
-        return P[idx] = ButterflyBlock(Oleaf, NS, Oleaf, NS, Z)
+        return P[idx] = ButterflyBlock(Oleaf, ns, Oleaf, ns, Z)
     end
 
     return ButterflyFactorization(Q, R, P, blktree, k, τ)
@@ -186,6 +202,12 @@ end
 # Builder Functions
 # ------------------------------------------------------------------
 
+"""
+    build_U_skeletons(treeS_level, treeO_level, K, trialT, scheduler)
+
+Pre-computes the union of child skeleton bases for the current source level.
+This consolidates the required interaction degrees of freedom before building the `R` factors.
+"""
 function build_U_skeletons(treeS_level, treeO_level, K, trialT, scheduler)
     U = Dict{Int,Vector{Int}}()
     interactions_U = vec(collect(Iterators.product(treeS_level, treeO_level)))
@@ -211,10 +233,13 @@ function build_U_skeletons(treeS_level, treeO_level, K, trialT, scheduler)
     end
     return U
 end
-# ------------------------------------------------------------------
-# Optimized Builder Functions
-# ------------------------------------------------------------------
 
+"""
+    build_nonfrozen_R_blocks(...)
+
+Constructs the intermediate `R` factor blocks when both the source and observer
+trees are actively being traversed (neither has hit its leaf limit).
+"""
 function build_nonfrozen_R_blocks(
     treeO_level,
     treeS_level,
@@ -228,13 +253,14 @@ function build_nonfrozen_R_blocks(
     τ,
     scheduler,
     C,
-    Cε;
+    Cε,
+    acctype;
     adaptive=false,
 )
     interactions = vec(collect(Iterators.product(treeO_level, treeS_level)))
     n_ints = length(interactions)
 
-    # 1. Pre-calculate exact sizes using prefix sums (cumsum)
+    # Pre-calculate exact sizes using prefix sums (cumsum) to avoid allocations
     block_counts = zeros(Int, n_ints)
     update_counts = zeros(Int, n_ints)
     for i in 1:n_ints
@@ -249,6 +275,7 @@ function build_nonfrozen_R_blocks(
         else
             length(collect(cluster_children(trialT, Svert)))
         end
+
         block_counts[i] = num_O * num_S
         update_counts[i] = num_O
     end
@@ -256,11 +283,9 @@ function build_nonfrozen_R_blocks(
     block_offsets = cumsum(vcat(1, block_counts[1:(end - 1)]))
     update_offsets = cumsum(vcat(1, update_counts[1:(end - 1)]))
 
-    # 2. Allocate exactly once
-    all_blocks = Vector{ButterflyBlock{ComplexF64}}(undef, sum(block_counts))
+    all_blocks = Vector{ButterflyBlock{acctype}}(undef, sum(block_counts))
     all_k_updates = Vector{Tuple{Int,Int,Vector{Int}}}(undef, sum(update_counts))
 
-    # 3. Threaded mapping directly into pre-allocated flat arrays
     tmap(1:n_ints; scheduler=scheduler) do i
         (Overt, Svert) = interactions[i]
         b_off = block_offsets[i] - 1
@@ -333,13 +358,18 @@ function build_nonfrozen_R_blocks(
         end
     end
 
-    #sort!(all_blocks; by=block_key)
     return ButterflyLevel(all_blocks), all_k_updates
 end
 
+"""
+    build_sourcefrozen_R_blocks(...)
+
+Constructs `R` blocks when the source tree has reached its leaf limit but the observer
+tree is still being traversed.
+"""
 function build_sourcefrozen_R_blocks(
     treeO_level,
-    NS,
+    ns,
     K,
     trialT,
     testT,
@@ -349,10 +379,11 @@ function build_sourcefrozen_R_blocks(
     τ,
     scheduler,
     C,
-    Cε;
+    Cε,
+    acctype;
     adaptive=false,
 )
-    Svert = NS
+    Svert = ns
     n_ints = length(treeO_level)
 
     block_counts = zeros(Int, n_ints)
@@ -367,7 +398,7 @@ function build_sourcefrozen_R_blocks(
 
     block_offsets = cumsum(vcat(1, block_counts[1:(end - 1)]))
 
-    all_blocks = Vector{ButterflyBlock{ComplexF64}}(undef, sum(block_counts))
+    all_blocks = Vector{ButterflyBlock{acctype}}(undef, sum(block_counts))
     all_k_updates = Vector{Tuple{Int,Int,Vector{Int}}}(undef, sum(block_counts))
 
     tmap(1:n_ints; scheduler=scheduler) do i
@@ -397,10 +428,15 @@ function build_sourcefrozen_R_blocks(
         end
     end
 
-    #sort!(all_blocks; by=block_key)
     return ButterflyLevel(all_blocks), all_k_updates
 end
 
+"""
+    build_observerfrozen_R_blocks(...)
+
+Constructs `R` blocks when the observer tree has reached its leaf limit but the source
+tree is still being traversed.
+"""
 function build_observerfrozen_R_blocks(
     treeO_LO,
     treeS_level,
@@ -414,7 +450,8 @@ function build_observerfrozen_R_blocks(
     τ,
     scheduler,
     C,
-    Cε;
+    Cε,
+    acctype;
     adaptive=false,
 )
     interactions = vec(collect(Iterators.product(treeO_LO, treeS_level)))
@@ -432,7 +469,7 @@ function build_observerfrozen_R_blocks(
 
     block_offsets = cumsum(vcat(1, block_counts[1:(end - 1)]))
 
-    all_blocks = Vector{ButterflyBlock{ComplexF64}}(undef, sum(block_counts))
+    all_blocks = Vector{ButterflyBlock{acctype}}(undef, sum(block_counts))
     all_k_updates = Vector{Tuple{Int,Int,Vector{Int}}}(undef, n_ints)
 
     tmap(1:n_ints; scheduler=scheduler) do i
@@ -467,74 +504,75 @@ function build_observerfrozen_R_blocks(
         end
     end
 
-    #sort!(all_blocks; by=block_key)
     return ButterflyLevel(all_blocks), all_k_updates
 end
 
 """
-    assemble_BF_Mat(kernelmatrix, blktree, NO, NS, k, τ; compressor=PartialQR())
+    assemble_BF_Mat(kernelmatrix, blktree, no, ns, k, τ; kwargs...)
 
 Constructs the Butterfly Factorization for a given block in a **sparse matrix format**.
 
-Similar to `assemble_BF`, it traverses the H2 tree structure to compute the `Q`, `R`,
+Similar to `assemble_BF`, it traverses the tree structure to compute the `Q`, `R`,
 and `P` factors, but specifically pieces them together into sparse block-diagonal matrices.
-It also returns single continuous permutation vectors (`PermP`, `PermQ`) to map
-interactions across the entire space.
+It also returns single continuous permutation vectors (`permP`, `permQ`) to map
+interactions across the entire physical space.
 
 **Why Matrix format?**
-While slightly less memory efficient than the dictionary format (due to sparsity tracking
+While slightly less memory efficient than the flat dictionary format (due to sparsity tracking
 overhead), it allows for dramatically faster direct Matrix-Vector applications using
-standard linear algebra methods. It also provides a clear visual and algebraic
-representation of the overall block structure, which is invaluable for debugging.
+standard linear algebra methods, providing a clear visual and algebraic representation of the
+overall block structure for debugging.
 """
 function assemble_BF_Mat(
     kernelmatrix,
     blktree,
-    NO::Int,
-    NS::Int,
+    no::Int,
+    ns::Int,
     k::Float64,
     τ::Float64;
     adaptive=false,
     compressor=ButterflyFactorizations.PartialQR(),
     C=tree_parameters(cluster_testtree(blktree)).C,
     Cε=tree_parameters(cluster_testtree(blktree)).Cε,
+    acctype=ComplexF64,
 )
 
     # --- containers ---
-    Q = Matrix{ComplexF64}(undef, 0, 0)
-    R = Vector{AbstractMatrix{ComplexF64}}()
-    P = Matrix{ComplexF64}(undef, 0, 0)
+    Q = Matrix{acctype}(undef, 0, 0)
+    R = Vector{AbstractMatrix{acctype}}()
+    P = Matrix{acctype}(undef, 0, 0)
     K = Dict{Int,Dict{Int,Vector{Int}}}()
-    U = Dict{Int,Dict{Int,Vector{Int}}}()   #temporary unions
-    #AbstractMatrix for SparseArrays, BlockSparseMatrix for BlockSparseMatrices
-    PermQ = Vector{Int}()
-    PermP = Vector{Int}()
+    U = Dict{Int,Dict{Int,Vector{Int}}}()
+    permQ = Vector{Int}()
+    permP = Vector{Int}()
 
     # --- trees & helpers ---
     trialT = cluster_trialtree(blktree)
     testT = cluster_testtree(blktree)
 
-    treeS = traverseandpad(trialT, NS)
-    treeO = traverseandpad(testT, NO)
+    treeS = traverseandpad(trialT, ns)
+    treeO = traverseandpad(testT, no)
 
     LS = length(treeS)
     LO = length(treeO)
     L = LS + LO
+    τ_scaled = τ / max(LS, LO)
 
     # ------------------------------------------------------------------
     # Leaf-level Q
     # ------------------------------------------------------------------
     for Sleaf in treeS[LS]
         srcindex = cluster_values(trialT, Sleaf)
-        push!(PermQ, srcindex...)
-        obsindex = cluster_values(testT, NO)
-        n_otilde = estimate_rank_3d(k, trialT, testT, Sleaf, NO, τ; C=C, Cε=Cε)
+        push!(permQ, srcindex...)
+        obsindex = cluster_values(testT, no)
+        n_otilde = estimate_rank_3d(k, trialT, testT, Sleaf, no, τ_scaled; C=C, Cε=Cε)
         q_ks, k_l, r_l = compressor(
-            kernelmatrix, srcindex, obsindex, n_otilde, τ; adaptive=adaptive
+            kernelmatrix, srcindex, obsindex, n_otilde, τ_scaled; adaptive=adaptive
         )
-        Q = sparse_blockdiag(Q, q_ks)               #SPARSITY: sparse_ or blocksparse_
-        getsubdict!(K, Sleaf)[NO] = k_l
+        Q = sparse_blockdiag(Q, q_ks)
+        getsubdict!(K, Sleaf)[no] = k_l
     end
+
     source_is_frozen = false
     obs_is_frozen = false
 
@@ -554,13 +592,11 @@ function assemble_BF_Mat(
 
                 for Overt in treeO[min(l, LO)]
                     temp = Int[]
-
                     for Schild in cluster_children(trialT, Svert)
                         Ks = getsubdict!(K, Schild)
                         ks = get(Ks, Overt, nothing)
                         append!(temp, ks)
                     end
-
                     U_S[Overt] = temp
                 end
             end
@@ -570,76 +606,84 @@ function assemble_BF_Mat(
         # Compute R blocks
         # --------------------------------------------------------------
         if !source_is_frozen && !obs_is_frozen
-            R_temp1 = Matrix{ComplexF64}(undef, 0, 0)
+            R_temp1 = Matrix{acctype}(undef, 0, 0)
             for Overt in treeO[l]
-                R_temp2 = Vector{AbstractMatrix{ComplexF64}}()
+                R_temp2 = Vector{AbstractMatrix{acctype}}()
                 for Ochild in cluster_children(testT, Overt)
-                    R_temp3 = Matrix{ComplexF64}(undef, 0, 0)
+                    R_temp3 = Matrix{acctype}(undef, 0, 0)
                     obsindex = cluster_values(testT, Ochild)
                     for Svert in treeS[LS - l]
                         srcindex = U[Svert][Overt]
 
                         n_otilde = estimate_rank_3d(
-                            k, trialT, testT, Svert, Ochild, τ; C=C, Cε=Cε
+                            k, trialT, testT, Svert, Ochild, τ_scaled; C=C, Cε=Cε
                         )
                         q_ks, k_l, r_l = compressor(
-                            kernelmatrix, srcindex, obsindex, n_otilde, τ; adaptive=adaptive
+                            kernelmatrix,
+                            srcindex,
+                            obsindex,
+                            n_otilde,
+                            τ_scaled;
+                            adaptive=adaptive,
                         )
                         R_temp3 = sparse_blockdiag(R_temp3, q_ks)
                         getsubdict!(K, Svert)[Ochild] = k_l
                     end
                     push!(R_temp2, R_temp3)
-                    R_temp3 = Matrix{ComplexF64}(undef, 0, 0)
                 end
                 R_temp1 = sparse_blockdiag(R_temp1, sparse_vcat(R_temp2...))
-                R_temp2 = Vector{AbstractMatrix{ComplexF64}}()
             end
-
             push!(R, R_temp1)
 
         elseif source_is_frozen && !obs_is_frozen
-            R_temp1 = Matrix{ComplexF64}(undef, 0, 0)
+            R_temp1 = Matrix{acctype}(undef, 0, 0)
             for Overt in treeO[l]
-                R_temp2 = Vector{AbstractMatrix{ComplexF64}}()
+                R_temp2 = Vector{AbstractMatrix{acctype}}()
                 for Ochild in cluster_children(testT, Overt)
-                    R_temp3 = Matrix{ComplexF64}(undef, 0, 0)
+                    R_temp3 = Matrix{acctype}(undef, 0, 0)
                     obsindex = cluster_values(testT, Ochild)
                     for Svert in treeS[1]
                         srcindex = K[Svert][Overt]
                         n_otilde = estimate_rank_3d(
-                            k, trialT, testT, Svert, Ochild, τ; C=C, Cε=Cε
+                            k, trialT, testT, Svert, Ochild, τ_scaled; C=C, Cε=Cε
                         )
                         q_ks, k_l, r_l = compressor(
-                            kernelmatrix, srcindex, obsindex, n_otilde, τ; adaptive=adaptive
+                            kernelmatrix,
+                            srcindex,
+                            obsindex,
+                            n_otilde,
+                            τ_scaled;
+                            adaptive=adaptive,
                         )
                         R_temp3 = sparse_blockdiag(R_temp3, q_ks)
-
                         getsubdict!(K, Svert)[Ochild] = k_l
                     end
                     push!(R_temp2, R_temp3)
-                    R_temp3 = Matrix{ComplexF64}(undef, 0, 0)
                 end
                 R_temp1 = sparse_blockdiag(R_temp1, sparse_vcat(R_temp2...))
-                R_temp2 = Vector{AbstractMatrix{ComplexF64}}()
             end
             push!(R, R_temp1)
 
         elseif !source_is_frozen && obs_is_frozen
-            R_temp1 = Matrix{ComplexF64}(undef, 0, 0)
+            R_temp1 = Matrix{acctype}(undef, 0, 0)
             for Overt in treeO[LO]
                 obsindex = cluster_values(testT, Overt)
-                R_temp2 = Matrix{ComplexF64}(undef, 0, 0)
+                R_temp2 = Matrix{acctype}(undef, 0, 0)
                 for Svert in treeS[LS - l]
                     srcindex = U[Svert][Overt]
 
                     n_otilde = estimate_rank_3d(
-                        k, trialT, testT, Svert, Overt, τ; C=C, Cε=Cε
+                        k, trialT, testT, Svert, Overt, τ_scaled; C=C, Cε=Cε
                     )
                     q_ks, k_l, r_l = compressor(
-                        kernelmatrix, srcindex, obsindex, n_otilde, τ; adaptive=adaptive
+                        kernelmatrix,
+                        srcindex,
+                        obsindex,
+                        n_otilde,
+                        τ_scaled;
+                        adaptive=adaptive,
                     )
                     R_temp2 = sparse_blockdiag(R_temp2, q_ks)
-
                     getsubdict!(K, Svert)[Overt] = k_l
                 end
                 R_temp1 = sparse_blockdiag(R_temp1, R_temp2)
@@ -653,14 +697,14 @@ function assemble_BF_Mat(
     # ------------------------------------------------------------------
     # Final P blocks
     # ------------------------------------------------------------------
-
     for Oleaf in treeO[LO]
-        col = K[NS][Oleaf]
+        col = K[ns][Oleaf]
         row = cluster_values(testT, Oleaf)
-        push!(PermP, row...)
-        Z = zeros(ComplexF64, length(row), length(col))
+        push!(permP, row...)
+        Z = zeros(acctype, length(row), length(col))
         kernelmatrix(Z, row, col)
         P = sparse_blockdiag(P, Z)
     end
-    return ButterflyFactorization_Mat(Q, R, P, NS, NO, τ, k, PermP, PermQ)
+
+    return ButterflyFactorization_Mat(Q, R, P, ns, no, k, τ, permP, permQ)
 end

@@ -1,8 +1,16 @@
+# ------------------------------------------------------------------
+# ButterflyFactorization Algebraic Multiplication
+# ------------------------------------------------------------------
+
 """
     mulBFs(BF_1::ButterflyFactorization, BF_2::ButterflyFactorization, τ::Float64) -> BF
 
-Compute the operator product of two Butterfly Factorizations (`BF`) and compress the
-resulting representation to a specified accuracy tolerance.
+Compute the algebraic operator product of two Butterfly Factorizations (`BF_1 * BF_2`)
+and compress the resulting representation to a specified accuracy tolerance.
+
+This algorithm pushes a "messenger" matrix through the hierarchical layers using
+adjacent row-swaps and graph-based block splitting, allowing the differing tree
+structures to be merged algebraically without ever inflating to a dense matrix.
 """
 function mulBFs(
     BF_1_init::ButterflyFactorization{T,M},
@@ -17,9 +25,10 @@ function mulBFs(
     # 1. Messenger Initialization
     # M_leaf = Q_1 * P_2
     M_leaf = multiply_levels(BF_1.Q, BF_2.P)
+
     # M_mid = R_1[1] * M_leaf * R_2[L]
     M_mid = multiply_levels(BF_1.R[1], multiply_levels(M_leaf, BF_2.R[L]))
-    @show length(M_mid.blocks)
+
     # Assemble the active levels flat array:
     # [BF_1.R[L:-1:2], M_mid, BF_2.R[L-1:-1:1]]
     active_levels = Vector{ButterflyLevel{T}}()
@@ -32,8 +41,7 @@ function mulBFs(
         # Push the messenger level through via row-swaps
         for t in 1:m
             idx = L + 1 - t
-            active_levels = swap_adjacent!(active_levels, idx) # Tree no longer needed!
-            println("swap done")
+            active_levels = swap_adjacent!(active_levels, idx)
         end
 
         # Multiply the aligned levels
@@ -60,13 +68,24 @@ end
 
 # --- Array Manipulators ---
 
+"""
+    multiply_adjacent!(levels, idx)
+
+Multiplies two adjacent hierarchical levels in the flat array and splices the
+merged result back into the vector.
+"""
 function multiply_adjacent!(levels::Vector{ButterflyLevel{T}}, idx::Int) where {T}
     merged = multiply_levels(levels[idx], levels[idx + 1])
-    @show length(merged.blocks)
     splice!(levels, idx:(idx + 1), [merged])
     return levels
 end
 
+"""
+    swap_adjacent!(levels, idx)
+
+Algebraically pushes a messenger matrix through a level by extracting connected
+components and splitting the blocks.
+"""
 function swap_adjacent!(levels::Vector{ButterflyLevel{T}}, idx::Int) where {T}
     merged = multiply_levels(levels[idx], levels[idx + 1])
     L_new, R_new = browswap_split(merged)
@@ -76,7 +95,13 @@ end
 
 # --- Core Matrix Operations ---
 
-# Overloads to allow native multiplication of Q and P vectors
+"""
+    multiply_levels(A, B)
+
+Computes the block-wise algebraic product of two Butterfly layers.
+Properly aligns the column-space input domain of the left factor with the
+row-space output codomain of the right factor.
+"""
 function multiply_levels(
     Q::Vector{<:ButterflyBlock{T}}, P::Vector{<:ButterflyBlock{T}}
 ) where {T}
@@ -144,8 +169,15 @@ function multiply_levels(A::ButterflyLevel{T}, B::ButterflyLevel{T}) where {T}
     ])
 end
 
+"""
+    browswap_split(P::ButterflyLevel)
+
+Resolves structural bottlenecks by grouping blocks into a flood-fill adjacency graph
+and slicing them to allow messenger matrices to pass through the hierarchy.
+"""
 function browswap_split(P::ButterflyLevel{T}) where {T}
     n = length(P.blocks)
+
     # 1. Build Adjacency Graph (Flood Fill)
     row_to_blocks = Dict{Tuple{Int,Int},Vector{Int}}()
     col_to_blocks = Dict{Tuple{Int,Int},Vector{Int}}()
@@ -156,6 +188,7 @@ function browswap_split(P::ButterflyLevel{T}) where {T}
         push!(get!(row_to_blocks, rk, Int[]), i)
         push!(get!(col_to_blocks, ck, Int[]), i)
     end
+
     B_blocks = ButterflyBlock{T}[]
     C_blocks = ButterflyBlock{T}[]
     visited = falses(n)
@@ -165,18 +198,17 @@ function browswap_split(P::ButterflyLevel{T}) where {T}
     colcount2 = 1
     for i in 1:n
         if !visited[i]
-            cluster = ButterflyBlock{T}[] #cluster is 4x4 block
+            cluster = ButterflyBlock{T}[]
             queue = Int[]
             rblks = row_to_blocks[(P.blocks[i].obs_out, P.blocks[i].src_out)]
             cblks = col_to_blocks[(P.blocks[i].obs_in, P.blocks[i].src_in)]
             cols = sort!([(blk.obs_in, blk.src_in) for blk in P.blocks[rblks]])
             rows = sort!([(blk.obs_out, blk.src_out) for blk in P.blocks[cblks]])
-            if length(rows) != 4 || length(cols) != 4
-                @show length(rows) length(cols)
-            end
+
             for row in rows
                 append!(queue, row_to_blocks[row])
             end
+
             while !isempty(queue)
                 curr = popfirst!(queue)
                 push!(cluster, P.blocks[curr])
@@ -186,113 +218,107 @@ function browswap_split(P::ButterflyLevel{T}) where {T}
             for (idx, row) in enumerate(rows)
                 currentblks = cluster[(idx * 4 - 3):(idx * 4)]
                 sort!(currentblks; by=x -> (x.obs_in, x.src_in))
-                i = 1
+
+                offset = 1
                 for k in 1:2:3
                     ckblkcolkey = (currentblks[k].obs_in, currentblks[k].src_in)
                     ck_1blkcolkey = (currentblks[k + 1].obs_in, currentblks[k + 1].src_in)
-                    #=if ckblkcolkey != cols[k]
-                        println(
-                            "Warning: Column key mismatch for ckblkcolkey: ",
-                            ckblkcolkey,
-                            " vs cols[",
-                            k,
-                            "]: ",
-                            cols[k],
-                        )
-                    end
-                    if ck_1blkcolkey != cols[k + 1]
-                        println(
-                            "Warning: Column key mismatch for ck_1blkcolkey: ",
-                            ck_1blkcolkey,
-                            " vs cols[",
-                            k + 1,
-                            "]: ",
-                            cols[k + 1],
-                        )
-                    end=#
+
                     newbblock = hcat(currentblks[k].data, currentblks[k + 1].data)
                     ksizes = (
                         size(currentblks[k].data, 2), size(currentblks[k + 1].data, 2)
                     )
+
                     ckblk = vcat(
                         Matrix{T}(I, ksizes[1], ksizes[1]), zeros(T, ksizes[2], ksizes[1])
                     )
                     ck_1blk = vcat(
                         zeros(T, ksizes[1], ksizes[2]), Matrix{T}(I, ksizes[2], ksizes[2])
                     )
-                    # 1. B Blocks depend on the row (Push for every idx)
+
+                    # 1. B Blocks depend on the row
                     if idx < 3
                         push!(
                             B_blocks,
-                            ButterflyBlock(row[1], row[2], 1, colcount1+i, newbblock),
+                            ButterflyBlock(
+                                row[1], row[2], 1, colcount1 + offset, newbblock
+                            ),
                         )
                     else
                         push!(
                             B_blocks,
-                            ButterflyBlock(row[1], row[2], 2, colcount2+i, newbblock),
+                            ButterflyBlock(
+                                row[1], row[2], 2, colcount2 + offset, newbblock
+                            ),
                         )
                     end
 
-                    # 2. C Blocks only route columns (Push ONLY on the first row of each half)
+                    # 2. C Blocks only route columns
                     if idx == 1
                         push!(
                             C_blocks,
                             ButterflyBlock(
-                                1, colcount1+i, ckblkcolkey[1], ckblkcolkey[2], ckblk
+                                1, colcount1 + offset, ckblkcolkey[1], ckblkcolkey[2], ckblk
                             ),
                         )
                         push!(
                             C_blocks,
                             ButterflyBlock(
-                                1, colcount1+i, ck_1blkcolkey[1], ck_1blkcolkey[2], ck_1blk
+                                1,
+                                colcount1 + offset,
+                                ck_1blkcolkey[1],
+                                ck_1blkcolkey[2],
+                                ck_1blk,
                             ),
                         )
                     elseif idx == 3
                         push!(
                             C_blocks,
                             ButterflyBlock(
-                                2, colcount2+i, ckblkcolkey[1], ckblkcolkey[2], ckblk
+                                2, colcount2 + offset, ckblkcolkey[1], ckblkcolkey[2], ckblk
                             ),
                         )
                         push!(
                             C_blocks,
                             ButterflyBlock(
-                                2, colcount2+i, ck_1blkcolkey[1], ck_1blkcolkey[2], ck_1blk
+                                2,
+                                colcount2 + offset,
+                                ck_1blkcolkey[1],
+                                ck_1blkcolkey[2],
+                                ck_1blk,
                             ),
                         )
                     end
-                    i+=1
+                    offset += 1
                 end
             end
             colcount1 += 2
             colcount2 += 2
         end
     end
-    @show length(B_blocks), length(C_blocks)
+
     return ButterflyLevel(B_blocks), ButterflyLevel(C_blocks)
 end
 
 # --- Overloads ---
 
+"""
+    *(BF_1::ButterflyFactorization, BF_2::ButterflyFactorization) -> BF
+
+Overloads the `*` operator to compute the algebraic product of two Butterfly operators.
+Dynamically falls back to the maximum tolerance of the two inputs for recompression.
+"""
 function Base.:*(BF_1::ButterflyFactorization, BF_2::ButterflyFactorization)
     return cleanupidxs(mulBFs(BF_1, BF_2, max(BF_1.τ, BF_2.τ)))
 end
 
-function LinearAlgebra.mul!(
-    C::ButterflyFactorization,
-    A::ButterflyFactorization,
-    B::ButterflyFactorization;
-    τ=max(A.τ, B.τ),
-)
-    # Replaces the internal fields of C with the newly computed product
-    res = cleanupidxs(mulBFs(A, B, τ))
-    C.Q = res.Q
-    C.R = res.R
-    C.P = res.P
-    C.τ = res.τ
-    return C
-end
+"""
+    cleanupidxs(BF::ButterflyFactorization)
 
+Rebuilds the physical global indices across the hierarchical `R` factors after
+an algebraic manipulation (like multiplication or recompression) destroys the
+strict spatial locality mappings.
+"""
 function cleanupidxs(BF::ButterflyFactorization{T,M}) where {T,M}
     tsttree = cluster_testtree(BF.tree)
     trialtree = cluster_trialtree(BF.tree)
@@ -303,11 +329,10 @@ function cleanupidxs(BF::ButterflyFactorization{T,M}) where {T,M}
     # =========================================================================
     src_translation = Dict{Tuple{Int,Int},Int}()
 
-    for (i, b) in enumerate(BF.Q)
-        # Save Q's input mapping to feed R_1
+    for b in BF.Q
         src_translation[(b.obs_in, b.src_in)] = b.src_in
     end
-    # Preallocate storage for the computed source keys in R
+
     src_keys_R = [Vector{Tuple{Int,Int}}(undef, length(BF.R[l].blocks)) for l in 1:L]
 
     for l in 1:L
@@ -326,41 +351,32 @@ function cleanupidxs(BF::ButterflyFactorization{T,M}) where {T,M}
     # PASS 2: Backward Traversal (Trace Observer Keys & Reconstruct R)
     # =========================================================================
     obs_translation = Dict{Tuple{Int,Int},Int}()
-
-    # Rebuild P instantly and seed translation
     newP = Vector{ButterflyBlock{T}}(undef, length(BF.P))
+
     for (i, b) in enumerate(BF.P)
-        true_obs_out = b.obs_out # P's output is the physical observer leaf
-        true_obs_in = b.obs_in # Move 1 level up the observer tree
-        root_src = src_translation[(b.obs_in, b.src_in)] # P's input is the root of the source tree
+        true_obs_out = b.obs_out
+        true_obs_in = b.obs_in
+        root_src = src_translation[(b.obs_in, b.src_in)]
+
         newP[i] = ButterflyBlock(
             true_obs_out, root_src, true_obs_in, root_src, copy(b.data)
         )
-
-        # Save P's input mapping to feed R_L
         obs_translation[(b.obs_in, b.src_in)] = true_obs_in
     end
 
-    # Reconstruct R backwards, combining obs logic with stored src keys
     newR = Vector{ButterflyLevel{T}}(undef, L)
     for l in L:-1:1
         next_obs_translation = Dict{Tuple{Int,Int},Int}()
         new_blocks = Vector{ButterflyBlock{T}}(undef, length(BF.R[l].blocks))
 
         for (i, b) in enumerate(BF.R[l].blocks)
-            # 1. Compute the new Observer keys
             new_obs_out = obs_translation[(b.obs_out, b.src_out)]
             new_obs_in = cluster_parent(tsttree, new_obs_out)
-
-            # 2. Retrieve the new Source keys computed in Pass 1
             new_src_out, new_src_in = src_keys_R[l][i]
 
-            # 3. Reconstruct block on the spot!
             new_blocks[i] = ButterflyBlock(
                 new_obs_out, new_src_out, new_obs_in, new_src_in, copy(b.data)
             )
-
-            # Propagate the obs_in upwards to R_{l-1}
             next_obs_translation[(b.obs_in, b.src_in)] = new_obs_in
         end
         newR[l] = ButterflyLevel(new_blocks)
@@ -380,6 +396,12 @@ function cleanupidxs(BF::ButterflyFactorization{T,M}) where {T,M}
     return ButterflyFactorization(newQ, newR, newP, BF.tree, BF.k, BF.τ)
 end
 
+"""
+    trivialmul(BF_1, BF_2)
+
+Computes the uncompressed structural product of two Butterfly Factorizations.
+It cascades the factors without attempting intermediate recompression passes.
+"""
 function trivialmul(
     BF_1::ButterflyFactorization{T,M}, BF_2::ButterflyFactorization{T,M}
 ) where {T,M}

@@ -41,7 +41,6 @@
         k;
         compressor=ButterflyFactorizations.PartialQR(),
         tol=1e-4,
-        α=1.5,
         scheduler=OhMyThreads.DynamicScheduler(),
     )
 
@@ -53,7 +52,6 @@
         k;
         compressor=ButterflyFactorizations.PartialQR(),
         tol=1e-4,
-        α=1.5,
         scheduler=OhMyThreads.DynamicScheduler(),
     )
 
@@ -61,13 +59,11 @@
     x = randn(ComplexF64, size(A, 2))
     y_exact = A * x
 
-    y_approx1 = zeros(ComplexF64, size(A, 1))
-    y_approx1 = Bfmat * x#[go1][gs1]
+    y_approx1 = Bfmat * x
     (norm(y_exact - y_approx1) / norm(y_exact))
 
     @test ((norm(y_exact - y_approx1) / norm(y_exact)) < 10^-3)
 
-    y_approx = zeros(ComplexF64, size(A, 1))
     y_approx = Bfmat2 * x
     (norm(y_exact - y_approx) / norm(y_exact))
     @test ((norm(y_exact - y_approx) / norm(y_exact)) < 10^-3)

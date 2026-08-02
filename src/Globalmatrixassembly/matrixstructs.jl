@@ -1,3 +1,13 @@
+"""
+    PetrovGalerkinBF{T, ...} <: LinearMaps.LinearMap{T}
+
+The global linear operator representing the Butterfly-factorized boundary element matrix.
+Internally, it manages a `BlockSparseMatrix` for near-field interactions and a flat-array
+`ButterflyFactorization` structure for the far-field blocks.
+
+It automatically allocates memory-safe thread workspaces to enable zero-allocation,
+highly parallel matrix-vector products.
+"""
 struct PetrovGalerkinBF{
     T,NearInteractionsType,LType<:AbstractMatrix{Int},BFType,treetype
 } <: LinearMaps.LinearMap{T}
@@ -8,7 +18,7 @@ struct PetrovGalerkinBF{
     near_lookup::LType
     far_lookup::LType
     y_thread_buffers::Vector{Vector{T}}
-    thread_workspaces::Vector{ThreadButterflyWorkspace{T}} # 🚀 Only n_threads workspaces!
+    thread_workspaces::Vector{ThreadButterflyWorkspace{T}}
 
     function PetrovGalerkinBF{T}(
         nearinteractions, tree, BFs, dim, near_lookup, far_lookup
@@ -31,11 +41,17 @@ struct PetrovGalerkinBF{
     end
 end
 
+"""
+    farmatrix(mat::PetrovGalerkinBF)
+
+Extracts and isolates the far-field operator by zeroing out the near-field interactions.
+Useful for debugging operator splits and analyzing compression error.
+"""
 function farmatrix(
     mat::PetrovGalerkinBF{T}; scheduler=OhMyThreads.SerialScheduler()
 ) where {T}
     return PetrovGalerkinBF{T}(
-        BlockSparseMatrix(Matrix{ComplexF64}[], Int[], Int[], mat.dim; scheduler=scheduler),
+        BlockSparseMatrix(Matrix{T}[], Int[], Int[], mat.dim; scheduler=scheduler),
         mat.tree,
         mat.BFs,
         mat.dim,
@@ -44,26 +60,19 @@ function farmatrix(
     )
 end
 
+"""
+    PetrovGalerkinBF_Mat{T, ...} <: LinearMaps.LinearMap{T}
+
+The legacy/sparse-matrix format for the global Butterfly factorized operator.
+Uses explicit sparse block-diagonal matrices for the far-field interactions.
+"""
 struct PetrovGalerkinBF_Mat{T,NearInteractionsType} <: LinearMaps.LinearMap{T}
     nearinteractions::NearInteractionsType
     dim::Tuple{Int,Int}
-    #tree::H2Trees.BlockTree
-    farinteractions::Vector{Tuple{Int,Int}}           #observernodeid --> sourcenodeid
-    BFs::Vector{ButterflyFactorization_Mat}
-    function PetrovGalerkinBF_Mat{T}(
-        nearinteractions,
-        #tree,
-        farinteractions,
-        BFs,
-        dim,
-    ) where {T}
-        return new{T,typeof(nearinteractions)}(
-            nearinteractions,
-            dim,
-            # Here come all other fields needed for the ButterflyFactorizations
-            #tree,#::H2Trees.BlockTree
-            farinteractions,      #observernodeid --> sourcenodeid
-            BFs,#::Vector{BF}
-        )
+    farinteractions::Vector{Tuple{Int,Int}}
+    BFs::Vector{ButterflyFactorization_Mat{T}}
+
+    function PetrovGalerkinBF_Mat{T}(nearinteractions, farinteractions, BFs, dim) where {T}
+        return new{T,typeof(nearinteractions)}(nearinteractions, dim, farinteractions, BFs)
     end
 end

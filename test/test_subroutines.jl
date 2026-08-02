@@ -105,10 +105,10 @@
     @test norm(x_test3 - x_s3) / norm(x_s3) < 10^(-2)
     @test norm(x_test4 - x_s4) / norm(x_s4) < 10^(-2)
 
-    @views mul!(x_test1[Bfly1m.PermP], Bfly1m, x_t[Bfly1m.PermQ])
-    @views mul!(x_test2[Bfly2m.PermP], Bfly2m, x_t[Bfly2m.PermQ])
-    @views mul!(x_test3[Bfly3m.PermP], Bfly3m, x_t[Bfly3m.PermQ])
-    @views mul!(x_test4[Bfly4m.PermP], Bfly4m, x_t2[Bfly4m.PermQ])
+    @views mul!(x_test1[Bfly1m.permP], Bfly1m, x_t[Bfly1m.permQ])
+    @views mul!(x_test2[Bfly2m.permP], Bfly2m, x_t[Bfly2m.permQ])
+    @views mul!(x_test3[Bfly3m.permP], Bfly3m, x_t[Bfly3m.permQ])
+    @views mul!(x_test4[Bfly4m.permP], Bfly4m, x_t2[Bfly4m.permQ])
 
     @test norm(x_test1 - x_s1) / norm(x_s1) < 10^(-2)
     @test norm(x_test2 - x_s2) / norm(x_s2) < 10^(-2)

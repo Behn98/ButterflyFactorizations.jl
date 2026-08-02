@@ -1,29 +1,46 @@
 """
-    recompress_BF(Butterfly ::ButterflyFactorization, τ)
+    recompress_BF(Butterfly::ButterflyFactorization, τ)
 
 Recompresses a structural Butterfly Factorization (`BF`) by extracting its algebraic
-factors, recompressing them with tolerance `τ`, and restructuring the output back into a
-`BF`. This process involves two main steps: first, the right factors are recompressed using
+factors, recompressing them with tolerance `τ`, and restructuring the output back into a `BF`.
+
+This process involves two main steps: first, the right factors are recompressed using
 a QR-based approach, and then the left factors are recompressed by transposing the
-structure, applying the same right recompression, and transposing back. The resulting `BF`
-maintains the same hierarchical structure but with potentially reduced ranks in the `R`
-factors, leading to improved efficiency in storage and matrix-vector products while
-preserving the overall accuracy within the specified tolerance. Any of the algebraic
-operations is only supported for the Dictionary versions of the Butterflies, as the
-matrix-based format is not designed for algebraic manipulations and would require a complete
-restructuring of the underlying data representation to support such operations effectively.
+structure, applying the same right recompression, and transposing back.
+
+The resulting `BF` maintains the same hierarchical structure but with potentially reduced
+ranks in the `R` factors, leading to improved efficiency in storage and matrix-vector
+products while preserving the overall accuracy within the specified tolerance.
+
+*Note:* Algebraic recompression is only supported for the dictionary-based versions
+of the butterflies. The matrix-based format is not designed for such manipulations and
+would require a complete restructuring of its underlying data representation.
 """
 function recompress_BF(Butterfly::ButterflyFactorization, τ)
     return recompress_BF_left(recompress_BF_right(Butterfly, τ), τ)
 end
 
+"""
+    recompress_BF_left(Butterfly::ButterflyFactorization, τ)
+
+Recompresses the left-hand side factors of a Butterfly Factorization by taking its adjoint,
+applying right-recompression, and taking the adjoint again.
+"""
 function recompress_BF_left(Butterfly::ButterflyFactorization, τ)
     return recompress_BF_right(Butterfly', τ)'
 end
+
 # Helper functions to extract domains (columns) and codomains (rows)
 _col_key(b::ButterflyBlock) = (b.obs_in, b.src_in)
 _row_key(b::ButterflyBlock) = (b.obs_out, b.src_out)
 
+"""
+    recompress_BF_right(Butterfly_init::ButterflyFactorization, τ::Float64; scheduler)
+
+Applies QR-based rank reduction to the right-hand side hierarchical `R` factors of the
+Butterfly Factorization. Processes interacting chunks in parallel using `OhMyThreads`
+to maintain high assembly performance.
+"""
 function recompress_BF_right(
     Butterfly_init::ButterflyFactorization{T,M},
     τ::Float64;
@@ -100,7 +117,6 @@ function recompress_BF_right(
         end
 
         # 6. Apply R_u to the next level (lold - 1) in parallel
-        # We can map over the next level's blocks independently!
         next_blocks = R_factors[lold - 1].blocks
 
         tmap!(next_blocks, next_blocks; scheduler=scheduler) do block
@@ -120,7 +136,7 @@ function recompress_BF_right(
         end
     end
 
-    # Return new factorisation
+    # Return new factorization
     return ButterflyFactorization(
         Butterfly_init.Q,
         R_factors,
@@ -129,35 +145,4 @@ function recompress_BF_right(
         Butterfly_init.k,
         Butterfly_init.τ,
     )
-end
-
-# Overload 1: Updating intermediate R factors (Clean 1:1 matching)
-function update_next_level_R_right(
-    R_u::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
-    rightfactor::Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Matrix{ComplexF64}}},
-)
-    for row in keys(rightfactor)
-        # Because the row key of rightfactor is exactly the col_idx of the previous level
-        if haskey(R_u, row)
-            T_mat = R_u[row]
-            for col in keys(rightfactor[row])
-                rightfactor[row][col] = T_mat * rightfactor[row][col]
-            end
-        end
-    end
-    return rightfactor
-end
-
-# Overload 2: Updating the terminal Q factor
-function update_next_level_R_right(
-    R_u::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
-    rightfactor::Dict{Tuple{Int,Int},Matrix{ComplexF64}},
-)
-    for col_idx in keys(R_u)
-        nodeS = col_idx[2] # Pull out the source leaf node ID directly
-        if haskey(rightfactor, nodeS)
-            rightfactor[nodeS] = R_u[col_idx] * rightfactor[nodeS]
-        end
-    end
-    return rightfactor
 end

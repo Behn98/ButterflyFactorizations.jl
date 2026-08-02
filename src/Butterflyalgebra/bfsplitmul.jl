@@ -47,8 +47,8 @@ representation.
 """
 function splitmulbf(
     bfcluster::Matrix{ButterflyFactorization{T,M}},
-    higherkBF::ButterflyFactorization{T,M},
-    τ::Float64,
+    higherkBF::ButterflyFactorization{T,M};
+    τ=higherkBF.τ,
 ) where {T,M}
 
     # Step 1: Split the higher-level BF into child-level BFs
@@ -79,9 +79,10 @@ function splitmulbf(
 end
 
 function splitobsside(
-    BF::ButterflyFactorization{T,M};
+    BF_init::ButterflyFactorization{T,M};
     obschildren=sort!(cluster_children(cluster_testtree(BF.tree), getNSNO(BF)[2])),
 ) where {T,M}
+    BF = deepcopy(BF_init)
     depth=log2(length(obschildren))
     L = length(BF.R)
     bfdiagonal = Vector{ButterflyFactorization{T,M}}(undef, length(obschildren))
