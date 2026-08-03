@@ -19,7 +19,7 @@ function ButterflyFactorizations.tree_parameters(tree::H2Trees.TwoNTree)
     return ButterflyFactorizations.TreeParameters(0.1, 2.3858, 1.8072, 1.0)
 end
 
-function ButterflyFactorizations.tree_parameters(tree::H2Trees.BisectionTree)
+function ButterflyFactorizations.tree_parameters(tree::BisectionTree)
     return ButterflyFactorizations.TreeParameters(0.1, 0.5197, 2.6569, 1.0)
 end
 
