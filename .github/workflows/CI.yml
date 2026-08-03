@@ -39,19 +39,6 @@ jobs:
           arch: ${{ matrix.arch }}
           
       - uses: julia-actions/cache@v2
-
-      - name: Use Custom Private H2Trees Fork
-        env:
-          PRIVATE_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
-        shell: julia --project=@. {0}
-        run: |
-          using Pkg
-          token = ENV["PRIVATE_TOKEN"]
-          
-          repo_url = "https://$(token)@github.com/Behn98/H2Trees.jl.git"
-          Pkg.add(url=repo_url, rev="uniformly_balanced_bisectiontrees")
-      # ==========================================================
-
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
       
@@ -68,16 +55,6 @@ jobs:
         with:
           version: '1'
       - uses: julia-actions/cache@v2
-      - name: Use Custom Private H2Trees Fork
-        env:
-          PRIVATE_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
-        shell: julia --project=@. {0}
-        run: |
-          using Pkg
-          token = ENV["PRIVATE_TOKEN"]
-          
-          repo_url = "https://$(token)@github.com/Behn98/H2Trees.jl.git"
-          Pkg.add(url=repo_url, rev="uniformly_balanced_bisectiontrees")
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-docdeploy@v1
         env:

@@ -9,8 +9,8 @@ and the maximum half-size `W` of the two clusters. Contains a singularity interc
 to prevent zero-volume node overlaps from blowing up integral evaluations.
 """
 function (t::ButterflyFactorizations.isFarFunctor)(
-    srctree::Union{H2Trees.TwoNTree,H2Trees.BisectionTree},
-    tsttree::Union{H2Trees.TwoNTree,H2Trees.BisectionTree},
+    srctree::Union{H2Trees.TwoNTree,BisectionTree},
+    tsttree::Union{H2Trees.TwoNTree,BisectionTree},
     snode::Int,
     onode::Int,
 )
@@ -72,7 +72,7 @@ An alternative admissibility condition relying entirely on the macroscopic cente
 distance, rendering it immune to overlapping origin traps.
 """
 function (t::ButterflyFactorizations.CenterDistanceAdmissibility)(
-    srctree::H2Trees.BisectionTree, tsttree::H2Trees.BisectionTree, snode::Int, onode::Int
+    srctree::BisectionTree, tsttree::BisectionTree, snode::Int, onode::Int
 )
     ocenter = ButterflyFactorizations.cluster_center(tsttree, onode)
     scenter = ButterflyFactorizations.cluster_center(srctree, snode)

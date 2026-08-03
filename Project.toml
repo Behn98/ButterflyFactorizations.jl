@@ -5,7 +5,6 @@ authors = ["Ben Christopher Merten <ben.merten@uni-rostock.de>"]
 
 [deps]
 BlockSparseMatrices = "1ef78180-cc57-4e70-b6ec-c3e471307147"
-H2Trees = "9db26ae3-82ff-4374-85e9-9ed87405fd16"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 LinearMaps = "7a12625a-238d-50fd-b39a-03d52299707e"
 LowRankApprox = "898213cb-b102-5a47-900c-97e73b919f73"
@@ -16,6 +15,7 @@ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [weakdeps]
 BEAST = "bb4162c7-ba94-5a20-af32-d8ec4428bdd1"
+H2Trees = "9db26ae3-82ff-4374-85e9-9ed87405fd16"
 
 [extensions]
 BFBEAST = ["BEAST"]
