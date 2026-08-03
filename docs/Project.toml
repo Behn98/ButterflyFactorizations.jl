@@ -2,3 +2,6 @@
 BEAST = "bb4162c7-ba94-5a20-af32-d8ec4428bdd1"
 ButterflyFactorizations = "1afcf66b-6a8b-44ef-a816-9c75916d68ab"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+
+[compat]
+Documenter = "1.17.0"
