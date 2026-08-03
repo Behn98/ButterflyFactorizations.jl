@@ -35,8 +35,8 @@
     # =========================================================================
     # 2. Tree Construction and BlockTrees
     # =========================================================================
-    Ttree = BisectionTree(T.pos; max_points=20)
-    Utree = BisectionTree(U.pos; max_points=20)
+    Ttree = ButterflyFactorizations.build_bisection_tree(T.pos; max_points=20)
+    Utree = ButterflyFactorizations.build_bisection_tree(U.pos; max_points=20)
 
     # Operator: Maps from U (Column Space) -> T (Row Space)
     blktree = H2Trees.BlockTree(Ttree, Utree)

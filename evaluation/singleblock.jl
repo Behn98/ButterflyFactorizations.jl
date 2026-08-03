@@ -12,10 +12,10 @@ using Random
 using SparseArrays
 using StaticArrays
 using OhMyThreads
+using LinearMaps
 
 # --- Fitting Helper Functions ---
 f_nlogn(N) = N * log2(N)
-f_nlog2n(N) = N * (log2(N))^2
 
 function fit_scaling_factor(
     N_vec::Vector{Int}, Y_vec::Vector{Float64}, scaling_func::Function
@@ -54,368 +54,490 @@ function bf_matrix_memory(bf)
     return mem_bytes / 1024^2
 end
 
-# 🚀 NEW: Adjusted to read directly from a single BF block
+function estimate_norm(mat; tol=1e-4, itmax=100)
+    v = rand(ComplexF64, size(mat, 2))
+    v ./= norm(v)
+    itermin = 3
+    i = 1
+    σold = 1.0
+    σnew = 1.0
+
+    while (norm(sqrt(σold) - sqrt(σnew)) / norm(sqrt(σold)) > tol || i < itermin) &&
+        i < itmax
+        σold = σnew
+        w = mat * v
+        x = adjoint(mat) * w
+        σnew = norm(x)
+        v = x ./ σnew
+        i += 1
+    end
+    return sqrt(σnew)
+end
+
+function estimate_reldifference(hmat::H, refmat; tol=1e-4, itmax=100) where {H}
+    @assert size(hmat) == size(refmat) "Dimensions of matrices do not match"
+
+    v = rand(ComplexF64, size(hmat, 2))
+    v ./= norm(v)
+    itermin = 3
+    i = 1
+    σold = 1.0
+    σnew = 1.0
+
+    while (norm(sqrt(σold) - sqrt(σnew)) / norm(sqrt(σold)) > tol || i < itermin) &&
+        i < itmax
+        σold = σnew
+        w = (hmat * v) .- (refmat * v)
+        x = (adjoint(hmat) * w) .- (adjoint(refmat) * w)
+        σnew = norm(x)
+
+        if σnew < 1e-14
+            v .= zero(eltype(v))
+            break
+        end
+
+        v = x ./ σnew
+        i += 1
+    end
+
+    norm_refmat = estimate_norm(refmat; tol=tol)
+    return sqrt(σnew) / norm_refmat
+end
+
 function extract_ranks_per_level_single(bf)
     level_max_ranks = Dict{Int,Int}()
-
-    # Q blocks (Leaves / BF Level 1)
     q_rank = maximum([size(b.data, 1) for b in bf.Q if b.data isa AbstractMatrix]; init=0)
     level_max_ranks[1] = max(get(level_max_ranks, 1, 0), q_rank)
 
-    # R blocks (Intermediate BF levels)
     for (l, level) in enumerate(bf.R)
         r_rank = maximum(
             [size(b.data, 1) for b in level.blocks if b.data isa AbstractMatrix]; init=0
         )
         level_max_ranks[l + 1] = max(get(level_max_ranks, l+1, 0), r_rank)
     end
-
     return level_max_ranks
 end
 
+# --- Benchmark Execution ---
 function run_single_farfield_benchmark(
     h_values;
     highf::Bool=true,
     separation_distance::Float64=3.0,
-    bf_tol::Float64=1e-3,
+    tolvalues::Vector{Float64}=[1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10],
     maxpointsbisection::Int=50,
     csv_file::String="single_farfield_results.csv",
+    rectangulargeom::Bool=true,
+    geomfaceoff::Bool=true,
+    treekind::Symbol=:KMeansTree,
+    denseassemble::Bool=false,
     scheduler=OhMyThreads.DynamicScheduler(),
 )
     BLAS.set_num_threads(1)
 
-    N_vals = Int[]
-    t_bf_vals = Float64[]
-    mem_bf_entries_vals = Float64[]
-    mem_bf_total_vals = Float64[]
-    t_mv_bf_vals = Float64[]
-
-    # 🚀 NEW: Arrays for Error and Rank tracking
-    err_bf_vals = Float64[]
-    k_vals = Float64[]
-    max_R_ranks = Int[]
+    # Data collection arrays
+    data_N = Int[]
+    data_tol = Float64[]
+    data_err = Float64[]
+    data_time = Float64[]
+    data_mem = Float64[]
+    data_mv = Float64[]
+    data_max_rank = Int[]
     p_level_ranks_all = PlotlyJS.SyncPlot[]
+    dist = 2 * sqrt(2)
 
-    println("==========================================================")
-    println(" Starting Single Far-Field Interaction Benchmark")
-    println(" Separation Distance : $separation_distance")
-    println(" Target Tolerance    : $bf_tol")
-    println(" Output CSV          : $csv_file")
-    println("==========================================================\n")
+    if rectangulargeom
+        println("==========================================================")
+        println(" Starting Single Far-Field Interaction Benchmark")
+        println(" Separation Distance : $dist")
+        println(" Output CSV          : $csv_file")
+        println("==========================================================\n")
+    else
+        println("==========================================================")
+        println(" Starting Single Far-Field Interaction Benchmark")
+        println(" Separation Distance : $separation_distance")
+        println(" Output CSV          : $csv_file")
+        println("==========================================================\n")
+    end
 
     csv_stream = open(csv_file, "w")
-    write(
-        csv_stream,
-        "h,N,time_bf_s,ref_time_nlogn,mem_entries_mb,ref_mem_nlogn,mv_bf_s,ref_mv_nlogn,err_bf,max_R_rank\n",
-    )
+    write(csv_stream, "h,N,target_tol,actual_err,time_s,mem_mb,mv_s,max_R_rank\n")
     flush(csv_stream)
 
     for (i, h) in enumerate(h_values)
         println("--- Round $i (h = $h) ---")
-        if highf
-            lambda = 10 * h
-            k = 2 * pi / lambda
-        else
-            lambda = 1.0
-            k = 2 * pi / lambda
-        end
-
+        lambda = highf ? 10 * h : 1.0
+        k = 2 * pi / lambda
         op = Maxwell3D.singlelayer(; wavenumber=k)
 
-        # 1. Geometry: Target sphere translated far away along X-axis
-        m_src = meshsphere(1.0, h)
-        m_tgt = translate(meshsphere(1.0, h), SVector(separation_distance, 0.0, 0.0))
+        if rectangulargeom
+            m_src = meshrectangle(1.0, 1.0, h)
+            m_tgt = translate(
+                meshrectangle(1.0, 1.0, h),
+                geomfaceoff ? SVector(0.0, 0.0, dist) : SVector(dist, 0.0, 0.0),
+            )
+        else
+            m_src = meshsphere(1.0, h)
+            m_tgt = translate(meshsphere(1.0, h), SVector(separation_distance, 0.0, 0.0))
+        end
 
         X = raviartthomas(m_src)
         Y = raviartthomas(m_tgt)
         N = length(X)
-
+        if denseassemble
+            println("Computing Dense Reference Matrix A for N = $N...")
+            A = assemble(op, Y, X)
+        end
         nearmatrix_far = ButterflyFactorizations.AbstractKernelMatrix(op, Y, X; type=:far)
 
-        # 2. Build Trees for Butterfly
-        Stree = H2Trees.BisectionTree(X.pos; max_points=maxpointsbisection)
-        Otree = H2Trees.BisectionTree(Y.pos; max_points=maxpointsbisection)
-        blktree = H2Trees.BlockTree(Otree, Stree)
-
-        # 3. Assemble Single Far-Field Butterfly Factorization
-        t_bf = @elapsed begin
-            Bfmat = ButterflyFactorizations.assemble_BF(
-                nearmatrix_far,
-                blktree,
-                1,
-                1,
-                k,
-                bf_tol;
-                compressor=ButterflyFactorizations.PartialQR(),
-                scheduler=scheduler,
+        if treekind == :KMeansTree
+            Stree = KMeansTree(X.pos, 2; minvalues=100)
+            Otree = KMeansTree(Y.pos, 2; minvalues=100)
+        elseif treekind == :BisectionTree
+            Stree = ButterflyFactorizations.build_bisection_tree(
+                X.pos; max_points=maxpointsbisection
+            )
+            Otree = ButterflyFactorizations.build_bisection_tree(
+                Y.pos; max_points=maxpointsbisection
             )
         end
-
-        mem_total = Base.summarysize(Bfmat) / 1024^2
-        mem_entries = bf_matrix_memory(Bfmat)
-
-        # 4. Mat-Vec Benchmark
-        xtest = randn(ComplexF64, length(X))
-        t_mv_bf = @belapsed $Bfmat * $xtest
-        x_mv_bf = Bfmat * xtest
-
-        # 🚀 NEW: Reference ACA Computation for Accuracy Validation
-        println("Computing reference ACA Matrix (tol = $(bf_tol * 1e-2))...")
-        ACAstree = H2Trees.KMeansTree(X.pos, 2; minvalues=100)
-        ACAotree = H2Trees.KMeansTree(Y.pos, 2; minvalues=100)
-        ACAblktree = H2Trees.BlockTree(ACAotree, ACAstree)
-
-        # Default isnear is fine, it will safely detect everything as farfield
-        hmat = HMatrix(
-            op,
-            Y,
-            X,
-            ACAblktree;
-            tol=bf_tol * 1e-2,
-            spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
-            scheduler=scheduler,
-            maxrank=150,
-        )
-
-        x_mv_aca = hmat * xtest
-        err_bf = norm(x_mv_aca - x_mv_bf) / norm(x_mv_aca)
-        err_str = @sprintf("Relative Error vs ACA: %.2e", err_bf)
-        println(err_str)
-
-        # 🚀 NEW: Extract Ranks and Plot per Level
-        ranks_dict = extract_ranks_per_level_single(Bfmat)
+        blktree = H2Trees.BlockTree(Otree, Stree)
         tree_height = length(blktree.testcluster.nodesatlevel)
-        sorted_levels = sort(collect(keys(ranks_dict)))
-        ranks_at_levels = [ranks_dict[l] for l in sorted_levels]
 
-        p_level_ranks = plot(
-            [
+        traces_level_ranks = GenericTrace[]
+
+        for bf_tol in tolvalues
+            @printf("  -> Testing tol = %.1e ... \n", bf_tol)
+            @printf(
+                "Computing Butterfly Factorization (N = %d, h = %.4f, tol = %.1e)\n",
+                N,
+                h,
+                bf_tol
+            )
+
+            t_bf = @elapsed begin
+                Bfmat = ButterflyFactorizations.assemble_BF(
+                    nearmatrix_far,
+                    blktree,
+                    1,
+                    1,
+                    k,
+                    bf_tol;
+                    compressor=ButterflyFactorizations.PartialQR(),
+                    scheduler=scheduler,
+                )
+            end
+
+            mem_entries = bf_matrix_memory(Bfmat)
+
+            xtest = randn(ComplexF64, length(X))
+            t_mv_bf = @belapsed $Bfmat * $xtest
+            err_bf = NaN
+            if denseassemble
+                # Using a tight tol=1e-5 for the power iteration to ensure the error measurement is accurate
+                err_bf = estimate_reldifference(Bfmat, A; tol=1e-5, itmax=150)
+            end
+            ranks_dict = extract_ranks_per_level_single(Bfmat)
+            sorted_levels = sort(collect(keys(ranks_dict)))
+            ranks_at_levels = [ranks_dict[l] for l in sorted_levels]
+
+            r_ranks = [ranks_dict[l] for l in sorted_levels if l > 1]
+            max_r_rank = isempty(r_ranks) ? 0 : maximum(r_ranks)
+
+            # Store Data
+            push!(data_N, N)
+            push!(data_tol, bf_tol)
+            push!(data_err, err_bf)
+            push!(data_time, t_bf)
+            push!(data_mem, mem_entries)
+            push!(data_mv, t_mv_bf)
+            push!(data_max_rank, max_r_rank)
+
+            push!(
+                traces_level_ranks,
                 scatter(;
                     x=sorted_levels,
                     y=ranks_at_levels,
+                    name="Tol = $(bf_tol)",
                     mode="lines+markers",
-                    line=attr(; color="darkorange", width=3),
-                    marker=attr(; size=8),
                 ),
-            ],
+            )
+
+            @printf("Err: %.2e | Time: %.3fs | Mem: %.1fMB\n", err_bf, t_bf, mem_entries)
+
+            # Write immediately to CSV
+            csv_row = @sprintf(
+                "%.4f,%d,%.1e,%.3e,%.5f,%.2f,%.5f,%d\n",
+                h,
+                N,
+                bf_tol,
+                err_bf,
+                t_bf,
+                mem_entries,
+                t_mv_bf,
+                max_r_rank
+            )
+            write(csv_stream, csv_row)
+            flush(csv_stream)
+        end
+
+        # Plot Ranks per level for this specific geometry (N)
+        p_lvl = plot(
+            traces_level_ranks,
             Layout(;
-                title="Single BF Rank vs Level (h = $h, k = $(round(k, digits=2)))<br><sup>Total Tree Height = $tree_height</sup>",
+                title="BF Rank per Level (N = $N, h = $h)",
                 xaxis_title="Butterfly Factorization Level (1 = Leaves)",
                 yaxis_title="Maximum Rank",
                 template="plotly_white",
-                yaxis=attr(; rangemode="tozero"),
             ),
         )
-        savefig(p_level_ranks, "plot_single_ranks_vs_level_h_$(h).html")
-        push!(p_level_ranks_all, p_level_ranks)
-
-        r_ranks = [ranks_dict[l] for l in sorted_levels if l > 1]
-        max_r_rank = isempty(r_ranks) ? 0 : maximum(r_ranks)
-
-        # Push metrics to arrays
-        push!(N_vals, N)
-        push!(t_bf_vals, t_bf)
-        push!(mem_bf_total_vals, mem_total)
-        push!(mem_bf_entries_vals, mem_entries)
-        push!(t_mv_bf_vals, t_mv_bf)
-        push!(err_bf_vals, err_bf)
-        push!(k_vals, k)
-        push!(max_R_ranks, max_r_rank)
-
-        num_bfs = 1
-        @printf(
-            "N: %6d | BF Count: %d | Tree Depth: %d | Build: %.4fs | Mem Entries: %.2fMB | MV: %.5fs\n",
-            N,
-            num_bfs,
-            tree_height,
-            t_bf,
-            mem_entries,
-            t_mv_bf
-        )
-
-        # Dynamic Reference Curves Fitting
-        c_time_nlogn = fit_scaling_factor(N_vals, t_bf_vals, f_nlogn)
-        c_mem_nlogn = fit_scaling_factor(N_vals, mem_bf_entries_vals, f_nlogn)
-        c_mv_nlogn = fit_scaling_factor(N_vals, t_mv_bf_vals, f_nlogn)
-
-        csv_row = @sprintf(
-            "%.4f,%d,%.5f,%.5f,%.2f,%.2f,%.5f,%.5f,%.3e,%d\n",
-            h,
-            N,
-            t_bf,
-            c_time_nlogn * f_nlogn(N),
-            mem_entries,
-            c_mem_nlogn * f_nlogn(N),
-            t_mv_bf,
-            c_mv_nlogn * f_nlogn(N),
-            err_bf,
-            max_r_rank
-        )
-        write(csv_stream, csv_row)
-        flush(csv_stream)
+        savefig(p_lvl, "plot_single_bf_ranks_N$(N)_h$(h).html")
+        push!(p_level_ranks_all, p_lvl)
     end
-
     close(csv_stream)
 
-    # 5. Final Incremental Plot Generation
-    c_time_nlogn = fit_scaling_factor(N_vals, t_bf_vals, f_nlogn)
-    c_mem_nlogn = fit_scaling_factor(N_vals, mem_bf_entries_vals, f_nlogn)
-    c_mv_nlogn = fit_scaling_factor(N_vals, t_mv_bf_vals, f_nlogn)
+    # --- Generate Plots grouped by N (Trade-offs) ---
+    unique_Ns = unique(data_N)
+    traces_acc = GenericTrace[]
+    traces_mem = GenericTrace[]
+    traces_rank = GenericTrace[]
 
-    ref_time = c_time_nlogn .* f_nlogn.(N_vals)
-    ref_mem = c_mem_nlogn .* f_nlogn.(N_vals)
-    ref_mv = c_mv_nlogn .* f_nlogn.(N_vals)
+    push!(
+        traces_acc,
+        scatter(;
+            x=tolvalues,
+            y=tolvalues,
+            name="Ideal (Err = Tol)",
+            mode="lines",
+            line=attr(; color="black", dash="dash"),
+        ),
+    )
 
-    p_time = plot(
-        [
+    for n in unique_Ns
+        idx = findall(x -> x == n, data_N)
+        sort_idx = sortperm(data_tol[idx])
+        idx = idx[sort_idx]
+
+        x_tol = data_tol[idx]
+        y_err = data_err[idx]
+        y_mem_tradeoff = data_mem[idx]
+        y_rank = data_max_rank[idx]
+
+        push!(traces_acc, scatter(; x=x_tol, y=y_err, name="N = $n", mode="lines+markers"))
+        push!(
+            traces_mem,
+            scatter(; x=y_err, y=y_mem_tradeoff, name="N = $n", mode="lines+markers"),
+        )
+        push!(
+            traces_rank, scatter(; x=x_tol, y=y_rank, name="N = $n", mode="lines+markers")
+        )
+    end
+
+    # --- Generate Plots grouped by Tolerance (Scaling over N) ---
+    unique_tols = unique(data_tol)
+    traces_time_N = GenericTrace[]
+    traces_mv_N = GenericTrace[]
+    traces_mem_N = GenericTrace[] # 🚀 NEW: Memory vs N
+
+    # We use a color palette sequence so the N log N fit matches the data line color
+    colors = [
+        "#1f77b4",
+        "#ff7f0e",
+        "#2ca02c",
+        "#d62728",
+        "#9467bd",
+        "#8c564b",
+        "#e377c2",
+        "#7f7f7f",
+        "#bcbd22",
+        "#17becf",
+    ]
+
+    for (idx_tol, tol) in enumerate(unique_tols)
+        idx = findall(x -> x == tol, data_tol)
+        sort_idx = sortperm(data_N[idx])
+        idx = idx[sort_idx]
+
+        x_N = data_N[idx]
+        y_time = data_time[idx]
+        y_mv = data_mv[idx]
+        y_mem = data_mem[idx] # 🚀 NEW
+
+        c = colors[((idx_tol - 1) % length(colors)) + 1]
+
+        # Actual Data
+        push!(
+            traces_time_N,
             scatter(;
-                x=N_vals,
-                y=t_bf_vals,
-                name="Single BF Build Time",
+                x=x_N,
+                y=y_time,
+                name="Tol = $tol",
                 mode="lines+markers",
-                line=attr(; color="royalblue", width=2),
+                line=attr(; color=c),
             ),
+        )
+        push!(
+            traces_mv_N,
             scatter(;
-                x=N_vals,
-                y=ref_time,
-                name="O(N log N) Fit",
-                mode="lines",
-                line=attr(; color="gray", dash="dash"),
+                x=x_N, y=y_mv, name="Tol = $tol", mode="lines+markers", line=attr(; color=c)
             ),
-        ],
+        )
+        push!(
+            traces_mem_N,
+            scatter(;
+                x=x_N,
+                y=y_mem,
+                name="Tol = $tol",
+                mode="lines+markers",
+                line=attr(; color=c),
+            ),
+        ) # 🚀 NEW
+
+        # N log N Fit (only if we have more than 1 point to fit)
+        if length(x_N) > 1
+            c_time = fit_scaling_factor(x_N, y_time, f_nlogn)
+            c_mv = fit_scaling_factor(x_N, y_mv, f_nlogn)
+            c_mem = fit_scaling_factor(x_N, y_mem, f_nlogn) # 🚀 NEW
+
+            push!(
+                traces_time_N,
+                scatter(;
+                    x=x_N,
+                    y=c_time .* f_nlogn.(x_N),
+                    name="O(N log N)",
+                    mode="lines",
+                    showlegend=false,
+                    line=attr(; color=c, dash="dash", width=1),
+                ),
+            )
+            push!(
+                traces_mv_N,
+                scatter(;
+                    x=x_N,
+                    y=c_mv .* f_nlogn.(x_N),
+                    name="O(N log N)",
+                    mode="lines",
+                    showlegend=false,
+                    line=attr(; color=c, dash="dash", width=1),
+                ),
+            )
+            push!(
+                traces_mem_N,
+                scatter(;
+                    x=x_N,
+                    y=c_mem .* f_nlogn.(x_N),
+                    name="O(N log N)",
+                    mode="lines",
+                    showlegend=false,
+                    line=attr(; color=c, dash="dash", width=1),
+                ),
+            ) # 🚀 NEW
+        end
+    end
+
+    # Build Layouts
+    p_acc = plot(
+        traces_acc,
         Layout(;
-            title="Single Far-Field BF Assembly Time vs N",
-            xaxis_title="N (DOFs)",
-            yaxis_title="Time (s)",
+            title="Measured Error vs. Target Tolerance",
+            xaxis_title="Target Tolerance",
+            yaxis_title="Actual Relative Error",
+            xaxis_type="log",
             yaxis_type="log",
+            template="plotly_white",
+        ),
+    )
+    p_mem = plot(
+        traces_mem,
+        Layout(;
+            title="Memory Footprint vs. Measured Error",
+            xaxis_title="Actual Relative Error",
+            yaxis_title="Memory (MB)",
+            xaxis_type="log",
+            yaxis_type="log",
+            template="plotly_white",
+        ),
+    )
+    p_rank = plot(
+        traces_rank,
+        Layout(;
+            title="Maximum Rank vs. Target Tolerance",
+            xaxis_title="Target Tolerance",
+            yaxis_title="Max R-Block Rank",
             xaxis_type="log",
             template="plotly_white",
         ),
     )
 
-    p_mem = plot(
-        [
-            scatter(;
-                x=N_vals,
-                y=mem_bf_entries_vals,
-                name="Single BF Matrix Entries",
-                mode="lines+markers",
-                line=attr(; color="royalblue", width=2),
-            ),
-            scatter(;
-                x=N_vals,
-                y=ref_mem,
-                name="O(N log N) Fit",
-                mode="lines",
-                line=attr(; color="gray", dash="dash"),
-            ),
-        ],
+    p_time_N = plot(
+        traces_time_N,
         Layout(;
-            title="Single Far-Field BF Memory Footprint vs N",
+            title="Assembly Time vs N (Dashed = O(N log N))",
+            xaxis_title="N (DOFs)",
+            yaxis_title="Assembly Time (s)",
+            xaxis_type="log",
+            yaxis_type="log",
+            template="plotly_white",
+        ),
+    )
+    p_mv_N = plot(
+        traces_mv_N,
+        Layout(;
+            title="Mat-Vec Time vs N (Dashed = O(N log N))",
+            xaxis_title="N (DOFs)",
+            yaxis_title="Mat-Vec Time (s)",
+            xaxis_type="log",
+            yaxis_type="log",
+            template="plotly_white",
+        ),
+    )
+    p_mem_N = plot(
+        traces_mem_N,
+        Layout(;
+            title="Memory vs N (Dashed = O(N log N))",
             xaxis_title="N (DOFs)",
             yaxis_title="Memory (MB)",
+            xaxis_type="log",
             yaxis_type="log",
-            xaxis_type="log",
             template="plotly_white",
         ),
-    )
+    ) # 🚀 NEW
 
-    p_mv = plot(
-        [
-            scatter(;
-                x=N_vals,
-                y=t_mv_bf_vals,
-                name="Single BF Mat-Vec Time",
-                mode="lines+markers",
-                line=attr(; color="royalblue", width=2),
-            ),
-            scatter(;
-                x=N_vals,
-                y=ref_mv,
-                name="O(N log N) Fit",
-                mode="lines",
-                line=attr(; color="gray", dash="dash"),
-            ),
-        ],
-        Layout(;
-            title="Single Far-Field BF Mat-Vec Time vs N",
-            xaxis_title="N (DOFs)",
-            yaxis_title="Time (s)",
-            yaxis_type="log",
-            xaxis_type="log",
-            template="plotly_white",
-        ),
-    )
+    # Save to HTML
+    savefig(p_acc, "plot_single_bf_accuracy.html")
+    savefig(p_mem, "plot_single_bf_memory_tradeoff.html")
+    savefig(p_rank, "plot_single_bf_max_rank.html")
+    savefig(p_time_N, "plot_single_bf_time_vs_N.html")
+    savefig(p_mv_N, "plot_single_bf_mv_vs_N.html")
+    savefig(p_mem_N, "plot_single_bf_memory_vs_N.html") # 🚀 NEW
 
-    # 🚀 NEW: Accuracy and Rank plots
-    p_err = plot(
-        [
-            scatter(;
-                x=N_vals,
-                y=err_bf_vals,
-                name="Single BF Relative Error",
-                mode="lines+markers",
-                line=attr(; color="seagreen", width=2),
-            ),
-        ],
-        Layout(;
-            title="Single BF Accuracy vs N",
-            xaxis_title="N (DOFs)",
-            yaxis_title="Relative Error",
-            yaxis_type="log",
-            xaxis_type="log",
-            template="plotly_white",
-        ),
-    )
-
-    p_rank_vs_k = plot(
-        [
-            scatter(;
-                x=k_vals,
-                y=max_R_ranks,
-                mode="lines+markers",
-                line=attr(; color="purple", width=3),
-                marker=attr(; size=8),
-            ),
-        ],
-        Layout(;
-            title="Single BF Max R-Block Rank vs. Wavenumber (k)",
-            xaxis_title="Wavenumber (k)",
-            yaxis_title="Maximum Rank in R Factors",
-            xaxis_type="log",
-            yaxis_type="linear",
-            template="plotly_white",
-            yaxis=attr(; rangemode="tozero"),
-        ),
-    )
-
-    savefig(p_time, "plot_single_bf_build_time.html")
-    savefig(p_mem, "plot_single_bf_memory.html")
-    savefig(p_mv, "plot_single_bf_matvec.html")
-    savefig(p_err, "plot_single_bf_accuracy.html")
-    savefig(p_rank_vs_k, "plot_single_bf_max_R_rank_vs_k.html")
-
-    println("\nSingle far-field benchmark complete! Data saved to '$csv_file'.")
-    return p_time, p_mem, p_mv, p_err, p_rank_vs_k, p_level_ranks_all
+    println("\nBenchmark complete! All data saved to '$csv_file'.")
+    return p_acc, p_time_N, p_mem, p_mem_N, p_mv_N, p_rank, p_level_ranks_all
 end
 
 # --- Execution ---
-h_values = [0.1, 0.05, 0.025, 0.0125, 0.00625]
-
-p_time, p_mem, p_mv, p_err, p_rank_vs_k, p_level_ranks_all = run_single_farfield_benchmark(
+h_values = [0.0125, 0.008, 0.006, 0.004, 0.003]
+#[0.0125, 0.008, 0.006, 0.004, 0.003] N = [19040, 46625, 83333, 187000, 332001]
+#[0.0055] N = [99008]
+p_acc, p_time_N, p_mem, p_mem_N, p_mv_N, p_rank, p_level_ranks_all = run_single_farfield_benchmark(
     h_values;
     highf=true,
     separation_distance=4.0,
-    bf_tol=1e-3,
-    maxpointsbisection=50,
+    maxpointsbisection=100,
+    treekind=:BisectionTree,
+    rectangulargeom=true,
+    geomfaceoff=false,
+    denseassemble=false,
+    tolvalues=[1e-3], #∈ [1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10]
+    scheduler=OhMyThreads.DynamicScheduler(),
     csv_file="single_farfield_results.csv",
 );
 
-display(p_time)
+display(p_acc)
+display(p_time_N)
 display(p_mem)
-display(p_mv)
-display(p_err)
-display(p_rank_vs_k)
+display(p_mem_N)
+display(p_mv_N)
+display(p_rank)
 
 for p in p_level_ranks_all
     display(p)

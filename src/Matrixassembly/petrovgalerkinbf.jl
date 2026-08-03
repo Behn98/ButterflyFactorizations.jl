@@ -44,6 +44,7 @@ function PetrovGalerkinBF(
     unbalancedints=false,
     leafcomp=true,
     leafimbalance=true,
+    farfieldonly=false,
 )
     # --- NEAR INTERACTIONS ---
     nearmatrix_near = AbstractKernelMatrix(operator, testspace, trialspace; type=:near)
@@ -57,6 +58,9 @@ function PetrovGalerkinBF(
         minbflvl=minbflvl,
     )
     n_ints = length(nearints)
+    if farfieldonly
+        n_ints = 0
+    end
     blocks = Vector{Matrix{acctype}}(undef, n_ints)
     test_indices = Vector{Vector{Int64}}(undef, n_ints)
     trial_indices = Vector{Vector{Int64}}(undef, n_ints)

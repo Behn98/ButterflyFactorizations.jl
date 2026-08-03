@@ -177,6 +177,7 @@ function run_benchmarks(
     adaptive=false,
     admissibility_spec::Symbol=:isFarFunctor,
     checkfarfieldaccuracy::Bool=false,
+    acarefmat::Bool=true,
     acacomparison::Bool=false,
     disjointgeom::Bool=true,
     unbalancedints::Bool=false,
@@ -264,8 +265,12 @@ function run_benchmarks(
                 Stree = H2Trees.KMeansTree(X.pos, 2; minvalues=50)
                 Otree = H2Trees.KMeansTree(Y.pos, 2; minvalues=50)
             elseif treekind == :BisectionTree
-                Stree = H2Trees.BisectionTree(X.pos; max_points=maxpointsbisection)
-                Otree = H2Trees.BisectionTree(Y.pos; max_points=maxpointsbisection)
+                Stree = ButterflyFactorizations.build_bisection_tree(
+                    X.pos; max_points=maxpointsbisection
+                )
+                Otree = ButterflyFactorizations.build_bisection_tree(
+                    Y.pos; max_points=maxpointsbisection
+                )
             else
                 Stree = H2Trees.TwoNTree(X, h)
                 Otree = H2Trees.TwoNTree(Y, h)
@@ -279,7 +284,9 @@ function run_benchmarks(
             if treekind == :KMeansTree
                 tree = H2Trees.KMeansTree(X.pos, 2; minvalues=30)
             elseif treekind == :BisectionTree
-                tree = H2Trees.BisectionTree(X.pos; max_points=maxpointsbisection)
+                tree = ButterflyFactorizations.build_bisection_tree(
+                    X.pos; max_points=maxpointsbisection
+                )
             else
                 tree = H2Trees.TwoNTree(X, h)
             end
@@ -452,59 +459,116 @@ function run_benchmarks(
         err_bf = NaN
         ref_aca_warnings = 0
         if checkfarfieldaccuracy
-            println(
-                "\nComputing reference ACA Far-Matrix for accuracy check (tol = $(bf_tol * 1e-2))...",
-            )
+            if acarefmat
+                println(
+                    "\nComputing reference ACA Far-Matrix for accuracy check (tol = $(bf_tol * 1e-2))...",
+                )
 
-            # Initialize the warning tracker
-            ref_aca_logger = WarningCounterLogger(current_logger(), Ref(0))
+                # Initialize the warning tracker
+                ref_aca_logger = WarningCounterLogger(current_logger(), Ref(0))
 
-            # Execute ACA inside the logger and return the matrix
-            refmat = with_logger(ref_aca_logger) do
-                if disjointgeom
-                    HMatrix(
+                # Execute ACA inside the logger and return the matrix
+                refmat = with_logger(ref_aca_logger) do
+                    if disjointgeom
+                        HMatrix(
+                            op,
+                            Y,
+                            X,
+                            blktree;
+                            tol=bf_tol * 1e-2,
+                            spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
+                            scheduler=scheduler,
+                            maxrank=refacamaxrank,
+                            isnear=local_isnear,
+                        )
+                    else
+                        HMatrix(
+                            op,
+                            X,
+                            X,
+                            blktree;
+                            tol=bf_tol * 1e-2,
+                            spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
+                            scheduler=scheduler,
+                            maxrank=refacamaxrank,
+                            isnear=local_isnear,
+                        )
+                    end
+                end
+
+                ref_aca_warnings = ref_aca_logger.count[]
+
+                ref_far = AdaptiveCrossApproximation.farmatrix(refmat)
+                bf_far = ButterflyFactorizations.farmatrix(Bfmat)
+
+                y_exact_far = ref_far * xtest
+                y_bf_far = bf_far * xtest
+
+                err_bf = norm(y_exact_far - y_bf_far) / norm(y_exact_far)
+
+                err_str = @sprintf(
+                    "Relative error of Far-field mat-vec: %.2e | Ref ACA MaxRank Warnings: %d",
+                    err_bf,
+                    ref_aca_warnings
+                )
+                println(err_str)
+                write(log_stream, err_str * "\n")
+            else
+                println(
+                    "\nComputing reference Butterfly Far-Matrix for accuracy check (tol = $(bf_tol * 1e-2))...",
+                )
+
+                refmat = if disjointgeom
+                    ButterflyFactorizations.PetrovGalerkinBF(
                         op,
                         Y,
                         X,
-                        blktree;
-                        tol=bf_tol * 1e-2,
-                        spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
+                        blktree,
+                        k;
+                        compressor=ButterflyFactorizations.PartialQR(),
                         scheduler=scheduler,
-                        maxrank=refacamaxrank,
-                        isnear=local_isnear,
+                        tol=bf_tol*1e-2,
+                        unbalancedints=unbalancedints,
+                        leafimbalance=(!checkfarfieldaccuracy),
+                        leafcomp=leafcompression,
+                        admissibility=admissibility,
+                        minbflvl=minbflvl,
+                        adaptive=adaptive,
+                        farfieldonly=true,
                     )
+
                 else
-                    HMatrix(
+                    ButterflyFactorizations.PetrovGalerkinBF(
                         op,
                         X,
                         X,
-                        blktree;
-                        tol=bf_tol * 1e-2,
-                        spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
+                        blktree,
+                        k;
+                        compressor=ButterflyFactorizations.PartialQR(),
                         scheduler=scheduler,
-                        maxrank=refacamaxrank,
-                        isnear=local_isnear,
+                        tol=bf_tol*1e-2,
+                        unbalancedints=unbalancedints,
+                        leafimbalance=(!checkfarfieldaccuracy),
+                        leafcomp=leafcompression,
+                        admissibility=admissibility,
+                        minbflvl=minbflvl,
+                        adaptive=adaptive,
+                        farfieldonly=true,
                     )
                 end
+
+                ref_far = ButterflyFactorizations.farmatrix(refmat)
+                bf_far = ButterflyFactorizations.farmatrix(Bfmat)
+
+                y_exact_far = ref_far * xtest
+                y_bf_far = bf_far * xtest
+
+                err_bf = norm(y_exact_far - y_bf_far) / norm(y_exact_far)
+
+                err_str = @sprintf("Relative error of Far-field mat-vec: %.2e", err_bf)
+                println(err_str)
+                write(log_stream, err_str * "\n")
             end
-
-            ref_aca_warnings = ref_aca_logger.count[]
-
-            ref_far = AdaptiveCrossApproximation.farmatrix(refmat)
-            bf_far = ButterflyFactorizations.farmatrix(Bfmat)
-
-            y_exact_far = ref_far * xtest
-            y_bf_far = bf_far * xtest
-
-            err_bf = norm(y_exact_far - y_bf_far) / norm(y_exact_far)
-
-            err_str = @sprintf(
-                "Relative error of Far-field mat-vec: %.2e | Ref ACA MaxRank Warnings: %d",
-                err_bf,
-                ref_aca_warnings
-            )
-            println(err_str)
-            write(log_stream, err_str * "\n")
         end
         t_aca = NaN
         mem_aca = NaN
@@ -897,7 +961,7 @@ function run_benchmarks(
     return p_time, p_mem, p_mv, p_err, p_rank_vs_k, p_level_ranks_all
 end
 
-h_values = [0.025, 0.0125, 0.00625]#0.05, 0.025, 0.0125, 0.00625
+h_values = [0.03, 0.02, 0.015, 0.01, 0.0075, 0.005]# 0.025, 0.0125, 0.00625]
 
 p_time, p_mem, p_mv, p_err, p_rank_vs_k, p_level_ranks_all = run_benchmarks(
     h_values;
@@ -906,15 +970,16 @@ p_time, p_mem, p_mv, p_err, p_rank_vs_k, p_level_ranks_all = run_benchmarks(
     bf_tol=1e-3,
     maxpointsbisection=100,
     minbflvl=3, # Minimum level in the BF to start compressing, however this is bypassed entirely if leafcompression = true
-    adaptive=true, # Set to true to enable adaptive rank estimation
-    admissibility_spec=:CenterDistanceAdmissibility, # ∈ {:CenterDistanceAdmissibility, :isFarFunctor}
+    adaptive=false, # Set to true to enable adaptive rank estimation
+    admissibility_spec=:isFarFunctor, # ∈ {:CenterDistanceAdmissibility, :isFarFunctor}
     checkfarfieldaccuracy=true, # Set to true to validate far-field accuracy against ACA
     acacomparison=true, # Set to true to benchmark against standard ACA
     unbalancedints=false, # Set to true to allow unbalanced near/far interactions (for testing)
     disjointgeom=false, # Set to true to use disjoint source/target geometries (for testing)
-    treekind=:BisectionTree, # ∈ {:KMeansTree, :BisectionTree, :TwoNTree}
+    treekind=:KMeansTree, # ∈ {:KMeansTree, :BisectionTree, :TwoNTree}
     highf=true, # Set to true to scale k with h, false to keep k constant
     leafcompression=true, # Set to true to enable leaf compression in the BF. For proper farfield comparison with ACA, this needs to be true
+    acarefmat=false, # Set to true to compute a reference ACA matrix for far-field accuracy check, alternatively, the BF far-field matrix is used for comparison.
     refacamaxrank=100, # Maximum rank for the reference ACA matrix used for far-field accuracy check
     acamaxrank=60, # Maximum rank for the ACA matrix used for comparison
     scheduler=OhMyThreads.DynamicScheduler(),

@@ -358,7 +358,8 @@ m = meshsphere(1.0, h)
 X = raviartthomas(m)
 N = length(X)
 
-tree = H2Trees.BisectionTree(X.pos; max_points=100)
+#tree = ButterflyFactorizations.build_bisection_tree(X.pos; max_points=100)
+tree = KMeansTree(X.pos, 2; minvalues=100)
 blktree = H2Trees.BlockTree(tree, tree)
 
 BLAS.set_num_threads(1)
@@ -371,12 +372,13 @@ results = benchmark_and_validate_alpha(
     k;
     compressor=ButterflyFactorizations.PartialQR(),
     tol=tol,
-    alpha_range=0.8:0.1:1.5, #0.0:0.1:2.0 for isFarFunctor, 0.8:0.1:2.0 for CenterDistanceAdmissibility
+    alpha_range=0.0:0.1:1.5, #0.0:0.1:2.0 for isFarFunctor, 0.8:0.1:2.0 for CenterDistanceAdmissibility
     scheduler=OhMyThreads.DynamicScheduler(),
     farfield_only=false,
-    criterion=:CenterDistanceAdmissibility, # ∈ [:isFarFunctor, :CenterDistanceAdmissibility]
+    criterion=:isFarFunctor, # ∈ [:isFarFunctor, :CenterDistanceAdmissibility]
 )
 
 fig = plot_alpha_performance_and_accuracy(results, tol)
-savefig(fig, "alpha_benchmark_results_CenterDistanceAdmissibility.html")
+#savefig(fig, "alpha_benchmark_results_CenterDistanceAdmissibility.html")
+savefig(fig, "alpha_benchmark_results_isFarFunctor.html")
 display(fig)
