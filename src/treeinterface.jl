@@ -143,3 +143,13 @@ By default, this evaluates `cluster_radius(tree1, node1) >= cluster_radius(tree2
 """
 largernode(tree1, tree2, node1, node2) =
     cluster_radius(tree1, node1) >= cluster_radius(tree2, node2)
+
+"""
+    build_bisection_tree(positions; kwargs...)
+
+Builds a bisection tree for Butterfly algebra to work. The Implementation of this function
+is provided in the BFH2Trees.jl file in the ext directory.
+"""
+function build_bisection_tree(positions; kwargs...)
+    return error("`build_bisection_tree` not implemented for $(typeof(positions))")
+end

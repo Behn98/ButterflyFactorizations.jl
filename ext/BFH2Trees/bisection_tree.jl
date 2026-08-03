@@ -160,3 +160,10 @@ function H2Trees.printtree(io::IO, tree, ::isBisectionTree)
         )
     end
 end
+
+function ButterflyFactorizations.build_bisection_tree(
+    positions::AbstractVector; max_points=-1, maxhalfsize=-1.0
+)
+    # This calls the BisectionTree constructor inside bisection_tree.jl
+    return BisectionTree(positions; max_points=max_points, maxhalfsize=maxhalfsize)
+end

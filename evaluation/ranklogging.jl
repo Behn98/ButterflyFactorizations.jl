@@ -193,7 +193,8 @@ m = meshsphere(1.0, h)
 X = raviartthomas(m)
 N = length(X)
 
-tree = H2Trees.BisectionTree(X.pos; max_points=100)
+tree = H2Trees.KMeansTree(X.pos, 2; minvalues=100)
+#tree = ButterflyFactorizations.build_bisection_tree(X.pos; max_points=100)
 blktree = H2Trees.BlockTree(tree, tree)
 
 BLAS.set_num_threads(1)

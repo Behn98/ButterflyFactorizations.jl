@@ -320,24 +320,35 @@ an algebraic manipulation (like multiplication or recompression) destroys the
 strict spatial locality mappings.
 """
 function cleanupidxs(BF::ButterflyFactorization{T,M}) where {T,M}
-    tsttree = cluster_testtree(BF.tree)
-    trialtree = cluster_trialtree(BF.tree)
-    L = length(BF.R)
+    return cleanupidxs(BF.Q, BF.R, BF.P, BF.tree, BF.k, BF.τ)
+end
+
+function cleanupidxs(
+    Q::Vector{ButterflyBlock{T}},
+    R::Vector{ButterflyLevel{T}},
+    P::Vector{ButterflyBlock{T}},
+    tree::M,
+    k,
+    τ,
+) where {T,M}
+    tsttree = cluster_testtree(tree)
+    trialtree = cluster_trialtree(tree)
+    L = length(R)
 
     # =========================================================================
     # PASS 1: Forward Traversal (Trace Source / Trial Tree Keys from Q)
     # =========================================================================
     src_translation = Dict{Tuple{Int,Int},Int}()
 
-    for b in BF.Q
+    for b in Q
         src_translation[(b.obs_in, b.src_in)] = b.src_in
     end
 
-    src_keys_R = [Vector{Tuple{Int,Int}}(undef, length(BF.R[l].blocks)) for l in 1:L]
+    src_keys_R = [Vector{Tuple{Int,Int}}(undef, length(R[l].blocks)) for l in 1:L]
 
     for l in 1:L
         next_src_translation = Dict{Tuple{Int,Int},Int}()
-        for (i, b) in enumerate(BF.R[l].blocks)
+        for (i, b) in enumerate(R[l].blocks)
             new_src_in = src_translation[(b.obs_in, b.src_in)]
             new_src_out = cluster_parent(trialtree, new_src_in)
 
@@ -351,9 +362,9 @@ function cleanupidxs(BF::ButterflyFactorization{T,M}) where {T,M}
     # PASS 2: Backward Traversal (Trace Observer Keys & Reconstruct R)
     # =========================================================================
     obs_translation = Dict{Tuple{Int,Int},Int}()
-    newP = Vector{ButterflyBlock{T}}(undef, length(BF.P))
+    newP = Vector{ButterflyBlock{T}}(undef, length(P))
 
-    for (i, b) in enumerate(BF.P)
+    for (i, b) in enumerate(P)
         true_obs_out = b.obs_out
         true_obs_in = b.obs_in
         root_src = src_translation[(b.obs_in, b.src_in)]
@@ -367,9 +378,9 @@ function cleanupidxs(BF::ButterflyFactorization{T,M}) where {T,M}
     newR = Vector{ButterflyLevel{T}}(undef, L)
     for l in L:-1:1
         next_obs_translation = Dict{Tuple{Int,Int},Int}()
-        new_blocks = Vector{ButterflyBlock{T}}(undef, length(BF.R[l].blocks))
+        new_blocks = Vector{ButterflyBlock{T}}(undef, length(R[l].blocks))
 
-        for (i, b) in enumerate(BF.R[l].blocks)
+        for (i, b) in enumerate(R[l].blocks)
             new_obs_out = obs_translation[(b.obs_out, b.src_out)]
             new_obs_in = cluster_parent(tsttree, new_obs_out)
             new_src_out, new_src_in = src_keys_R[l][i]
@@ -383,8 +394,8 @@ function cleanupidxs(BF::ButterflyFactorization{T,M}) where {T,M}
         obs_translation = next_obs_translation
     end
 
-    newQ = Vector{ButterflyBlock{T}}(undef, length(BF.Q))
-    for (i, b) in enumerate(BF.Q)
+    newQ = Vector{ButterflyBlock{T}}(undef, length(Q))
+    for (i, b) in enumerate(Q)
         true_obs_out = obs_translation[(b.obs_out, b.src_out)]
         true_obs_in = true_obs_out
 
@@ -393,7 +404,7 @@ function cleanupidxs(BF::ButterflyFactorization{T,M}) where {T,M}
         )
     end
 
-    return ButterflyFactorization(newQ, newR, newP, BF.tree, BF.k, BF.τ)
+    return ButterflyFactorization(newQ, newR, newP, tree, k, τ)
 end
 
 """

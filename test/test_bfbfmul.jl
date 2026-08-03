@@ -41,9 +41,9 @@
     # =========================================================================
     # Create BisectionTrees for all three spaces.
     # max_points=5 ensures the tree gets deep enough to test the R-factor hierarchy
-    Ttree = BisectionTree(T.pos; max_points=5)
-    Utree = BisectionTree(U.pos; max_points=5) # <-- The critical shared intermediate tree!
-    Vtree = BisectionTree(V.pos; max_points=5)
+    Ttree = ButterflyFactorizations.build_bisection_tree(T.pos; max_points=5)
+    Utree = ButterflyFactorizations.build_bisection_tree(U.pos; max_points=5) # <-- The critical shared intermediate tree!
+    Vtree = ButterflyFactorizations.build_bisection_tree(V.pos; max_points=5)
 
     # Left Operator: Maps from U (Column Space) -> T (Row Space)
     blktree_left = H2Trees.BlockTree(Ttree, Utree)

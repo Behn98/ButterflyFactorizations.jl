@@ -16,13 +16,13 @@ function ButterflyFactorizations.tree_parameters(tree::H2Trees.BlockTree)
 end
 
 function ButterflyFactorizations.tree_parameters(tree::H2Trees.TwoNTree)
-    return ButterflyFactorizations.TreeParameters(0.1, 2.3858, 1.8072, 1.0)
+    return ButterflyFactorizations.TreeParameters(0.2, 2.3858, 1.8072, 1.0)
 end
 
 function ButterflyFactorizations.tree_parameters(tree::BisectionTree)
-    return ButterflyFactorizations.TreeParameters(0.1, 0.5197, 2.6569, 1.0)
+    return ButterflyFactorizations.TreeParameters(0.2, 0.5197, 2.6569, 1.0)
 end
 
 function ButterflyFactorizations.tree_parameters(tree::H2Trees.BoundingBallTree)
-    return ButterflyFactorizations.TreeParameters(0.1, 0.9828, 3.0000, 1.0)
+    return ButterflyFactorizations.TreeParameters(0.6, 3.2, 2.4, 1.5)
 end
