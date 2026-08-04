@@ -1,10 +1,20 @@
+"""
+    splitmulbf(bfcluster::AbstractMatrix{ButterflyFactorization}, higherkBF::ButterflyFactorization, τ::Float64) -> ButterflyFactorization
+
+Computes the hierarchical split-multiplication between a dense cluster (matrix) of low-rank
+Butterfly Factorizations and a single, higher-rank Butterfly Factorization.
+
+### Process:
+
+ 1. **Splitting**: `higherkBF` is partitioned geometrically along its observer tree to match the source trees of `bfcluster`.
+ 2. **Block Multiplication**: Computes the block-matrix product for each row, dynamically cleaning internal routing indices and attaching the top-level `R` factors (`attachRpart`).
+ 3. **Accumulation**: Sums all computed block-rows together (`+`) to form the final compressed global operator.
+"""
 function splitmulbf(
-    bfcluster_init::AbstractMatrix{ButterflyFactorization},
-    higherkBF_init::ButterflyFactorization{T,M},
+    bfcluster::AbstractMatrix{<:ButterflyFactorization},
+    higherkBF::ButterflyFactorization{T,M},
     τ::Float64,
 ) where {T,M}
-    bfcluster = deepcopy(bfcluster_init)
-    higherkBF = deepcopy(higherkBF_init)
     # Step 1: Split the higher-level BF into child-level BFs
     srcchildren = [getnsno(childbf)[1] for childbf in bfcluster[1, :]]
     bfdiagonal = splitobsside(higherkBF; obschildren=srcchildren)
@@ -68,6 +78,13 @@ function splitmulbf(
     return product
 end
 
+"""
+    splitobsside(BF::ButterflyFactorization; obschildren) -> Vector{ButterflyFactorization}
+
+Slices a high-rank Butterfly Factorization geometrically along the observer tree branches
+specified by `obschildren`. Returns a vector of smaller Factorizations representing the
+isolated sub-graphs, stripping away unassociated routing paths.
+"""
 function splitobsside(
     BF_init::ButterflyFactorization{T,M};
     obschildren=sort!(cluster_children(cluster_testtree(BF.tree), getnsno(BF)[2])),
@@ -122,6 +139,12 @@ function splitobsside(
     return bfdiagonal
 end
 
+"""
+    merge_bfs(BF1::ButterflyFactorization, BF2::ButterflyFactorization) -> ButterflyFactorization
+
+Performs a raw structural concatenation of two factorizations (`Q`, `R`, and `P`) without
+numerical compression. Used internally to build composite block-matrix structures.
+"""
 function merge_bfs(
     BF1::ButterflyFactorization{T,M}, BF2::ButterflyFactorization{T,M}
 ) where {T,M}
@@ -133,6 +156,13 @@ function merge_bfs(
     return ButterflyFactorization(newQ, newR, newP, BF1.tree, BF1.k, BF1.τ)
 end
 
+"""
+    partialcleanupidxs(BF::ButterflyFactorization) -> ButterflyFactorization
+
+A specialized index cleaner used immediately after `mulBFs`. It normalizes the internal
+routing topology of `R` and `P` using a two-pass trace to erase `browswap` offsets, while
+leaving the spatial boundaries of `Q` untouched.
+"""
 function partialcleanupidxs(BF::ButterflyFactorization{T,M}) where {T,M}
     return partialcleanupidxs(BF.Q, BF.R, BF.P, BF.tree, BF.k, BF.τ)
 end
@@ -230,6 +260,13 @@ function partialcleanupidxs(
     return ButterflyFactorization(newQ, newR, newP, tree, k, τ)
 end
 
+"""
+    attachRpart(tempbf::ButterflyFactorization, rightR::Vector{ButterflyLevel}, obsancestor, newrowobs, obstree) -> ButterflyFactorization
+
+Splicing operation that attaches the top-level `R` matrices of a high-rank tree directly
+onto the root of an intermediate sub-factorization, thereby reinstating the global tree
+depth and connecting the sub-graph to its global ancestors.
+"""
 function attachRpart(
     tempbf, rightR::Vector{ButterflyLevel{T}}, obsancestor, newrowobs, obstree
 ) where {T}
@@ -273,52 +310,13 @@ function attachRpart(
     return ButterflyFactorization(newQ, newR, newP, tempbf.tree, tempbf.k, tempbf.τ)
 end
 
-function build_tree_mapping(currenttree, reftree)
-    mapping = Dict{Int,Int}()
-    for (j, treelvl) in enumerate(currenttree)
-        for (i, node) in enumerate(treelvl)
-            if i <= length(reftree[j])
-                mapping[node] = reftree[j][i]
-            else
-                mapping[node] = node
-            end
-        end
-    end
-    return mapping
-end
+"""
+    algebraic_indexing(BF::ButterflyFactorization) -> ButterflyFactorization
 
-function remap_BFobservers(tempbf::ButterflyFactorization{T,M}, treemapping) where {T,M}
-    newQ = Vector{ButterflyBlock{T}}(undef, 0)
-    newR = Vector{ButterflyLevel{T}}(undef, length(tempbf.R))
-    for (l, lvl) in enumerate(tempbf.R[2:end])
-        new_blocks = Vector{ButterflyBlock{T}}(undef, length(lvl.blocks))
-        for (i, b) in enumerate(lvl.blocks)
-            new_obs_out = treemapping[b.obs_out]
-            new_obs_in = treemapping[b.obs_in]
-            new_blocks[i] = ButterflyBlock(
-                new_obs_out, b.src_out, new_obs_in, b.src_in, copy(b.data)
-            )
-        end
-        newR[l + 1] = ButterflyLevel(new_blocks)
-    end
-    new_blocks = Vector{ButterflyBlock{T}}(undef, length(tempbf.R[1].blocks))
-    for (i, b) in enumerate(tempbf.R[1].blocks)
-        new_obs_out = treemapping[b.obs_out]
-        new_blocks[i] = ButterflyBlock(
-            new_obs_out, b.src_out, b.obs_in, b.src_in, copy(b.data)
-        )
-    end
-    newR[1] = ButterflyLevel(new_blocks)
-    newP = Vector{ButterflyBlock{T}}(undef, length(tempbf.P))
-    for (i, b) in enumerate(tempbf.P)
-        new_obs_out = treemapping[b.obs_out]
-        new_obs_in = treemapping[b.obs_in]
-        newP[i] = ButterflyBlock(new_obs_out, b.src_out, new_obs_in, b.src_in, copy(b.data))
-    end
-
-    return ButterflyFactorization(newQ, newR, newP, tempbf.tree, tempbf.k, tempbf.τ)
-end
-
+Transforms the spatially semantically-bound routing keys of `R` into a normalized,
+sequential algebraic coordinate system. Ensures that symmetric structures possess perfectly
+identical topology, preventing indexing mismatches during subsequent addition/merging operations.
+"""
 function algebraic_indexing(BF::ButterflyFactorization{T,M}) where {T,M} #, src_ancestor::Int
     L = length(BF.R)
 
@@ -386,6 +384,12 @@ function algebraic_indexing(BF::ButterflyFactorization{T,M}) where {T,M} #, src_
     return ButterflyFactorization(newQ, newR, newP, BF.tree, BF.k, BF.τ)
 end
 
+"""
+    rename_P(BF::ButterflyFactorization, srcancestor::Int) -> ButterflyFactorization
+
+Updates the top-level observer routing keys inside the final `P` factor and the last `R`
+level to associate them with a new ancestral source tree root.
+"""
 function rename_P(BF::ButterflyFactorization{T,M}, srcancestor) where {T,M}
     newP = Vector{ButterflyBlock{T}}(undef, length(BF.P))
     for (i, b) in enumerate(BF.P)
