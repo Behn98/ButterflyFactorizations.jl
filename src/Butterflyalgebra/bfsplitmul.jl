@@ -17,7 +17,7 @@ function splitmulbf(
             Vector{ButterflyBlock{T}}(undef, 0),
             [
                 ButterflyLevel{T}(Vector{ButterflyBlock{T}}(undef, 0)) for
-                _ in 1:length(bfcluster[1, 1].R)
+                _ in 1:length(higherkBF.R)
             ],
             #Vector{ButterflyLevel{T}}(undef, length(bfcluster[1, 1].R)),
             Vector{ButterflyBlock{T}}(undef, 0),
@@ -32,12 +32,15 @@ function splitmulbf(
     for i in 1:N
         for (j, child_bf) in enumerate(bfdiagonal)
             tempbf = partialcleanupidxs(mulBFs(bfcluster[i, j], child_bf, τ))
-            obsancestor = getnsno(bfcluster[i, j])[2]
-            refobs = getnsno(bfcluster[j, j])[2]
-            currenttree = treelevels(cluster_testtree(tempbf.tree), obsancestor)
-            reftree = treelevels(cluster_testtree(bfcluster[j, j].tree), refobs)
-            treemapping = build_tree_mapping(currenttree, reftree)
-            tempbf = remap_BFobservers(tempbf, treemapping)
+            obsancestor = srcchildren[j]
+            newrowobs = srcchildren[i]
+            tempbf = attachRpart(
+                tempbf,
+                higherkBF.R[1:Int(log2(size(bfcluster, 2)))],
+                obsancestor,
+                newrowobs,
+                cluster_testtree(higherkBF.tree),
+            )
             intermediate_bfs[mod(j - i, N) + 1] = merge_bfs(
                 intermediate_bfs[mod(j - i, N) + 1], tempbf
             )
@@ -45,7 +48,7 @@ function splitmulbf(
     end
     product = ButterflyFactorization(
         higherkBF.Q,
-        vcat(higherkBF.R[1:Int(log2(size(bfcluster, 2)))], intermediate_bfs[1].R),
+        intermediate_bfs[1].R,
         intermediate_bfs[1].P,
         intermediate_bfs[1].tree,
         higherkBF.k,
@@ -54,7 +57,7 @@ function splitmulbf(
     for i in 2:N
         product += ButterflyFactorization(
             higherkBF.Q,
-            vcat(higherkBF.R[1:Int(log2(size(bfcluster, 2)))], intermediate_bfs[i].R),
+            intermediate_bfs[i].R,
             intermediate_bfs[i].P,
             intermediate_bfs[i].tree,
             higherkBF.k,
@@ -128,22 +131,6 @@ function merge_bfs(
     ]
     newP = vcat(BF1.P, BF2.P)
     return ButterflyFactorization(newQ, newR, newP, BF1.tree, BF1.k, BF1.τ)
-end
-
-function rename_P(BF::ButterflyFactorization{T,M}, srcancestor) where {T,M}
-    newP = Vector{ButterflyBlock{T}}(undef, length(BF.P))
-    for (i, b) in enumerate(BF.P)
-        newP[i] = ButterflyBlock(b.obs_out, srcancestor, b.obs_in, srcancestor, b.data)
-    end
-    newR = [butterflylvl for butterflylvl in BF.R[1:(length(BF.R) - 1)]]
-    push!(
-        newR,
-        ButterflyLevel{T}([
-            ButterflyBlock(b.obs_out, srcancestor, b.obs_in, b.src_in, b.data) for
-            b in BF.R[end].blocks
-        ]),
-    )
-    return ButterflyFactorization(BF.Q, newR, newP, BF.tree, BF.k, BF.τ)
 end
 
 function partialcleanupidxs(BF::ButterflyFactorization{T,M}) where {T,M}
@@ -241,6 +228,49 @@ function partialcleanupidxs(
     newQ = Vector{ButterflyBlock{T}}(undef, length(Q))
 
     return ButterflyFactorization(newQ, newR, newP, tree, k, τ)
+end
+
+function attachRpart(
+    tempbf, rightR::Vector{ButterflyLevel{T}}, obsancestor, newrowobs, obstree
+) where {T}
+    newP = copy(tempbf.P)
+    newR = Vector{ButterflyLevel{T}}(undef, length(tempbf.R) + length(rightR))
+    for l in 2:length(tempbf.R)
+        newR[length(rightR) + l] = tempbf.R[l]
+    end
+    new_blocks = Vector{ButterflyBlock{T}}(undef, 0)
+    for b in tempbf.R[1].blocks
+        if b.obs_in == obsancestor
+            push!(
+                new_blocks,
+                ButterflyBlock(b.obs_out, b.src_out, newrowobs, b.src_in, copy(b.data)),
+            )
+        end
+    end
+    newR[length(rightR) + 1] = ButterflyLevel(new_blocks)
+
+    for l in length(rightR):-1:1
+        new_blocks = Vector{ButterflyBlock{T}}(undef, 0)
+        for b in rightR[l].blocks
+            if b.obs_out == obsancestor
+                push!(
+                    new_blocks,
+                    ButterflyBlock(
+                        newrowobs,
+                        b.src_out,
+                        cluster_parent(obstree, newrowobs),
+                        b.src_in,
+                        copy(b.data),
+                    ),
+                )
+            end
+        end
+        newrowobs = cluster_parent(obstree, newrowobs)
+        obsancestor = cluster_parent(obstree, obsancestor)
+        newR[l] = ButterflyLevel(new_blocks)
+    end
+    newQ = copy(tempbf.Q)
+    return ButterflyFactorization(newQ, newR, newP, tempbf.tree, tempbf.k, tempbf.τ)
 end
 
 function build_tree_mapping(currenttree, reftree)
@@ -354,4 +384,20 @@ function algebraic_indexing(BF::ButterflyFactorization{T,M}) where {T,M} #, src_
     newP = copy(BF.P)
 
     return ButterflyFactorization(newQ, newR, newP, BF.tree, BF.k, BF.τ)
+end
+
+function rename_P(BF::ButterflyFactorization{T,M}, srcancestor) where {T,M}
+    newP = Vector{ButterflyBlock{T}}(undef, length(BF.P))
+    for (i, b) in enumerate(BF.P)
+        newP[i] = ButterflyBlock(b.obs_out, srcancestor, b.obs_in, srcancestor, b.data)
+    end
+    newR = [butterflylvl for butterflylvl in BF.R[1:(length(BF.R) - 1)]]
+    push!(
+        newR,
+        ButterflyLevel{T}([
+            ButterflyBlock(b.obs_out, srcancestor, b.obs_in, b.src_in, b.data) for
+            b in BF.R[end].blocks
+        ]),
+    )
+    return ButterflyFactorization(BF.Q, newR, newP, BF.tree, BF.k, BF.τ)
 end
