@@ -1,3 +1,4 @@
+
 using BEAST
 using CompScienceMeshes
 using ParallelKMeans
@@ -194,6 +195,7 @@ X = raviartthomas(m)
 N = length(X)
 
 tree = H2Trees.KMeansTree(X.pos, 2; minvalues=100)
+#tree = TwoNTree(X.pos, 2; minvalues=100)
 #tree = ButterflyFactorizations.build_bisection_tree(X.pos; max_points=100)
 blktree = H2Trees.BlockTree(tree, tree)
 
@@ -205,13 +207,17 @@ criteria_to_test = [
     (
         :isFarFunctor,
         ButterflyFactorizations.isFarFunctor(
-            ButterflyFactorizations.tree_parameters(tree).α
+            ButterflyFactorizations.tree_parameters(
+                tree, ButterflyFactorizations.isFarFunctor
+            ).α,
         ),
     ),
     (
         :CenterDistanceAdmissibility,
         ButterflyFactorizations.CenterDistanceAdmissibility(
-            ButterflyFactorizations.tree_parameters(tree).β
+            ButterflyFactorizations.tree_parameters(
+                tree, ButterflyFactorizations.CenterDistanceAdmissibility
+            ).β,
         ),
     ),
 ]

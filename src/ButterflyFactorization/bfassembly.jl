@@ -37,6 +37,9 @@ the cascaded factor multiplications.
   - `compressor`: Compression scheme for low-rank blocks (default: `PartialQR()`).
   - `scheduler`: Threading scheduler for parallel execution.
   - `acctype`: The numeric type of the matrix elements (default: `ComplexF64`).
+  - `admissibility`: The geometric admissibility functor (default: `isFarFunctor`).
+  - `C`, `Cε`: Constants for rank estimation in 3D problems (default: from tree parameters).
+  - `adaptive`: Whether to adaptively determine the rank during compression (default: `false`).
 
 **Returns:**
 

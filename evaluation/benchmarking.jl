@@ -20,7 +20,6 @@ struct WarningCounterLogger <: AbstractLogger
     count::Base.RefValue{Int}
 end
 
-# THE FIX: These must exactly match the AbstractLogger interface!
 Logging.min_enabled_level(l::WarningCounterLogger) = Logging.min_enabled_level(l.parent)
 Logging.shouldlog(l::WarningCounterLogger, level, _module, group, id) =
     Logging.shouldlog(l.parent, level, _module, group, id)
@@ -41,9 +40,11 @@ function Logging.handle_message(
         l.parent, level, message, _module, group, id, file, line; kwargs...
     )
 end
+
 # --- Fitting Helper Functions ---
 f_nlogn(N) = N * log2(N)
 f_nlog2n(N) = N * (log2(N))^2
+f_n43logn(N) = (N^(4/3)) * log2(N) # 🚀 NEW: Standard ACA Complexity
 
 function fit_scaling_factor(
     N_vec::Vector{Int}, Y_vec::Vector{Float64}, scaling_func::Function
@@ -59,17 +60,35 @@ function fit_scaling_factor(
     return sum(Y_valid .* f_vals) / sum(f_vals .^ 2)
 end
 
+# 🚀 NEW: Log-Log Linear Regression to find empirical O(N^p) scaling
+function estimate_empirical_power(N_vec::Vector{Int}, Y_vec::Vector{Float64})
+    valid_idx = .!isnan.(Y_vec) .& (Y_vec .> 0)
+    if sum(valid_idx) < 2
+        return NaN, NaN
+    end
+    x = log10.(N_vec[valid_idx])
+    y = log10.(Y_vec[valid_idx])
+
+    n = length(x)
+    sum_x = sum(x)
+    sum_y = sum(y)
+    sum_xy = sum(x .* y)
+    sum_xx = sum(x .^ 2)
+
+    m = (n * sum_xy - sum_x * sum_y) / (n * sum_xx - sum_x^2)
+    c = (sum_y - m * sum_x) / n
+    return m, 10^c # returns exponent (p) and coefficient (c)
+end
+
 function extract_ranks_per_level(Bfmat)
     level_max_ranks = Dict{Int,Int}()
 
     for bf in Bfmat.BFs
-        # Q blocks (Leaves / BF Level 1)
         q_rank = maximum(
             [size(b.data, 1) for b in bf.Q if b.data isa AbstractMatrix]; init=0
         )
         level_max_ranks[1] = max(get(level_max_ranks, 1, 0), q_rank)
 
-        # R blocks (Intermediate BF levels)
         for (l, level) in enumerate(bf.R)
             r_rank = maximum(
                 [size(b.data, 1) for b in level.blocks if b.data isa AbstractMatrix]; init=0
@@ -108,14 +127,11 @@ function bf_matrix_memory(Bfmat)
     return mem_bytes / 1024^2
 end
 
-# 🚀 NEW: Helper to calculate memory footprint explicitly grouped by BF depth
 function extract_memory_per_depth(Bfmat)
     mem_dict = Dict{Int,Float64}()
 
     for bf in Bfmat.BFs
-        # Depth is leaves (Q) + root (P) + intermediate (R factors)
         depth = length(bf.R) + 2
-
         num_elements = 0
         for block in bf.Q
             if block.data isa AbstractMatrix
@@ -181,7 +197,7 @@ function run_benchmarks(
     acacomparison::Bool=false,
     disjointgeom::Bool=true,
     unbalancedints::Bool=false,
-    highf::Bool=true,
+    highfscaling::Bool=true,
     leafcompression::Bool=false,
     csv_file::String="benchmark_results.csv",
     log_file_path::String="benchmark_log.txt",
@@ -204,24 +220,13 @@ function run_benchmarks(
     k_vals = Float64[]
     max_R_ranks = Int[]
 
-    # 🚀 NEW: Dictionary to store memory histories per BF depth across all h steps
     mem_by_depth_history = Dict{Int,Vector{Float64}}()
-
     p_level_ranks_all = PlotlyJS.SyncPlot[]
-
-    p_time = plot()
-    p_mem = plot()
-    p_mv = plot()
-    p_err = plot()
-    p_rank_vs_k = plot()
 
     println("==========================================================")
     println(" Starting Benchmarks | Shape: $shape | IE Type: $ie_type")
     println(" ACA Comparison      : $acacomparison")
-    println(" Far-Field Check     : $checkfarfieldaccuracy")
-    println(" Admissibility       : $admissibility_spec")
-    println(" Structured Data File: $csv_file")
-    println(" Console Log File    : $log_file_path")
+    println(" Wavenumber Scaling  : $(highfscaling ? "Dynamic" : "Fixed (High-F)")")
     println("==========================================================\n")
 
     csv_stream = open(csv_file, "w")
@@ -246,10 +251,11 @@ function run_benchmarks(
         write(log_stream, round_str * "\n")
         flush(log_stream)
 
-        if highf
-            lambda = 5 * h
+        # 🚀 FIX: Lock to the smallest h if highfscaling is false
+        if highfscaling
+            lambda = 10 * h
         else
-            lambda = 5 * h_values[1]
+            lambda = 10 * minimum(h_values)
         end
         k = 2 * pi / lambda
 
@@ -298,16 +304,18 @@ function run_benchmarks(
 
         if admissibility_spec == :CenterDistanceAdmissibility
             admissibility = ButterflyFactorizations.CenterDistanceAdmissibility(
-                ButterflyFactorizations.tree_parameters(blktree).β
+                ButterflyFactorizations.tree_parameters(
+                    blktree, ButterflyFactorizations.CenterDistanceAdmissibility
+                ).β,
             )
         elseif admissibility_spec == :isFarFunctor
             admissibility = ButterflyFactorizations.isFarFunctor(
-                ButterflyFactorizations.tree_parameters(blktree).α
+                ButterflyFactorizations.tree_parameters(
+                    blktree, ButterflyFactorizations.isFarFunctor
+                ).α,
             )
         else
-            error(
-                "Unsupported admissibility: $admissibility_spec. Use :CenterDistanceAdmissibility or :isFarFunctor",
-            )
+            error("Unsupported admissibility: $admissibility_spec")
         end
 
         local_isnear(ta, tb, na, nb) = !admissibility(ta, tb, na, nb)
@@ -369,17 +377,13 @@ function run_benchmarks(
         end
 
         ranks_dict = extract_ranks_per_level(Bfmat)
-
-        # 🚀 NEW: Extract and record Depth-Specific Memory footprints
         current_mem_by_depth = extract_memory_per_depth(Bfmat)
 
-        # Pad any missing depths in history with NaN so all arrays match the length of N_vals
         for d in keys(current_mem_by_depth)
             if !haskey(mem_by_depth_history, d)
                 mem_by_depth_history[d] = fill(NaN, i - 1)
             end
         end
-        # Push current values to history
         for d in keys(mem_by_depth_history)
             push!(mem_by_depth_history[d], get(current_mem_by_depth, d, NaN))
         end
@@ -463,11 +467,7 @@ function run_benchmarks(
                 println(
                     "\nComputing reference ACA Far-Matrix for accuracy check (tol = $(bf_tol * 1e-2))...",
                 )
-
-                # Initialize the warning tracker
                 ref_aca_logger = WarningCounterLogger(current_logger(), Ref(0))
-
-                # Execute ACA inside the logger and return the matrix
                 refmat = with_logger(ref_aca_logger) do
                     if disjointgeom
                         HMatrix(
@@ -495,9 +495,7 @@ function run_benchmarks(
                         )
                     end
                 end
-
                 ref_aca_warnings = ref_aca_logger.count[]
-
                 ref_far = AdaptiveCrossApproximation.farmatrix(refmat)
                 bf_far = ButterflyFactorizations.farmatrix(Bfmat)
 
@@ -517,7 +515,6 @@ function run_benchmarks(
                 println(
                     "\nComputing reference Butterfly Far-Matrix for accuracy check (tol = $(bf_tol * 1e-2))...",
                 )
-
                 refmat = if disjointgeom
                     ButterflyFactorizations.PetrovGalerkinBF(
                         op,
@@ -536,7 +533,6 @@ function run_benchmarks(
                         adaptive=adaptive,
                         farfieldonly=true,
                     )
-
                 else
                     ButterflyFactorizations.PetrovGalerkinBF(
                         op,
@@ -570,6 +566,7 @@ function run_benchmarks(
                 write(log_stream, err_str * "\n")
             end
         end
+
         t_aca = NaN
         mem_aca = NaN
         t_mv_aca = NaN
@@ -577,9 +574,7 @@ function run_benchmarks(
 
         if acacomparison
             println("\nStarting Standard ACA ($ie_type)...")
-
             aca_logger = WarningCounterLogger(current_logger(), Ref(0))
-
             t_aca = @elapsed begin
                 hmat = with_logger(aca_logger) do
                     if disjointgeom
@@ -607,7 +602,6 @@ function run_benchmarks(
                     end
                 end
             end
-
             aca_warnings = aca_logger.count[]
 
             time_aca_str = @sprintf(
@@ -647,6 +641,7 @@ function run_benchmarks(
         push!(t_mv_aca_vals, t_mv_aca)
         push!(t_mv_bf_vals, t_mv_bf)
 
+        # 🚀 Theoretical Fits
         c_time_nlogn = fit_scaling_factor(N_vals, t_bf_vals, f_nlogn)
         c_time_nlog2n = fit_scaling_factor(N_vals, t_bf_vals, f_nlog2n)
         c_mem_nlogn = fit_scaling_factor(N_vals, mem_bf_total_vals, f_nlogn)
@@ -654,9 +649,19 @@ function run_benchmarks(
         c_mv_nlogn = fit_scaling_factor(N_vals, t_mv_bf_vals, f_nlogn)
         c_mv_nlog2n = fit_scaling_factor(N_vals, t_mv_bf_vals, f_nlog2n)
 
+        # ACA Fits
+        c_time_aca = fit_scaling_factor(N_vals, t_aca_vals, f_n43logn)
+        c_mem_aca = fit_scaling_factor(N_vals, mem_aca_vals, f_n43logn)
+        c_mv_aca = fit_scaling_factor(N_vals, t_mv_aca_vals, f_n43logn)
+
+        # 🚀 Empirical Actual Scalings (Log-Log Regression)
+        p_time_emp, coef_time_emp = estimate_empirical_power(N_vals, t_bf_vals)
+        p_mem_emp, coef_mem_emp = estimate_empirical_power(N_vals, mem_bf_total_vals)
+        p_mv_emp, coef_mv_emp = estimate_empirical_power(N_vals, t_mv_bf_vals)
+
         shape_str = shape isa Symbol ? string(shape) : "custom"
         csv_row = @sprintf(
-            "%.4f,%d,%s,%s,%.5f,%.5f,%.5f,%.5f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3e,%.5f,%.5f,%.5f,%.5f\n",
+            "%.4f,%d,%s,%s,%.5f,%.5f,%.5f,%.5f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3e,%.5f,%.5f,%.5f\n",
             h,
             N,
             shape_str,
@@ -673,13 +678,12 @@ function run_benchmarks(
             err_bf,
             t_mv_aca,
             t_mv_bf,
-            c_mv_nlogn * f_nlogn(N),
-            c_mv_nlog2n * f_nlog2n(N)
+            c_mv_nlogn * f_nlogn(N)
         )
         write(csv_stream, csv_row)
         flush(csv_stream)
 
-        # 🚀 INCREMENTAL PLOTTING
+        # --- INCREMENTAL PLOTTING ---
         ref_time_nlogn = c_time_nlogn .* f_nlogn.(N_vals)
         ref_time_nlog2n = c_time_nlog2n .* f_nlog2n.(N_vals)
         ref_mem_nlogn = c_mem_nlogn .* f_nlogn.(N_vals)
@@ -710,6 +714,19 @@ function run_benchmarks(
                 line=attr(; color="black", dash="dot"),
             ),
         ]
+        if !isnan(p_time_emp)
+            emp_label = @sprintf("Empirical BF O(N^%.2f)", p_time_emp)
+            push!(
+                time_traces,
+                scatter(;
+                    x=N_vals,
+                    y=coef_time_emp .* (N_vals .^ p_time_emp),
+                    name=emp_label,
+                    mode="lines",
+                    line=attr(; color="blue", dash="dot"),
+                ),
+            )
+        end
 
         mem_traces = [
             scatter(;
@@ -734,8 +751,20 @@ function run_benchmarks(
                 line=attr(; color="black", dash="dot"),
             ),
         ]
+        if !isnan(p_mem_emp)
+            emp_label = @sprintf("Empirical BF O(N^%.2f)", p_mem_emp)
+            push!(
+                mem_traces,
+                scatter(;
+                    x=N_vals,
+                    y=coef_mem_emp .* (N_vals .^ p_mem_emp),
+                    name=emp_label,
+                    mode="lines",
+                    line=attr(; color="blue", dash="dot"),
+                ),
+            )
+        end
 
-        # 🚀 NEW: Dynamically add depth curves and their fits
         for d in sort(collect(keys(mem_by_depth_history)))
             vals = mem_by_depth_history[d]
             c_fit = fit_scaling_factor(N_vals, vals, f_nlog2n)
@@ -786,6 +815,19 @@ function run_benchmarks(
                 line=attr(; color="black", dash="dot"),
             ),
         ]
+        if !isnan(p_mv_emp)
+            emp_label = @sprintf("Empirical BF O(N^%.2f)", p_mv_emp)
+            push!(
+                mv_traces,
+                scatter(;
+                    x=N_vals,
+                    y=coef_mv_emp .* (N_vals .^ p_mv_emp),
+                    name=emp_label,
+                    mode="lines",
+                    line=attr(; color="blue", dash="dot"),
+                ),
+            )
+        end
 
         if acacomparison
             push!(
@@ -798,6 +840,19 @@ function run_benchmarks(
                     line=attr(; color="firebrick"),
                 ),
             )
+            if !isnan(c_time_aca)
+                push!(
+                    time_traces,
+                    scatter(;
+                        x=N_vals,
+                        y=c_time_aca .* f_n43logn.(N_vals),
+                        name="ACA Fit O(N^(4/3) log N)",
+                        mode="lines",
+                        line=attr(; color="red", dash="dash"),
+                    ),
+                )
+            end
+
             push!(
                 mem_traces,
                 scatter(;
@@ -808,6 +863,19 @@ function run_benchmarks(
                     line=attr(; color="firebrick"),
                 ),
             )
+            if !isnan(c_mem_aca)
+                push!(
+                    mem_traces,
+                    scatter(;
+                        x=N_vals,
+                        y=c_mem_aca .* f_n43logn.(N_vals),
+                        name="ACA Fit O(N^(4/3) log N)",
+                        mode="lines",
+                        line=attr(; color="red", dash="dash"),
+                    ),
+                )
+            end
+
             push!(
                 mv_traces,
                 scatter(;
@@ -818,6 +886,18 @@ function run_benchmarks(
                     line=attr(; color="firebrick"),
                 ),
             )
+            if !isnan(c_mv_aca)
+                push!(
+                    mv_traces,
+                    scatter(;
+                        x=N_vals,
+                        y=c_mv_aca .* f_n43logn.(N_vals),
+                        name="ACA Fit O(N^(4/3) log N)",
+                        mode="lines",
+                        line=attr(; color="red", dash="dash"),
+                    ),
+                )
+            end
         end
 
         p_time = plot(
@@ -960,29 +1040,49 @@ function run_benchmarks(
 
     return p_time, p_mem, p_mv, p_err, p_rank_vs_k, p_level_ranks_all
 end
-
-h_values = [0.03, 0.02, 0.015, 0.01, 0.0075, 0.005]# 0.025, 0.0125, 0.00625]
-
+# --- Execution ---
+h_values = [0.03, 0.02, 0.015, 0.01, 0.0075, 0.005]
+# [0.03, 0.02, 0.015, 0.01, 0.0075, 0.005] --> N = [45k, 90k, 180k, 360k, 720k, 1.440M] for sphere
 p_time, p_mem, p_mv, p_err, p_rank_vs_k, p_level_ranks_all = run_benchmarks(
     h_values;
-    shape=:sphere,
-    ie_type=:EFIE,
-    bf_tol=1e-3,
-    maxpointsbisection=100,
-    minbflvl=3, # Minimum level in the BF to start compressing, however this is bypassed entirely if leafcompression = true
-    adaptive=false, # Set to true to enable adaptive rank estimation
-    admissibility_spec=:isFarFunctor, # ∈ {:CenterDistanceAdmissibility, :isFarFunctor}
-    checkfarfieldaccuracy=true, # Set to true to validate far-field accuracy against ACA
-    acacomparison=true, # Set to true to benchmark against standard ACA
-    unbalancedints=false, # Set to true to allow unbalanced near/far interactions (for testing)
-    disjointgeom=false, # Set to true to use disjoint source/target geometries (for testing)
-    treekind=:KMeansTree, # ∈ {:KMeansTree, :BisectionTree, :TwoNTree}
-    highf=true, # Set to true to scale k with h, false to keep k constant
-    leafcompression=true, # Set to true to enable leaf compression in the BF. For proper farfield comparison with ACA, this needs to be true
-    acarefmat=false, # Set to true to compute a reference ACA matrix for far-field accuracy check, alternatively, the BF far-field matrix is used for comparison.
-    refacamaxrank=100, # Maximum rank for the reference ACA matrix used for far-field accuracy check
-    acamaxrank=60, # Maximum rank for the ACA matrix used for comparison
-    scheduler=OhMyThreads.DynamicScheduler(),
+
+    # -------------------------------------------------------------------------
+    # Physical Setup & Geometry
+    # -------------------------------------------------------------------------
+    shape=:sphere,              # Geometry of the scatterer (Options: :sphere, :cube, or a custom h -> mesh function)
+    ie_type=:EFIE,              # Integral equation formulation (Options: :EFIE, :MFIE)
+    highfscaling=false,         # false: Locks wavenumber k to the finest mesh (isolates O(N log^2 N) scaling). true: Scales k with h (tracks physical radar cross-section growth).
+    disjointgeom=false,         # false: Standard self-interaction (dense diagonal). true: Translates target mesh away to evaluate pure far-field transmission.
+
+    # -------------------------------------------------------------------------
+    # Butterfly Tree & Admissibility Configuration
+    # -------------------------------------------------------------------------
+    treekind=:KMeansTree,                   # Clustering strategy (Options: :KMeansTree, :BisectionTree, :TwoNTree)
+    admissibility_spec=:isFarFunctor,       # Near/Far separation criteria (Options: :CenterDistanceAdmissibility, :isFarFunctor)
+    maxpointsbisection=100,                 # Maximum allowed degrees of freedom in a leaf node (specifically for BisectionTrees)
+    minbflvl=3,                             # Tree depth where compression begins (ignored if leafcompression is true)
+    unbalancedints=false,                   # Allows butterfly interactions between source and observer clusters situated at different tree depths
+
+    # -------------------------------------------------------------------------
+    # Compression & Accuracy Targets
+    # -------------------------------------------------------------------------
+    bf_tol=1e-3,                # Target relative tolerance for the PartialQR compressor
+    adaptive=false,             # true: Dynamically estimates rank bounds during compression. false: Uses fixed rank limits.
+    leafcompression=true,       # true: Compresses interactions all the way down to leaf nodes (Crucial for 1:1 error comparison with ACA).
+
+    # -------------------------------------------------------------------------
+    # Benchmarking Flags (ACA vs. Butterfly)
+    # -------------------------------------------------------------------------
+    checkfarfieldaccuracy=true, # explicitly computes the relative error of the far-field Mat-Vec product against a highly accurate reference matrix
+    acarefmat=false,            # true: Uses a tightly toleranced ACA matrix as the exact truth. false: Uses a highly toleranced Butterfly matrix as truth.
+    acacomparison=true,         # Builds a standard ACA HMatrix alongside the Butterfly matrix to compare build time, Mat-Vec time, and memory footprint
+    refacamaxrank=100,          # Hard limit for the maximum rank allowed in the ACA accuracy reference matrix
+    acamaxrank=60,              # Hard limit for the maximum rank allowed in the standard ACA comparison matrix
+
+    # -------------------------------------------------------------------------
+    # Logging & Schedulers
+    # -------------------------------------------------------------------------
+    scheduler=OhMyThreads.DynamicScheduler(), # Threading strategy for matrix assembly and compression
     csv_file="benchmark_results.csv",
     log_file_path="benchmark_log.txt",
 );

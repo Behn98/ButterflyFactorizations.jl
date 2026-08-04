@@ -154,7 +154,17 @@ function benchmark_and_validate_alpha(
 
         time_total = time_near + time_far
 
-        # 🚀 NEW: Count BFs by their R-factor level
+        if farfield_only
+            @printf(" -> Time: %.3fs (Far Only)\n", time_far)
+        else
+            @printf(
+                " -> Time: %.3fs (Near) + %.3fs (Far) = %.3fs\n",
+                time_near,
+                time_far,
+                time_total
+            )
+        end
+
         bf_counts = Dict{Int,Int}()
         for bf in fly
             r_levels = length(bf.R) # 0 means just Q and P factors (shallowest BF)
@@ -177,9 +187,9 @@ function benchmark_and_validate_alpha(
             )
 
             refmat = HMatrix(
-                op,
-                X,
-                X,
+                operator,
+                testspace,
+                trialspace,
                 tree;
                 tol=tol * 1e-2,
                 spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
@@ -197,17 +207,6 @@ function benchmark_and_validate_alpha(
             err_bf = norm(y_exact_far - y_bf_far) / norm(y_exact_far)
             err_str = @sprintf("Relative error of Far-field mat-vec: %.2e", err_bf)
             println(err_str)
-        end
-
-        if farfield_only
-            @printf(" -> Time: %.3fs (Far Only)\n", time_far)
-        else
-            @printf(
-                " -> Time: %.3fs (Near) + %.3fs (Far) = %.3fs\n",
-                time_near,
-                time_far,
-                time_total
-            )
         end
 
         push!(
@@ -314,14 +313,10 @@ function plot_alpha_performance_and_accuracy(results, target_tol::Float64)
     add_trace!(fig, trace_tol; row=2, col=1)
 
     # 🚀 NEW: BOTTOM PANEL: BF LEVEL COUNTS ---
-    # Find all unique R-levels encountered across all alpha tests
     all_r_levels = sort(unique(vcat([collect(keys(r.bf_counts)) for r in results]...)))
 
     for r_lvl in all_r_levels
-        # Extract the count for this specific level across all alphas (default 0 if missing)
         counts = [get(r.bf_counts, r_lvl, 0) for r in results]
-
-        # Plot a line showing how the count of BFs at this level changes with alpha
         trace_cnt = scatter(;
             x=alphas, y=counts, mode="lines+markers", name="Level $r_lvl BFs (R-factors)"
         )
@@ -333,7 +328,7 @@ function plot_alpha_performance_and_accuracy(results, target_tol::Float64)
         fig;
         title_text="Butterfly Factorization: Runtime & Accuracy Profiling",
         height=1100,
-        width=900, # Increased height to accommodate the 3rd plot
+        width=900,
         template="plotly_white",
         hovermode="x unified",
         xaxis_title="",
@@ -349,7 +344,9 @@ function plot_alpha_performance_and_accuracy(results, target_tol::Float64)
     return fig
 end
 
-# --- SETUP & EXECUTION ---
+# ==============================================================================
+# --- SETUP & MULTI-CONFIGURATION EXECUTION ---
+# ==============================================================================
 h = 0.05
 lambda = 10 * h
 k = 2 * pi / lambda
@@ -358,27 +355,64 @@ m = meshsphere(1.0, h)
 X = raviartthomas(m)
 N = length(X)
 
-#tree = ButterflyFactorizations.build_bisection_tree(X.pos; max_points=100)
-tree = KMeansTree(X.pos, 2; minvalues=100)
-blktree = H2Trees.BlockTree(tree, tree)
-
 BLAS.set_num_threads(1)
 tol = 1e-3
-results = benchmark_and_validate_alpha(
-    op,
-    X,
-    X,
-    blktree,
-    k;
-    compressor=ButterflyFactorizations.PartialQR(),
-    tol=tol,
-    alpha_range=0.0:0.1:1.5, #0.0:0.1:2.0 for isFarFunctor, 0.8:0.1:2.0 for CenterDistanceAdmissibility
-    scheduler=OhMyThreads.DynamicScheduler(),
-    farfield_only=false,
-    criterion=:isFarFunctor, # ∈ [:isFarFunctor, :CenterDistanceAdmissibility]
-)
 
-fig = plot_alpha_performance_and_accuracy(results, tol)
-#savefig(fig, "alpha_benchmark_results_CenterDistanceAdmissibility.html")
-savefig(fig, "alpha_benchmark_results_isFarFunctor.html")
-display(fig)
+# 1. Define the configurations to iterate through
+tree_types = [:KMeansTree, :BisectionTree, :TwoNTree]
+
+# Define the criteria and their appropriate α sweep ranges
+criteria_configs = [
+    (:isFarFunctor, 0.0:0.1:1.5), (:CenterDistanceAdmissibility, 0.8:0.1:2.0)
+]
+
+for tree_type in tree_types
+    println("\n**************************************************")
+    println(" 🌲 Building Tree Architecture: $tree_type")
+    println("**************************************************")
+
+    # 2. Instantiate the corresponding tree dynamically
+    if tree_type == :KMeansTree
+        tree = KMeansTree(X.pos, 2; minvalues=100)
+    elseif tree_type == :BisectionTree
+        tree = ButterflyFactorizations.build_bisection_tree(X.pos; max_points=100)
+    elseif tree_type == :TwoNTree
+        tree = H2Trees.TwoNTree(X, h)
+    end
+    blktree = H2Trees.BlockTree(tree, tree)
+
+    for (criterion, alpha_range) in criteria_configs
+        println("\n--------------------------------------------------")
+        println(" 🔬 Testing Configuration: $tree_type + $criterion")
+        println("--------------------------------------------------")
+
+        # 3. Run the benchmark
+        results = benchmark_and_validate_alpha(
+            op,
+            X,
+            X,
+            blktree,
+            k;
+            compressor=ButterflyFactorizations.PartialQR(),
+            tol=tol,
+            alpha_range=alpha_range,
+            scheduler=OhMyThreads.DynamicScheduler(),
+            farfield_only=false,
+            criterion=criterion,
+        )
+
+        # 4. Generate the plot
+        fig = plot_alpha_performance_and_accuracy(results, tol)
+
+        # Update the plot title to reflect the current configuration
+        relayout!(fig; title_text="Runtime & Accuracy Profiling ($tree_type | $criterion)")
+
+        # 5. Save the plot with a descriptive, dynamic filename
+        filename = "alpha_benchmark_$(tree_type)_$(criterion).html"
+        savefig(fig, filename)
+        println("\n✅ Saved plot to: $filename")
+
+        # 6. Display in the active REPL / IDE
+        display(fig)
+    end
+end

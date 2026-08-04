@@ -7,7 +7,7 @@ required to hit the tolerance `ε`.
 """
 function ButterflyFactorizations.estimate_rank_3d(
     k,
-    trialT::H2Trees.H2ClusterTree, # Generalized from BisectionTree to handle all H2Trees
+    trialT::H2Trees.H2ClusterTree,
     testT::H2Trees.H2ClusterTree,
     Snode::Int,
     Onode::Int,

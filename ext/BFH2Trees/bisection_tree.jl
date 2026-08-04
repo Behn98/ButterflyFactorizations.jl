@@ -151,7 +151,7 @@ function H2Trees.printtree(io::IO, tree, ::isBisectionTree)
     for level in H2Trees.levels(tree)
         avgnpoints = round(H2Trees.averagenumberofpoints(tree, level); digits=2)
         avgnchildren = round(H2Trees.averagenumberofchildrens(tree, level); digits=2)
-        hs = halfsize(tree, H2Trees.LevelIterator(tree, level)[begin])
+        hs = H2Trees.halfsize(tree, H2Trees.LevelIterator(tree, level)[begin])
         numnodes = length(collect(H2Trees.LevelIterator(tree, level)))
         print(io, "-"^(level - H2Trees.minimumlevel(tree)))
         println(

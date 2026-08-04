@@ -25,6 +25,9 @@ far-field interactions are compressed block-by-block using `assemble_BF`.
   - `leafcomp`: Whether to allow leaf-level compression (default: `true`).
   - `acctype`: The numeric type to use for the factorization (default: `ComplexF64`).
   - `scheduler`: The threading scheduler to use for parallel assembly.
+  - `minbflvl`: The minimum level in the tree to apply butterfly compression when leafcompression = false(default: `3`).
+  - `adaptive`: Whether to adaptively determine the rank during compression (default: `false`).
+  - `farfieldonly`: If true, only assemble far-field interactions (default: `false`).
 """
 function PetrovGalerkinBF(
     operator,
@@ -35,8 +38,8 @@ function PetrovGalerkinBF(
     compressor=ButterflyFactorizations.PartialQR(),
     tol=1e-3,
     admissibility=isFarFunctor(tree_parameters(cluster_testtree(tree)).α),
-    C=tree_parameters(cluster_testtree(tree)).C,
-    Cε=tree_parameters(cluster_testtree(tree)).Cε,
+    C=tree_parameters(cluster_testtree(tree), admissibility).C,
+    Cε=tree_parameters(cluster_testtree(tree), admissibility).Cε,
     scheduler=OhMyThreads.StaticScheduler(),
     acctype=ComplexF64,
     minbflvl=3,
