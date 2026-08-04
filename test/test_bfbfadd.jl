@@ -1,4 +1,4 @@
-@testset "Algebraic Addition of Butterfly Factorizations" begin
+@testitem "Algebraic Addition of Butterfly Factorizations" begin
     using Test
     using H2Trees
     using CompScienceMeshes

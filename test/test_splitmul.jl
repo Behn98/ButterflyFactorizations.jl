@@ -1,4 +1,4 @@
-@testset "Butterfly Factorizations Algebra Suite" begin
+@testitem "Butterfly splitmultiplication tests" begin
     using Test
     using H2Trees
     using CompScienceMeshes
@@ -8,7 +8,6 @@
     using LinearAlgebra
     using LowRankApprox
     using OhMyThreads
-    using Printf
 
     # =========================================================================
     # 1. Geometry & Problem Setup
@@ -235,8 +234,8 @@
         @test mem_bf < mem_dense
 
         @info "Test 4 Passed."
-        @printf("\n   [Test Metrics] Split-Mul Relative Error: %.3e\n", rel_err_split)
-        @printf("   [Test Metrics] Compression Ratio: %.2fx\n\n", mem_dense / mem_bf)
+        @info "[Test Metrics] Split-Mul Relative Error: $rel_err_split"
+        @info "[Test Metrics] Compression Ratio: $(mem_dense / mem_bf)x"
     end
 
     @info "All Butterfly Factorization tests completed successfully!"
