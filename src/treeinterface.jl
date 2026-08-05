@@ -6,10 +6,13 @@
 
 abstract type AbstractTreeParameters end
 
+abstract type AbstractAdmissibility end
+
 """
     TreeParameters{T} <: AbstractTreeParameters
 
-A container for the mathematical tuning parameters required by the Butterfly Factorization for a specific tree geometry.
+A container for the mathematical tuning parameters required by the Butterfly Factorization
+for a specific tree geometry.
 
 # Fields
 
@@ -17,20 +20,23 @@ A container for the mathematical tuning parameters required by the Butterfly Fac
   - `C::T`: The geometric scaling constant for the directional rank estimator.
   - `Cε::T`: The algebraic padding constant for the rank estimator based on tolerance.
   - `β::T`: The center-to-center distance multiplier for alternative admissibility criteria.
+  - `Cτ::T`: The geometric scaling constant for the Butterfly rank estimator.
 """
 struct TreeParameters{T} <: AbstractTreeParameters
     α::T
     C::T
     Cε::T
     β::T
+    Cτ::T
 end
 
 """
-    tree_parameters(tree) -> TreeParameters
+    tree_parameters(tree, admissiblity::AbstractAdmissibility) -> TreeParameters
 
-Retrieve the default mathematical and geometric parameters (`α`, `C`, `Cε`, `β`) associated with a given tree type.
+Retrieve the default mathematical and geometric parameters (`α`, `C`, `Cε`, `β`, `Cτ`) associated
+with a given tree type and admissibility criterion.
 """
-function tree_parameters(tree)
+function tree_parameters(tree, admissiblity::AbstractAdmissibility)
     return error("`tree_parameters` not implemented for $(typeof(tree))")
 end
 
@@ -109,7 +115,8 @@ end
 """
     cluster_values(tree, node) -> Vector{Int}
 
-Return the global indices of the basis functions (or points) contained within the specified `node`.
+Return the global indices of the basis functions (or points) contained within the specified
+`node`.
 """
 function cluster_values(tree, node)
     return error("`cluster_values` not implemented for $(typeof(tree))")
@@ -118,7 +125,8 @@ end
 """
     cluster_blktree(stree, ttree)
 
-Construct a coupled block-tree hierarchy from a given source (trial) tree and observer (test) tree.
+Construct a coupled block-tree hierarchy from a given source (trial) tree and observer
+(test) tree.
 """
 function cluster_blktree(stree, ttree)
     return error(
@@ -129,7 +137,8 @@ end
 """
     cluster_levels(tree)
 
-Return the level structure of the tree, typically as a collection of nodes grouped by their depth.
+Return the level structure of the tree, typically as a collection of nodes grouped by their
+depth.
 """
 function cluster_levels(tree)
     return error("`cluster_levels` not implemented for $(typeof(tree))")

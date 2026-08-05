@@ -324,13 +324,16 @@ function cleanupidxs(BF::ButterflyFactorization{T,M}) where {T,M}
 end
 
 function cleanupidxs(
-    Q::Vector{ButterflyBlock{T}},
-    R::Vector{ButterflyLevel{T}},
-    P::Vector{ButterflyBlock{T}},
+    Q_init::Vector{ButterflyBlock{T}},
+    R_init::Vector{ButterflyLevel{T}},
+    P_init::Vector{ButterflyBlock{T}},
     tree::M,
     k,
     τ,
 ) where {T,M}
+    Q = deepcopy(Q_init)
+    R = deepcopy(R_init)
+    P = deepcopy(P_init)
     tsttree = cluster_testtree(tree)
     trialtree = cluster_trialtree(tree)
     L = length(R)

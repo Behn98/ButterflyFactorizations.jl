@@ -37,6 +37,9 @@ the cascaded factor multiplications.
   - `compressor`: Compression scheme for low-rank blocks (default: `PartialQR()`).
   - `scheduler`: Threading scheduler for parallel execution.
   - `acctype`: The numeric type of the matrix elements (default: `ComplexF64`).
+  - `admissibility`: The geometric admissibility functor (default: `isFarFunctor`).
+  - `rankestimator`: The rank estimation strategy (default: `GeometricRankEstimator`).
+  - `adaptive`: Whether to adaptively determine the rank during compression (default: `false`).
 
 **Returns:**
 
@@ -49,9 +52,10 @@ function assemble_BF(
     ns::Int,
     k::Float64,
     τ::Float64;
-    C=tree_parameters(cluster_testtree(blktree)).C,
-    Cε=tree_parameters(cluster_testtree(blktree)).Cε,
-    adaptive=false,
+    rankestimator::AbstractRankEstimator=ButterflyRankEstimator(
+        tree_parameters(blktree).Cτ
+    ),
+    adaptive=true,
     compressor=ButterflyFactorizations.PartialQR(),
     scheduler=OhMyThreads.StaticScheduler(),
     acctype=ComplexF64,
@@ -83,7 +87,7 @@ function assemble_BF(
         srcindex = cluster_values(trialT, Sleaf)
         obsindex = cluster_values(testT, no)
 
-        n_otilde = estimate_rank_3d(k, trialT, testT, Sleaf, no, τ_scaled; C=C, Cε=Cε)
+        n_otilde = rankestimator(k, trialT, testT, Sleaf, no, τ_scaled)
         q_ks, k_l, _ = compressor(
             kernelmatrix, srcindex, obsindex, n_otilde, τ_scaled; adaptive=adaptive
         )
@@ -129,8 +133,7 @@ function assemble_BF(
                 k,
                 τ_scaled,
                 scheduler,
-                C,
-                Cε,
+                rankestimator,
                 acctype;
                 adaptive=adaptive,
             )
@@ -146,8 +149,7 @@ function assemble_BF(
                 k,
                 τ_scaled,
                 scheduler,
-                C,
-                Cε,
+                rankestimator,
                 acctype;
                 adaptive=adaptive,
             )
@@ -164,8 +166,7 @@ function assemble_BF(
                 k,
                 τ_scaled,
                 scheduler,
-                C,
-                Cε,
+                rankestimator,
                 acctype;
                 adaptive=adaptive,
             )
@@ -202,12 +203,6 @@ end
 # Builder Functions
 # ------------------------------------------------------------------
 
-"""
-    build_U_skeletons(treeS_level, treeO_level, K, trialT, scheduler)
-
-Pre-computes the union of child skeleton bases for the current source level.
-This consolidates the required interaction degrees of freedom before building the `R` factors.
-"""
 function build_U_skeletons(treeS_level, treeO_level, K, trialT, scheduler)
     U = Dict{Int,Vector{Int}}()
     interactions_U = vec(collect(Iterators.product(treeS_level, treeO_level)))
@@ -234,12 +229,6 @@ function build_U_skeletons(treeS_level, treeO_level, K, trialT, scheduler)
     return U
 end
 
-"""
-    build_nonfrozen_R_blocks(...)
-
-Constructs the intermediate `R` factor blocks when both the source and observer
-trees are actively being traversed (neither has hit its leaf limit).
-"""
 function build_nonfrozen_R_blocks(
     treeO_level,
     treeS_level,
@@ -252,15 +241,13 @@ function build_nonfrozen_R_blocks(
     k,
     τ,
     scheduler,
-    C,
-    Cε,
+    rankestimator,
     acctype;
     adaptive=false,
 )
     interactions = vec(collect(Iterators.product(treeO_level, treeS_level)))
     n_ints = length(interactions)
 
-    # Pre-calculate exact sizes using prefix sums (cumsum) to avoid allocations
     block_counts = zeros(Int, n_ints)
     update_counts = zeros(Int, n_ints)
     for i in 1:n_ints
@@ -298,7 +285,7 @@ function build_nonfrozen_R_blocks(
             for Ochild in cluster_children(testT, Overt)
                 obsindex = cluster_values(testT, Ochild)
                 srcindex = U[fastkey(Svert, Overt)]
-                n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Ochild, τ; C=C, Cε=Cε)
+                n_otilde = rankestimator(k, trialT, testT, Svert, Ochild, τ)
                 q_ks, k_l, _ = compressor(
                     kernelmatrix, srcindex, obsindex, n_otilde, τ; adaptive=adaptive
                 )
@@ -329,7 +316,7 @@ function build_nonfrozen_R_blocks(
             obsindex = cluster_values(testT, Overt)
             if !cluster_isleaf(trialT, Svert)
                 srcindex = U[fastkey(Svert, Overt)]
-                n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Overt, τ; C=C, Cε=Cε)
+                n_otilde = rankestimator(k, trialT, testT, Svert, Overt, τ)
                 q_ks, k_l, _ = compressor(
                     kernelmatrix, srcindex, obsindex, n_otilde, τ; adaptive=adaptive
                 )
@@ -361,12 +348,6 @@ function build_nonfrozen_R_blocks(
     return ButterflyLevel(all_blocks), all_k_updates
 end
 
-"""
-    build_sourcefrozen_R_blocks(...)
-
-Constructs `R` blocks when the source tree has reached its leaf limit but the observer
-tree is still being traversed.
-"""
 function build_sourcefrozen_R_blocks(
     treeO_level,
     ns,
@@ -378,8 +359,7 @@ function build_sourcefrozen_R_blocks(
     k,
     τ,
     scheduler,
-    C,
-    Cε,
+    rankestimator,
     acctype;
     adaptive=false,
 )
@@ -410,7 +390,7 @@ function build_sourcefrozen_R_blocks(
             for Ochild in cluster_children(testT, Overt)
                 obsindex = cluster_values(testT, Ochild)
                 srcindex = K[fastkey(Svert, Overt)]
-                n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Ochild, τ; C=C, Cε=Cε)
+                n_otilde = rankestimator(k, trialT, testT, Svert, Ochild, τ)
                 q_ks, k_l, _ = compressor(
                     kernelmatrix, srcindex, obsindex, n_otilde, τ; adaptive=adaptive
                 )
@@ -431,12 +411,6 @@ function build_sourcefrozen_R_blocks(
     return ButterflyLevel(all_blocks), all_k_updates
 end
 
-"""
-    build_observerfrozen_R_blocks(...)
-
-Constructs `R` blocks when the observer tree has reached its leaf limit but the source
-tree is still being traversed.
-"""
 function build_observerfrozen_R_blocks(
     treeO_LO,
     treeS_level,
@@ -449,8 +423,7 @@ function build_observerfrozen_R_blocks(
     k,
     τ,
     scheduler,
-    C,
-    Cε,
+    rankestimator,
     acctype;
     adaptive=false,
 )
@@ -480,7 +453,7 @@ function build_observerfrozen_R_blocks(
 
         if !cluster_isleaf(trialT, Svert)
             srcindex = U[fastkey(Svert, Overt)]
-            n_otilde = estimate_rank_3d(k, trialT, testT, Svert, Overt, τ; C=C, Cε=Cε)
+            n_otilde = rankestimator(k, trialT, testT, Svert, Overt, τ)
             q_ks, k_l, _ = compressor(
                 kernelmatrix, srcindex, obsindex, n_otilde, τ; adaptive=adaptive
             )
@@ -530,14 +503,15 @@ function assemble_BF_Mat(
     ns::Int,
     k::Float64,
     τ::Float64;
-    adaptive=false,
+    adaptive=true,
     compressor=ButterflyFactorizations.PartialQR(),
     C=tree_parameters(cluster_testtree(blktree)).C,
     Cε=tree_parameters(cluster_testtree(blktree)).Cε,
+    rankestimator::AbstractRankEstimator=ButterflyRankEstimator(
+        tree_parameters(blktree).Cτ
+    ),
     acctype=ComplexF64,
 )
-
-    # --- containers ---
     Q = Matrix{acctype}(undef, 0, 0)
     R = Vector{AbstractMatrix{acctype}}()
     P = Matrix{acctype}(undef, 0, 0)
@@ -546,7 +520,6 @@ function assemble_BF_Mat(
     permQ = Vector{Int}()
     permP = Vector{Int}()
 
-    # --- trees & helpers ---
     trialT = cluster_trialtree(blktree)
     testT = cluster_testtree(blktree)
 
@@ -565,7 +538,7 @@ function assemble_BF_Mat(
         srcindex = cluster_values(trialT, Sleaf)
         push!(permQ, srcindex...)
         obsindex = cluster_values(testT, no)
-        n_otilde = estimate_rank_3d(k, trialT, testT, Sleaf, no, τ_scaled; C=C, Cε=Cε)
+        n_otilde = rankestimator(k, trialT, testT, Sleaf, no, τ_scaled)
         q_ks, k_l, r_l = compressor(
             kernelmatrix, srcindex, obsindex, n_otilde, τ_scaled; adaptive=adaptive
         )
@@ -583,9 +556,6 @@ function assemble_BF_Mat(
         l >= LS && (source_is_frozen = true)
         l >= LO && (obs_is_frozen = true)
 
-        # --------------------------------------------------------------
-        # Build U (union of child skeletons)
-        # --------------------------------------------------------------
         if !source_is_frozen
             for Svert in treeS[LS - l]
                 U_S = getsubdict!(U, Svert)
@@ -602,9 +572,6 @@ function assemble_BF_Mat(
             end
         end
 
-        # --------------------------------------------------------------
-        # Compute R blocks
-        # --------------------------------------------------------------
         if !source_is_frozen && !obs_is_frozen
             R_temp1 = Matrix{acctype}(undef, 0, 0)
             for Overt in treeO[l]
@@ -615,9 +582,7 @@ function assemble_BF_Mat(
                     for Svert in treeS[LS - l]
                         srcindex = U[Svert][Overt]
 
-                        n_otilde = estimate_rank_3d(
-                            k, trialT, testT, Svert, Ochild, τ_scaled; C=C, Cε=Cε
-                        )
+                        n_otilde = rankestimator(k, trialT, testT, Svert, Ochild, τ_scaled)
                         q_ks, k_l, r_l = compressor(
                             kernelmatrix,
                             srcindex,
@@ -644,9 +609,7 @@ function assemble_BF_Mat(
                     obsindex = cluster_values(testT, Ochild)
                     for Svert in treeS[1]
                         srcindex = K[Svert][Overt]
-                        n_otilde = estimate_rank_3d(
-                            k, trialT, testT, Svert, Ochild, τ_scaled; C=C, Cε=Cε
-                        )
+                        n_otilde = rankestimator(k, trialT, testT, Svert, Ochild, τ_scaled)
                         q_ks, k_l, r_l = compressor(
                             kernelmatrix,
                             srcindex,
@@ -672,9 +635,7 @@ function assemble_BF_Mat(
                 for Svert in treeS[LS - l]
                     srcindex = U[Svert][Overt]
 
-                    n_otilde = estimate_rank_3d(
-                        k, trialT, testT, Svert, Overt, τ_scaled; C=C, Cε=Cε
-                    )
+                    n_otilde = rankestimator(k, trialT, testT, Svert, Overt, τ_scaled)
                     q_ks, k_l, r_l = compressor(
                         kernelmatrix,
                         srcindex,

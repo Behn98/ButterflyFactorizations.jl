@@ -77,24 +77,6 @@ To avoid assembling the full dense matrix, this functor randomly samples rows fr
 observer space based on `rank_est`. A pivoted QR decomposition is applied to this sample
 to find a basis and an active set of column indices (the "skeleton"). If `adaptive=true`,
 the algorithm will dynamically sample more rows if the required rank hits the sample limit.
-
-**Arguments:**
-
-  - `farassembler`: A function that assembles entries of the interaction matrix.
-  - `src_index`: Vector of global indices for the source (trial) cluster.
-  - `obs_index`: Vector of global indices for the observer (test) cluster.
-  - `rank_est`: A `RankEstimate` object (or integer) dictating the initial row sample size.
-  - `ε`: The relative tolerance used to determine the rank truncation.
-
-**Keyword Arguments:**
-
-  - `adaptive`: If `true`, expands the sample size if the computed rank exceeds 80% of the sample.
-
-**Returns:**
-
-  - `tmp`: The compressed coefficient matrix (size `r × n_src`).
-  - `k`: The optimal skeleton of source indices selected by the pivot strategy.
-  - `r`: The final mathematical rank of the block.
 """
 function (t::PartialQR{L,T})(
     farassembler,
@@ -180,86 +162,4 @@ function (t::PartialQR{L,T})(
         k = src_index[P[1:r]]
         return tmp, k, r
     end
-end
-
-"""
-    estimate_rank_3d(k, c_s, c_o, a_s, a_o, ε; kwargs...)
-
-Estimates the necessary rank of interaction between a source and an observer bounding box
-in 3D space to maintain a given tolerance `ε`.
-
-The formula computes a geometric separation estimate based purely on the macroscopic
-center-to-center distance, augmented by an algebraic padding term derived from the desired precision.
-
-**Arguments:**
-
-  - `k`: Wavenumber of the physical problem.
-  - `c_s`, `c_o`: Centers of the source and observer clusters (SVector).
-  - `a_s`, `a_o`: Half-sizes (radii) of the source and observer clusters.
-  - `ε`: Desired precision tolerance.
-
-**Keyword Arguments:**
-
-  - `C`: Scaling factor for the geometric rank term (default: 1.0).
-  - `Cε`: Scaling factor for the tolerance padding term (default: 3.0).
-  - `Rmin`: Minimum allowable rank (default: 3).
-
-**Returns:**
-
-  - An `Int` representing the conservatively estimated rank `r` for the block.
-"""
-function estimate_rank_3d(
-    k,
-    c_s::SVector,
-    c_o::SVector,
-    a_s::Float64,
-    a_o::Float64,
-    ε::Float64;
-    C=1.0,
-    Cε=3.0,
-    Rmin=3,
-)
-    # 1. Use pure center-to-center distance!
-    d = norm(c_s .- c_o)
-
-    # Safe-guard against origin collisions, NO sphere subtraction!
-    d_safe = max(d, 1e-4)
-
-    # Geometric directional rank estimate
-    R_geom = C * (k * (a_s * a_o) / d_safe)^2
-
-    # Tolerance-dependent padding
-    R_tol = Cε * log(1 / ε)
-
-    R = ceil(Int, R_geom + R_tol)
-
-    return max(R, Rmin)
-end
-
-"""
-    estimate_rank_3d(k, trialT, testT, Snode, Onode, ε; kwargs...)
-
-Tree-based wrapper for `estimate_rank_3d`. Extracts the centers and radii directly
-from the provided hierarchical trees and returns a `RankEstimate` object.
-"""
-function estimate_rank_3d(
-    k, trialT, testT, Snode::Int, Onode::Int, ε::Float64; C=1.5, Cε=1.5, Rmin=3
-)
-    c_s = cluster_center(trialT, Snode)
-    c_o = cluster_center(testT, Onode)
-    a_s = cluster_radius(trialT, Snode)
-    a_o = cluster_radius(testT, Onode)
-
-    # 1. Use pure center-to-center distance!
-    d = norm(c_s .- c_o)
-    d_safe = max(d, 1e-4)
-
-    # Isolated predictor variables
-    x1 = (k * (a_s * a_o) / d_safe)^2
-    x2 = log(1 / ε)
-
-    R = ceil(Int, C * x1 + Cε * x2)
-    n_otilde = max(R, Rmin)
-
-    return RankEstimate(n_otilde, x1, x2)
 end

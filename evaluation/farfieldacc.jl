@@ -23,7 +23,7 @@ function validate_farfield_accuracy(
     println("--- Far-Field Accuracy Validation ($n_samples blocks) ---")
 
     for i in sample_indices
-        (node_s, node_o) = ButterflyFactorizations.getNSNO(BF.BFs[i])
+        (node_s, node_o) = ButterflyFactorizations.getnsno(BF.BFs[i])
 
         # 1. Get the exact global indices for this block
         test_idx = H2Trees.values(BF.tree.testcluster, node_o)

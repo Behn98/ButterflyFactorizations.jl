@@ -56,10 +56,12 @@ function add_eqbfs(
             delete!(Q1idx, idx)
         else
             push!(newQ, b)
+            println("Adding new block to Q level")
         end
     end
 
     for (src, i) in Q1idx
+        println("Preserving existing block in Q level")
         newQ[i] = BF1.Q[i]
     end
 
@@ -81,12 +83,13 @@ function add_eqbfs(
                 newRlvl[R1idx[idx]] = blockdiag(BF1.R[l].blocks[R1idx[idx]], b)
                 delete!(R1idx, idx)
             else
+                println("Adding new block to R level $l: ")
                 push!(newRlvl, b)
             end
         end
 
-        # 🚀 FIX: Assign to newRlvl, not the outer newR array!
         for (blkkey, i) in R1idx
+            println("Preserving existing block in R level $l")
             newRlvl[i] = BF1.R[l].blocks[i]
         end
         newR[l] = ButterflyLevel(newRlvl)
@@ -114,10 +117,12 @@ function add_eqbfs(
             delete!(P1idx, idx)
         else
             push!(newP, b)
+            println("Adding new block to P level")
         end
     end
 
     for (obs, i) in P1idx
+        println("Preserving existing block in P level")
         newP[i] = BF1.P[i]
     end
 

@@ -21,10 +21,14 @@ far-field interactions are compressed block-by-block using `assemble_BF`.
   - `compressor`: The low-rank approximation strategy (default: `PartialQR()`).
   - `tol`: The relative precision tolerance for compression (default: `1e-3`).
   - `admissibility`: The geometric admissibility functor (defaults to `isFarFunctor`).
+  - `rankestimator`: The rank estimation strategy (default: `GeometricRankEstimator`).
   - `unbalancedints`: Whether to allow unbalanced interactions (default: `false`).
   - `leafcomp`: Whether to allow leaf-level compression (default: `true`).
   - `acctype`: The numeric type to use for the factorization (default: `ComplexF64`).
   - `scheduler`: The threading scheduler to use for parallel assembly.
+  - `minbflvl`: The minimum level in the tree to apply butterfly compression when leafcompression = false(default: `3`).
+  - `adaptive`: Whether to adaptively determine the rank during compression (default: `false`).
+  - `farfieldonly`: If true, only assemble far-field interactions (default: `false`).
 """
 function PetrovGalerkinBF(
     operator,
@@ -35,12 +39,14 @@ function PetrovGalerkinBF(
     compressor=ButterflyFactorizations.PartialQR(),
     tol=1e-3,
     admissibility=isFarFunctor(tree_parameters(cluster_testtree(tree)).α),
-    C=tree_parameters(cluster_testtree(tree)).C,
-    Cε=tree_parameters(cluster_testtree(tree)).Cε,
+    rankestimator::AbstractRankEstimator=ButterflyRankEstimator(
+        tree_parameters(cluster_testtree(tree), admissibility).Cτ
+    ),
+
     scheduler=OhMyThreads.StaticScheduler(),
     acctype=ComplexF64,
     minbflvl=3,
-    adaptive=false,
+    adaptive=true,
     unbalancedints=false,
     leafcomp=true,
     leafimbalance=true,
@@ -69,9 +75,6 @@ function PetrovGalerkinBF(
     near_cols = Vector{Int}(undef, n_ints)
     near_vals = Vector{Int}(undef, n_ints)
 
-    # ---------------------------------------------------------
-    # PASS 1: Sequential Pre-allocation & Index Fetching
-    # ---------------------------------------------------------
     for i in 1:n_ints
         (node_o, node_s) = nearints[i]
 
@@ -87,9 +90,6 @@ function PetrovGalerkinBF(
         )
     end
 
-    # ---------------------------------------------------------
-    # PASS 2: Parallel Block Evaluation
-    # ---------------------------------------------------------
     let nearmatrix_near = nearmatrix_near
         @tasks for i in 1:n_ints
             @set scheduler = scheduler
@@ -142,11 +142,10 @@ function PetrovGalerkinBF(
                 k,
                 tol;
                 compressor=compressor,
-                C=C,
-                Cε=Cε,
+                rankestimator=rankestimator,
                 scheduler=OhMyThreads.SerialScheduler(),
                 adaptive=adaptive,
-                acctype=acctype, # 🚀 FIXED: Added type propagation
+                acctype=acctype,
             )
         end
     end
@@ -179,10 +178,11 @@ function PetrovGalerkinBF_Mat(
     k::Float64;
     compressor=ButterflyFactorizations.PartialQR(),
     admissibility=isFarFunctor(tree_parameters(cluster_testtree(tree)).α),
-    C=tree_parameters(cluster_testtree(tree)).C,
-    Cε=tree_parameters(cluster_testtree(tree)).Cε,
+    rankestimator::AbstractRankEstimator=ButterflyRankEstimator(
+        tree_parameters(tree, admissibility).Cτ
+    ),
     tol=1e-3,
-    adaptive=false,
+    adaptive=true,
     scheduler=OhMyThreads.StaticScheduler(),
     acctype=ComplexF64,
     minbflvl=3,
@@ -207,9 +207,6 @@ function PetrovGalerkinBF_Mat(
     values = Vector{Vector{Int64}}(undef, n_ints)
     nearvalues = Vector{Vector{Int64}}(undef, n_ints)
 
-    # ---------------------------------------------------------
-    # PASS 1: Sequential Pre-allocation
-    # ---------------------------------------------------------
     for i in 1:n_ints
         (node_o, node_s) = nearints[i]
         values[i] = cluster_values(tree.testcluster, node_o)
@@ -218,9 +215,6 @@ function PetrovGalerkinBF_Mat(
         blocks[i] = Matrix{acctype}(undef, length(values[i]), length(nearvalues[i]))
     end
 
-    # ---------------------------------------------------------
-    # PASS 2: Parallel Evaluation
-    # ---------------------------------------------------------
     let nearmatrix = nearmatrix
         @tasks for i in 1:n_ints
             @set scheduler = scheduler
@@ -250,10 +244,9 @@ function PetrovGalerkinBF_Mat(
                 k,
                 tol;
                 compressor=compressor,
-                C=C,
-                Cε=Cε,
+                rankestimator=rankestimator,
                 adaptive=adaptive,
-                acctype=acctype, # 🚀 FIXED: Added type propagation
+                acctype=acctype,
             )
         end
     end
