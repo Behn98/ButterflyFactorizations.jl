@@ -20,15 +20,15 @@ function ButterflyFactorizations.tree_parameters(tree::H2Trees.BlockTree)
 end
 
 function ButterflyFactorizations.tree_parameters(tree::H2Trees.TwoNTree)
-    return ButterflyFactorizations.TreeParameters(0.2, 2.3858, 1.8072, 1.0)
+    return ButterflyFactorizations.TreeParameters(0.2, 2.3858, 1.8072, 1.0, 4.0)
 end
 
 function ButterflyFactorizations.tree_parameters(tree::BisectionTree)
-    return ButterflyFactorizations.TreeParameters(0.2, 0.5197, 2.6569, 1.0)
+    return ButterflyFactorizations.TreeParameters(0.2, 0.5197, 2.6569, 1.0, 4.0)
 end
 
 function ButterflyFactorizations.tree_parameters(tree::H2Trees.BoundingBallTree)
-    return ButterflyFactorizations.TreeParameters(0.6, 3.2, 2.4, 1.5)
+    return ButterflyFactorizations.TreeParameters(0.6, 3.2, 2.4, 1.5, 4.0)
 end
 
 #-----------------------------------------------------------------------------------------#
@@ -44,19 +44,19 @@ end
 function ButterflyFactorizations.tree_parameters(
     tree::H2Trees.TwoNTree, admissiblity::ButterflyFactorizations.isFarFunctor
 )
-    return ButterflyFactorizations.TreeParameters(0.2, 2.3858, 1.8072, 1.0)
+    return ButterflyFactorizations.TreeParameters(0.2, 2.3858, 1.8072, 1.0, 4.0)
 end
 
 function ButterflyFactorizations.tree_parameters(
     tree::BisectionTree, admissiblity::ButterflyFactorizations.isFarFunctor
 )
-    return ButterflyFactorizations.TreeParameters(0.2, 0.5197, 2.6569, 1.0)
+    return ButterflyFactorizations.TreeParameters(0.2, 0.5197, 2.6569, 1.0, 4.0)
 end
 
 function ButterflyFactorizations.tree_parameters(
     tree::H2Trees.BoundingBallTree, admissiblity::ButterflyFactorizations.isFarFunctor
 )
-    return ButterflyFactorizations.TreeParameters(0.6, 3.2, 2.4, 1.5)
+    return ButterflyFactorizations.TreeParameters(0.6, 3.2, 2.4, 1.5, 4.0)
 end
 
 #-----------------------------------------------------------------------------------------#
@@ -74,18 +74,18 @@ function ButterflyFactorizations.tree_parameters(
     tree::H2Trees.TwoNTree,
     admissiblity::ButterflyFactorizations.CenterDistanceAdmissibility,
 )
-    return ButterflyFactorizations.TreeParameters(0.2, 2.3858, 1.8072, 1.0)
+    return ButterflyFactorizations.TreeParameters(0.2, 2.3858, 1.8072, 1.0, 4.0)
 end
 
 function ButterflyFactorizations.tree_parameters(
     tree::BisectionTree, admissiblity::ButterflyFactorizations.CenterDistanceAdmissibility
 )
-    return ButterflyFactorizations.TreeParameters(0.2, 0.5197, 2.6569, 1.0)
+    return ButterflyFactorizations.TreeParameters(0.2, 0.5197, 2.6569, 1.0, 4.0)
 end
 
 function ButterflyFactorizations.tree_parameters(
     tree::H2Trees.BoundingBallTree,
     admissiblity::ButterflyFactorizations.CenterDistanceAdmissibility,
 )
-    return ButterflyFactorizations.TreeParameters(0.6, 3.2, 2.4, 1.5)
+    return ButterflyFactorizations.TreeParameters(0.6, 3.2, 2.4, 1.5, 4.0)
 end

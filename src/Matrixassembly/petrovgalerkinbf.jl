@@ -38,8 +38,11 @@ function PetrovGalerkinBF(
     compressor=ButterflyFactorizations.PartialQR(),
     tol=1e-3,
     admissibility=isFarFunctor(tree_parameters(cluster_testtree(tree)).α),
-    C=tree_parameters(cluster_testtree(tree), admissibility).C,
-    Cε=tree_parameters(cluster_testtree(tree), admissibility).Cε,
+    rankestimator::AbstractRankEstimator=GeometricRankEstimator(
+        tree_parameters(cluster_testtree(tree), admissibility).C,
+        tree_parameters(cluster_testtree(tree), admissibility).Cε,
+    ),
+
     scheduler=OhMyThreads.StaticScheduler(),
     acctype=ComplexF64,
     minbflvl=3,
@@ -72,9 +75,6 @@ function PetrovGalerkinBF(
     near_cols = Vector{Int}(undef, n_ints)
     near_vals = Vector{Int}(undef, n_ints)
 
-    # ---------------------------------------------------------
-    # PASS 1: Sequential Pre-allocation & Index Fetching
-    # ---------------------------------------------------------
     for i in 1:n_ints
         (node_o, node_s) = nearints[i]
 
@@ -90,9 +90,6 @@ function PetrovGalerkinBF(
         )
     end
 
-    # ---------------------------------------------------------
-    # PASS 2: Parallel Block Evaluation
-    # ---------------------------------------------------------
     let nearmatrix_near = nearmatrix_near
         @tasks for i in 1:n_ints
             @set scheduler = scheduler
@@ -145,11 +142,10 @@ function PetrovGalerkinBF(
                 k,
                 tol;
                 compressor=compressor,
-                C=C,
-                Cε=Cε,
+                rankestimator=rankestimator,
                 scheduler=OhMyThreads.SerialScheduler(),
                 adaptive=adaptive,
-                acctype=acctype, # 🚀 FIXED: Added type propagation
+                acctype=acctype,
             )
         end
     end
@@ -182,8 +178,10 @@ function PetrovGalerkinBF_Mat(
     k::Float64;
     compressor=ButterflyFactorizations.PartialQR(),
     admissibility=isFarFunctor(tree_parameters(cluster_testtree(tree)).α),
-    C=tree_parameters(cluster_testtree(tree)).C,
-    Cε=tree_parameters(cluster_testtree(tree)).Cε,
+    rankestimator::AbstractRankEstimator=GeometricRankEstimator(
+        tree_parameters(cluster_testtree(tree), admissibility).C,
+        tree_parameters(cluster_testtree(tree), admissibility).Cε,
+    ),
     tol=1e-3,
     adaptive=false,
     scheduler=OhMyThreads.StaticScheduler(),
@@ -210,9 +208,6 @@ function PetrovGalerkinBF_Mat(
     values = Vector{Vector{Int64}}(undef, n_ints)
     nearvalues = Vector{Vector{Int64}}(undef, n_ints)
 
-    # ---------------------------------------------------------
-    # PASS 1: Sequential Pre-allocation
-    # ---------------------------------------------------------
     for i in 1:n_ints
         (node_o, node_s) = nearints[i]
         values[i] = cluster_values(tree.testcluster, node_o)
@@ -221,9 +216,6 @@ function PetrovGalerkinBF_Mat(
         blocks[i] = Matrix{acctype}(undef, length(values[i]), length(nearvalues[i]))
     end
 
-    # ---------------------------------------------------------
-    # PASS 2: Parallel Evaluation
-    # ---------------------------------------------------------
     let nearmatrix = nearmatrix
         @tasks for i in 1:n_ints
             @set scheduler = scheduler
@@ -253,10 +245,9 @@ function PetrovGalerkinBF_Mat(
                 k,
                 tol;
                 compressor=compressor,
-                C=C,
-                Cε=Cε,
+                rankestimator=rankestimator,
                 adaptive=adaptive,
-                acctype=acctype, # 🚀 FIXED: Added type propagation
+                acctype=acctype,
             )
         end
     end

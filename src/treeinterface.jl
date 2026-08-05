@@ -20,18 +20,20 @@ for a specific tree geometry.
   - `C::T`: The geometric scaling constant for the directional rank estimator.
   - `Cε::T`: The algebraic padding constant for the rank estimator based on tolerance.
   - `β::T`: The center-to-center distance multiplier for alternative admissibility criteria.
+  - `Cτ::T`: The geometric scaling constant for the Butterfly rank estimator.
 """
 struct TreeParameters{T} <: AbstractTreeParameters
     α::T
     C::T
     Cε::T
     β::T
+    Cτ::T
 end
 
 """
     tree_parameters(tree, admissiblity::AbstractAdmissibility) -> TreeParameters
 
-Retrieve the default mathematical and geometric parameters (`α`, `C`, `Cε`, `β`) associated
+Retrieve the default mathematical and geometric parameters (`α`, `C`, `Cε`, `β`, `Cτ`) associated
 with a given tree type and admissibility criterion.
 """
 function tree_parameters(tree, admissiblity::AbstractAdmissibility)

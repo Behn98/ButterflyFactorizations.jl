@@ -94,6 +94,7 @@ include("kernelmatrix/beastkernelmatrix.jl")
 # Butterfly Factorization Assembly
 include("ButterflyFactorization/bfstructs.jl")
 include("ButterflyFactorization/bfstructfcts.jl")
+include("ButterflyFactorization/rankestimation.jl")
 include("ButterflyFactorization/compressors.jl")
 include("ButterflyFactorization/bfassembly.jl")
 

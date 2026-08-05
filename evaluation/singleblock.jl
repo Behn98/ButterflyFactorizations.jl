@@ -141,15 +141,19 @@ end
 # --- Benchmark Execution ---
 function run_single_farfield_benchmark(
     h_values;
-    highfscaling::Bool=true, # 🚀 FIX: Renamed for consistency
+    highfscaling::Bool=true,
     separation_distance::Float64=3.0,
     tolvalues::Vector{Float64}=[1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10],
     maxpointsbisection::Int=50,
+    minpointskmeans::Int=100,
+    minpointstwon::Int=100,
     csv_file::String="single_farfield_results.csv",
     rectangulargeom::Bool=true,
     geomfaceoff::Bool=true,
     treekind::Symbol=:KMeansTree,
     denseassemble::Bool=false,
+    adaptive::Bool=false,
+    rankestimator::Symbol=:Butterfly,
     scheduler=OhMyThreads.DynamicScheduler(),
 )
     BLAS.set_num_threads(1)
@@ -171,6 +175,7 @@ function run_single_farfield_benchmark(
         println(" Separation Distance : $dist")
         println(" Output CSV          : $csv_file")
         println(" Wavenumber Scaling  : $(highfscaling ? "Dynamic" : "Fixed (High-F)")")
+        println(" Rank Estimator      : $rankestimator")
         println("==========================================================\n")
     else
         println("==========================================================")
@@ -178,6 +183,7 @@ function run_single_farfield_benchmark(
         println(" Separation Distance : $separation_distance")
         println(" Output CSV          : $csv_file")
         println(" Wavenumber Scaling  : $(highfscaling ? "Dynamic" : "Fixed (High-F)")")
+        println(" Rank Estimator      : $rankestimator")
         println("==========================================================\n")
     end
 
@@ -214,8 +220,8 @@ function run_single_farfield_benchmark(
         nearmatrix_far = ButterflyFactorizations.AbstractKernelMatrix(op, Y, X; type=:far)
 
         if treekind == :KMeansTree
-            Stree = H2Trees.KMeansTree(X.pos, 2; minvalues=100)
-            Otree = H2Trees.KMeansTree(Y.pos, 2; minvalues=100)
+            Stree = H2Trees.KMeansTree(X.pos, 2; minvalues=minpointskmeans)
+            Otree = H2Trees.KMeansTree(Y.pos, 2; minvalues=minpointskmeans)
         elseif treekind == :BisectionTree
             Stree = ButterflyFactorizations.build_bisection_tree(
                 X.pos; max_points=maxpointsbisection
@@ -226,6 +232,14 @@ function run_single_farfield_benchmark(
         end
         blktree = H2Trees.BlockTree(Otree, Stree)
         tree_height = length(blktree.testcluster.nodesatlevel)
+
+        # 🚀 NEW: Dynamically fetch calibrated constants and instantiate the requested estimator
+        tree_params = ButterflyFactorizations.tree_parameters(blktree)
+        active_estimator = if rankestimator == :Butterfly
+            ButterflyFactorizations.ButterflyRankEstimator(tree_params.Cτ)
+        else
+            ButterflyFactorizations.GeometricRankEstimator(tree_params.C, tree_params.Cε)
+        end
 
         traces_level_ranks = GenericTrace[]
 
@@ -247,7 +261,8 @@ function run_single_farfield_benchmark(
                     k,
                     bf_tol;
                     compressor=ButterflyFactorizations.PartialQR(),
-                    scheduler=scheduler,
+                    rankestimator=active_estimator,
+                    adaptive=adaptive,
                 )
             end
 
@@ -415,7 +430,7 @@ function run_single_farfield_benchmark(
             ),
         )
 
-        # 🚀 NEW: Standard Fits + Empirical Fits
+        # Standard Fits + Empirical Fits
         if length(x_N) > 1
             c_time = fit_scaling_factor(x_N, y_time, f_nlogn)
             c_mv = fit_scaling_factor(x_N, y_mv, f_nlogn)
@@ -583,16 +598,17 @@ function run_single_farfield_benchmark(
 end
 
 # --- Execution ---
-h_values = [0.0125, 0.008, 0.006, 0.004, 0.003]
-#[0.0125, 0.008, 0.006, 0.004, 0.003] N = [19040, 46625, 83333, 187000, 332001]
-#[0.0055] N = [99008]
+h_values = [0.0125]
+#For Rectangular Geometry:
+#h_values =[0.0125, 0.008, 0.006, 0.004, 0.003] N = [19040, 46625, 83333, 187000, 332001]
+#h_values =[0.0055]                             N = [99008]
 p_acc, p_time_N, p_mem, p_mem_N, p_mv_N, p_rank, p_level_ranks_all = run_single_farfield_benchmark(
     h_values;
 
     # -------------------------------------------------------------------------
     # Physical Setup & Geometry
     # -------------------------------------------------------------------------
-    highfscaling=false,         # false: Locks wavenumber k to the finest mesh to prove pure O(N log N) asymptotic scaling without rank creep. true: Scales k with h.
+    highfscaling=true,         # false: Locks wavenumber k to the finest mesh to prove pure O(N log N) asymptotic scaling without rank creep. true: Scales k with h.
     rectangulargeom=true,       # true: Uses flat rectangular planes. false: Uses 3D spherical meshes.
     geomfaceoff=false,          # (If rectangulargeom=true) true: Rectangles are in parallel planes facing each other. false: Rectangles are side-by-side in the same plane.
     separation_distance=4.0,    # Physical translation distance to ensure the two meshes are entirely in each other's far-field.
@@ -600,18 +616,20 @@ p_acc, p_time_N, p_mem, p_mem_N, p_mv_N, p_rank, p_level_ranks_all = run_single_
     # -------------------------------------------------------------------------
     # Butterfly Tree Configuration
     # -------------------------------------------------------------------------
-    treekind=:BisectionTree,    # Clustering spatial division strategy (Options: :KMeansTree, :BisectionTree, :TwoNTree).
+    treekind=:KMeansTree,    # Clustering spatial division strategy (Options: :KMeansTree, :BisectionTree, :TwoNTree).
     maxpointsbisection=100,     # Maximum degrees of freedom allowed in a single leaf node before stopping the bisection split.
 
     # -------------------------------------------------------------------------
     # Compression & Accuracy Validation
     # -------------------------------------------------------------------------
-    tolvalues=[1e-3],           # Array of target relative tolerances to sweep through for the PartialQR compressor (e.g., [1e-3, 1e-4, 1e-5]).
-    denseassemble=false,        # true: Computes the exact dense interaction matrix to measure true relative error (WARNING: Will run out of memory for large N!). false: Skips error computation.
+    tolvalues=[1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10],           # Array of target relative tolerances to sweep through for the PartialQR compressor (e.g., [1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10]).
+    denseassemble=true,         # true: Computes the exact dense interaction matrix to measure true relative error (WARNING: Will run out of memory for large N!). false: Skips error computation.
 
     # -------------------------------------------------------------------------
     # System & Logging
     # -------------------------------------------------------------------------
+    rankestimator=:Butterfly,                 # Butterfly (O(1) initial sample size) or :Geometric (k^2 inflated sample size)
+    adaptive=true,                            # Must be set to true for the :Butterfly rank estimator to work properly. If false, the rank estimator will not adaptively increase the sample size.
     scheduler=OhMyThreads.DynamicScheduler(), # Multithreading task scheduler for parallel block assembly and compression.
     csv_file="single_farfield_results.csv",    # Filepath to dump all quantitative metrics incrementally.
 );
