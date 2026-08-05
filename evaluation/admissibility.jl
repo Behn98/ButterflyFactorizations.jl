@@ -24,11 +24,11 @@ function benchmark_and_validate_alpha(
     tol=1e-3,
     alpha_range=1.0:0.1:3.0,
     criterion::Symbol=:isFarFunctor,
+    rankestimator_type::Symbol=:Geometric, # 🚀 NEW: Estimator toggle
     farfield_only::Bool=false,
     scheduler=OhMyThreads.DynamicScheduler(),
     acctype=ComplexF64,
 )
-    # 🚀 NEW: Added a Dict to the NamedTuple to store BF counts per level
     benchmark_results = NamedTuple{
         (
             :alpha,
@@ -48,6 +48,7 @@ function benchmark_and_validate_alpha(
     println(" Target Tolerance (τ): $tol")
     println(" Mode: $(farfield_only ? "Far-Field ONLY" : "Full Assembly")")
     println(" Admissibility Criterion: $criterion")
+    println(" Rank Estimator: $rankestimator_type")
     println("==================================================")
 
     for α in alpha_range
@@ -67,6 +68,19 @@ function benchmark_and_validate_alpha(
             minbflvl=0,
             leafimbalance=false,
         )
+
+        # 🚀 NEW: Dynamically fetch calibrated constants and instantiate the requested estimator
+        tree_params = ButterflyFactorizations.tree_parameters(tree, admissible)
+
+        active_estimator = if rankestimator_type == :Butterfly
+            ButterflyFactorizations.ButterflyRankEstimator(tree_params.Cτ)
+        else
+            ButterflyFactorizations.GeometricRankEstimator(tree_params.C, tree_params.Cε)
+        end
+
+        # 🚀 NEW: The Butterfly estimator REQUIRES adaptivity to guarantee precision
+        # because its initial sample size guess is very small (O(1)).
+        is_adaptive = (rankestimator_type == :Butterfly)
 
         # --- 1. Timing Near-Field Assembly ---
         time_near = 0.0
@@ -145,7 +159,8 @@ function benchmark_and_validate_alpha(
                         k,
                         tol;
                         compressor=compressor,
-                        adaptive=false,
+                        rankestimator=active_estimator, # 🚀 Injected Estimator
+                        adaptive=is_adaptive,           # 🚀 Injected Adaptivity logic
                         scheduler=OhMyThreads.SerialScheduler(),
                     )
                 end
@@ -239,7 +254,6 @@ function plot_alpha_performance_and_accuracy(results, target_tol::Float64)
     opt_alpha = alphas[min_idx]
     opt_time = t_total[min_idx]
 
-    # 🚀 NEW: Added a 3rd row for the BF Count plot
     fig = make_subplots(;
         rows=3,
         cols=1,
@@ -312,7 +326,7 @@ function plot_alpha_performance_and_accuracy(results, target_tol::Float64)
     add_trace!(fig, trace_farfielderror; row=2, col=1)
     add_trace!(fig, trace_tol; row=2, col=1)
 
-    # 🚀 NEW: BOTTOM PANEL: BF LEVEL COUNTS ---
+    # --- BOTTOM PANEL: BF LEVEL COUNTS ---
     all_r_levels = sort(unique(vcat([collect(keys(r.bf_counts)) for r in results]...)))
 
     for r_lvl in all_r_levels
@@ -360,6 +374,7 @@ tol = 1e-3
 
 # 1. Define the configurations to iterate through
 tree_types = [:KMeansTree, :BisectionTree, :TwoNTree]
+estimators = [:Geometric, :Butterfly] # 🚀 NEW: Iterate over both Estimator Strategies
 
 # Define the criteria and their appropriate α sweep ranges
 criteria_configs = [
@@ -382,37 +397,43 @@ for tree_type in tree_types
     blktree = H2Trees.BlockTree(tree, tree)
 
     for (criterion, alpha_range) in criteria_configs
-        println("\n--------------------------------------------------")
-        println(" 🔬 Testing Configuration: $tree_type + $criterion")
-        println("--------------------------------------------------")
+        for est_type in estimators
+            println("\n--------------------------------------------------")
+            println(" 🔬 Testing: $tree_type | $criterion | $est_type Estimator")
+            println("--------------------------------------------------")
 
-        # 3. Run the benchmark
-        results = benchmark_and_validate_alpha(
-            op,
-            X,
-            X,
-            blktree,
-            k;
-            compressor=ButterflyFactorizations.PartialQR(),
-            tol=tol,
-            alpha_range=alpha_range,
-            scheduler=OhMyThreads.DynamicScheduler(),
-            farfield_only=false,
-            criterion=criterion,
-        )
+            # 3. Run the benchmark
+            results = benchmark_and_validate_alpha(
+                op,
+                X,
+                X,
+                blktree,
+                k;
+                compressor=ButterflyFactorizations.PartialQR(),
+                tol=tol,
+                alpha_range=alpha_range,
+                criterion=criterion,
+                rankestimator_type=est_type, # 🚀 Pass estimator type
+                scheduler=OhMyThreads.DynamicScheduler(),
+                farfield_only=false,
+            )
 
-        # 4. Generate the plot
-        fig = plot_alpha_performance_and_accuracy(results, tol)
+            # 4. Generate the plot
+            fig = plot_alpha_performance_and_accuracy(results, tol)
 
-        # Update the plot title to reflect the current configuration
-        relayout!(fig; title_text="Runtime & Accuracy Profiling ($tree_type | $criterion)")
+            # Update the plot title to reflect the full configuration
+            relayout!(
+                fig;
+                title_text="Runtime & Accuracy Profiling ($tree_type | $criterion | $est_type)",
+            )
 
-        # 5. Save the plot with a descriptive, dynamic filename
-        filename = "alpha_benchmark_$(tree_type)_$(criterion).html"
-        savefig(fig, filename)
-        println("\n✅ Saved plot to: $filename")
+            # 5. Save the plot with a descriptive, dynamic filename
+            filename = "alpha_benchmark_$(tree_type)_$(criterion)_$(est_type).html"
+            savefig(fig, filename)
+            println("\n✅ Saved plot to: $filename")
 
-        # 6. Display in the active REPL / IDE
-        display(fig)
+            # 6. Display in the active REPL / IDE
+            display(fig)
+        end
     end
 end

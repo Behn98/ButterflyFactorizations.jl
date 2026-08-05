@@ -1,3 +1,43 @@
+# ==============================================================================
+# Rank Estimator Abstractions
+# ==============================================================================
+
+abstract type AbstractRankEstimator end
+
+"""
+    GeometricRankEstimator(C, Cε; Rmin=3)
+
+Standard rank estimator using macroscopic cluster distances and wavenumbers.
+Matches the original FMM / H-matrix geometric scaling behavior.
+"""
+struct GeometricRankEstimator <: AbstractRankEstimator
+    C::Float64
+    Cε::Float64
+    Rmin::Int
+end
+GeometricRankEstimator(C, Cε; Rmin=3) = GeometricRankEstimator(C, Cε, Rmin)
+
+function (est::GeometricRankEstimator)(k, trialT, testT, Snode::Int, Onode::Int, ε::Float64)
+    return estimate_rank_3d(
+        k, trialT, testT, Snode, Onode, ε; C=est.C, Cε=est.Cε, Rmin=est.Rmin
+    )
+end
+
+"""
+    ButterflyRankEstimator(Cε; Rmin=10)
+
+Optimized rank estimator for Butterfly Factorization blocks. Assumes rank is bounded
+independently of wavenumber k due to complementary cluster size admissibility.
+"""
+struct ButterflyRankEstimator <: AbstractRankEstimator
+    Cε::Float64
+    Rmin::Int
+end
+ButterflyRankEstimator(Cε; Rmin=10) = ButterflyRankEstimator(Cε, Rmin)
+
+function (est::ButterflyRankEstimator)(k, trialT, testT, Snode::Int, Onode::Int, ε::Float64)
+    return estimate_rank_butterfly(ε; Cε=est.Cε, Rmin=est.Rmin)
+end
 
 """
     estimate_rank_3d(k, c_s, c_o, a_s, a_o, ε; kwargs...)
@@ -55,45 +95,4 @@ function estimate_rank_butterfly(ε::Float64; Cε=4.0, Rmin=10)
     R = ceil(Int, Cε * x2)
     n_otilde = max(R, Rmin)
     return RankEstimate(n_otilde, 1.0, x2)
-end
-
-# ==============================================================================
-# Rank Estimator Abstractions
-# ==============================================================================
-
-abstract type AbstractRankEstimator end
-
-"""
-    GeometricRankEstimator(C, Cε; Rmin=3)
-
-Standard rank estimator using macroscopic cluster distances and wavenumbers.
-Matches the original FMM / H-matrix geometric scaling behavior.
-"""
-struct GeometricRankEstimator <: AbstractRankEstimator
-    C::Float64
-    Cε::Float64
-    Rmin::Int
-end
-GeometricRankEstimator(C, Cε; Rmin=3) = GeometricRankEstimator(C, Cε, Rmin)
-
-function (est::GeometricRankEstimator)(k, trialT, testT, Snode::Int, Onode::Int, ε::Float64)
-    return estimate_rank_3d(
-        k, trialT, testT, Snode, Onode, ε; C=est.C, Cε=est.Cε, Rmin=est.Rmin
-    )
-end
-
-"""
-    ButterflyRankEstimator(Cε; Rmin=10)
-
-Optimized rank estimator for Butterfly Factorization blocks. Assumes rank is bounded
-independently of wavenumber k due to complementary cluster size admissibility.
-"""
-struct ButterflyRankEstimator <: AbstractRankEstimator
-    Cε::Float64
-    Rmin::Int
-end
-ButterflyRankEstimator(Cε; Rmin=10) = ButterflyRankEstimator(Cε, Rmin)
-
-function (est::ButterflyRankEstimator)(k, trialT, testT, Snode::Int, Onode::Int, ε::Float64)
-    return estimate_rank_butterfly(ε; Cε=est.Cε, Rmin=est.Rmin)
 end

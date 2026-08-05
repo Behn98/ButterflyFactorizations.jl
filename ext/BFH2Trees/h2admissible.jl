@@ -72,7 +72,7 @@ An alternative admissibility condition relying entirely on the macroscopic cente
 distance, rendering it immune to overlapping origin traps.
 """
 function (t::ButterflyFactorizations.CenterDistanceAdmissibility)(
-    srctree::BisectionTree, tsttree::BisectionTree, snode::Int, onode::Int
+    srctree::H2Trees.H2ClusterTree, tsttree::H2Trees.H2ClusterTree, snode::Int, onode::Int
 )
     ocenter = ButterflyFactorizations.cluster_center(tsttree, onode)
     scenter = ButterflyFactorizations.cluster_center(srctree, snode)

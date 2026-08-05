@@ -215,13 +215,13 @@ Additional benchmarks and performance evaluations will be added soon.
         
 ### Implemented 
 
-✅ Dictionary-free, flat-array architecture with thread-safe workspaces
-✅ Compression of far-field interactions with controllable error bounds
-✅ Near- and far-field integration (Petrov-Galerkin formulations)
-✅ Hierarchical tree decomposition via H2Trees integration
-✅ High-performance, statically threaded matrix-vector products
-✅ Butterfly algebra modules (recompression, addition and multiplication for balanced trees)
-✅ Benchmarking, rank evaluation, and admissibility plotting framework
+- ✅ Dictionary-free, flat-array architecture with thread-safe workspaces
+- ✅ Compression of far-field interactions with controllable error bounds
+- ✅ Near- and far-field integration (Petrov-Galerkin formulations)
+- ✅ Hierarchical tree decomposition via H2Trees integration
+- ✅ High-performance, statically threaded matrix-vector products
+- ✅ Butterfly algebra modules (recompression, addition and multiplication for balanced binary trees)
+- ✅ Benchmarking, rank evaluation, and admissibility plotting framework
 
 
 ### Work in Progress
@@ -229,7 +229,7 @@ Additional benchmarks and performance evaluations will be added soon.
 The development roadmap focuses on:
 
 1. **Advanced Butterfly Algebra**
-   - Completing split multiplication rules
+   - Implementing splitting and concatenation of butterflies
    - Improved scaling for large systems
 
 2. **Performance Engineering**

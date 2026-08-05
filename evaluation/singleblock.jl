@@ -144,7 +144,7 @@ function run_single_farfield_benchmark(
     highfscaling::Bool=true,
     separation_distance::Float64=3.0,
     tolvalues::Vector{Float64}=[1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10],
-    maxpointsbisection::Int=50,
+    maxpointsbisection::Int=100,
     minpointskmeans::Int=100,
     minpointstwon::Int=100,
     csv_file::String="single_farfield_results.csv",
@@ -229,11 +229,17 @@ function run_single_farfield_benchmark(
             Otree = ButterflyFactorizations.build_bisection_tree(
                 Y.pos; max_points=maxpointsbisection
             )
+        elseif treekind == :TwoNTree
+            Stree = H2Trees.TwoNTree(X, h; minvalues=minpointstwon)
+            Otree = H2Trees.TwoNTree(Y, h; minvalues=minpointstwon)
+        else
+            error(
+                "Unsupported tree type: $treekind. Choose from :KMeansTree, :BisectionTree, or :TwoNTree.",
+            )
         end
         blktree = H2Trees.BlockTree(Otree, Stree)
         tree_height = length(blktree.testcluster.nodesatlevel)
 
-        # 🚀 NEW: Dynamically fetch calibrated constants and instantiate the requested estimator
         tree_params = ButterflyFactorizations.tree_parameters(blktree)
         active_estimator = if rankestimator == :Butterfly
             ButterflyFactorizations.ButterflyRankEstimator(tree_params.Cτ)
@@ -598,7 +604,7 @@ function run_single_farfield_benchmark(
 end
 
 # --- Execution ---
-h_values = [0.0125]
+h_values = [0.0125, 0.008, 0.006, 0.004, 0.003]
 #For Rectangular Geometry:
 #h_values =[0.0125, 0.008, 0.006, 0.004, 0.003] N = [19040, 46625, 83333, 187000, 332001]
 #h_values =[0.0055]                             N = [99008]
@@ -611,19 +617,21 @@ p_acc, p_time_N, p_mem, p_mem_N, p_mv_N, p_rank, p_level_ranks_all = run_single_
     highfscaling=true,         # false: Locks wavenumber k to the finest mesh to prove pure O(N log N) asymptotic scaling without rank creep. true: Scales k with h.
     rectangulargeom=true,       # true: Uses flat rectangular planes. false: Uses 3D spherical meshes.
     geomfaceoff=false,          # (If rectangulargeom=true) true: Rectangles are in parallel planes facing each other. false: Rectangles are side-by-side in the same plane.
-    separation_distance=4.0,    # Physical translation distance to ensure the two meshes are entirely in each other's far-field.
+    separation_distance=4.0,    # Physical translation distance to ensure the two meshspheres are entirely in each other's far-field. For the rectangular geometry, this is ignored and the distance is fixed at 2*sqrt(2) to ensure far-field interaction.
 
     # -------------------------------------------------------------------------
     # Butterfly Tree Configuration
     # -------------------------------------------------------------------------
     treekind=:KMeansTree,    # Clustering spatial division strategy (Options: :KMeansTree, :BisectionTree, :TwoNTree).
     maxpointsbisection=100,     # Maximum degrees of freedom allowed in a single leaf node before stopping the bisection split.
+    minpointskmeans=100,        # Minimum degrees of freedom allowed in a single leaf node before stopping the k-means split.
+    minpointstwon=100,          # Minimum degrees of freedom allowed in a single leaf node before stopping the 2N-tree split.
 
     # -------------------------------------------------------------------------
     # Compression & Accuracy Validation
     # -------------------------------------------------------------------------
-    tolvalues=[1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10],           # Array of target relative tolerances to sweep through for the PartialQR compressor (e.g., [1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10]).
-    denseassemble=true,         # true: Computes the exact dense interaction matrix to measure true relative error (WARNING: Will run out of memory for large N!). false: Skips error computation.
+    tolvalues=[1e-3],           # Array of target relative tolerances to sweep through for the PartialQR compressor (e.g., [1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10]).
+    denseassemble=false,         # true: Computes the exact dense interaction matrix to measure true relative error (WARNING: Will run out of memory for large N!). false: Skips error computation.
 
     # -------------------------------------------------------------------------
     # System & Logging

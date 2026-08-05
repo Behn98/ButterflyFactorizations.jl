@@ -21,6 +21,7 @@ far-field interactions are compressed block-by-block using `assemble_BF`.
   - `compressor`: The low-rank approximation strategy (default: `PartialQR()`).
   - `tol`: The relative precision tolerance for compression (default: `1e-3`).
   - `admissibility`: The geometric admissibility functor (defaults to `isFarFunctor`).
+  - `rankestimator`: The rank estimation strategy (default: `GeometricRankEstimator`).
   - `unbalancedints`: Whether to allow unbalanced interactions (default: `false`).
   - `leafcomp`: Whether to allow leaf-level compression (default: `true`).
   - `acctype`: The numeric type to use for the factorization (default: `ComplexF64`).
@@ -38,15 +39,14 @@ function PetrovGalerkinBF(
     compressor=ButterflyFactorizations.PartialQR(),
     tol=1e-3,
     admissibility=isFarFunctor(tree_parameters(cluster_testtree(tree)).α),
-    rankestimator::AbstractRankEstimator=GeometricRankEstimator(
-        tree_parameters(cluster_testtree(tree), admissibility).C,
-        tree_parameters(cluster_testtree(tree), admissibility).Cε,
+    rankestimator::AbstractRankEstimator=ButterflyRankEstimator(
+        tree_parameters(cluster_testtree(tree), admissibility).Cτ
     ),
 
     scheduler=OhMyThreads.StaticScheduler(),
     acctype=ComplexF64,
     minbflvl=3,
-    adaptive=false,
+    adaptive=true,
     unbalancedints=false,
     leafcomp=true,
     leafimbalance=true,
@@ -178,12 +178,11 @@ function PetrovGalerkinBF_Mat(
     k::Float64;
     compressor=ButterflyFactorizations.PartialQR(),
     admissibility=isFarFunctor(tree_parameters(cluster_testtree(tree)).α),
-    rankestimator::AbstractRankEstimator=GeometricRankEstimator(
-        tree_parameters(cluster_testtree(tree), admissibility).C,
-        tree_parameters(cluster_testtree(tree), admissibility).Cε,
+    rankestimator::AbstractRankEstimator=ButterflyRankEstimator(
+        tree_parameters(tree, admissibility).Cτ
     ),
     tol=1e-3,
-    adaptive=false,
+    adaptive=true,
     scheduler=OhMyThreads.StaticScheduler(),
     acctype=ComplexF64,
     minbflvl=3,

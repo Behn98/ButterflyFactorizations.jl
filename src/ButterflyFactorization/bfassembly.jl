@@ -38,7 +38,7 @@ the cascaded factor multiplications.
   - `scheduler`: Threading scheduler for parallel execution.
   - `acctype`: The numeric type of the matrix elements (default: `ComplexF64`).
   - `admissibility`: The geometric admissibility functor (default: `isFarFunctor`).
-  - `C`, `Cε`: Constants for rank estimation in 3D problems (default: from tree parameters).
+  - `rankestimator`: The rank estimation strategy (default: `GeometricRankEstimator`).
   - `adaptive`: Whether to adaptively determine the rank during compression (default: `false`).
 
 **Returns:**
@@ -52,11 +52,10 @@ function assemble_BF(
     ns::Int,
     k::Float64,
     τ::Float64;
-    rankestimator::AbstractRankEstimator=GeometricRankEstimator(
-        tree_parameters(cluster_testtree(blktree)).C,
-        tree_parameters(cluster_testtree(blktree)).Cε,
+    rankestimator::AbstractRankEstimator=ButterflyRankEstimator(
+        tree_parameters(blktree).Cτ
     ),
-    adaptive=false,
+    adaptive=true,
     compressor=ButterflyFactorizations.PartialQR(),
     scheduler=OhMyThreads.StaticScheduler(),
     acctype=ComplexF64,
@@ -504,11 +503,13 @@ function assemble_BF_Mat(
     ns::Int,
     k::Float64,
     τ::Float64;
-    adaptive=false,
+    adaptive=true,
     compressor=ButterflyFactorizations.PartialQR(),
     C=tree_parameters(cluster_testtree(blktree)).C,
     Cε=tree_parameters(cluster_testtree(blktree)).Cε,
-    rankestimator::AbstractRankEstimator=GeometricRankEstimator(C, Cε),
+    rankestimator::AbstractRankEstimator=ButterflyRankEstimator(
+        tree_parameters(blktree).Cτ
+    ),
     acctype=ComplexF64,
 )
     Q = Matrix{acctype}(undef, 0, 0)
