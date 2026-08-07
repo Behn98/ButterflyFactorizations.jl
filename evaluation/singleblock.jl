@@ -199,7 +199,7 @@ function run_single_farfield_benchmark(
     csv_stream = open(csv_file, "w")
     write(csv_stream, "h,N,target_tol,actual_err,time_s,mem_mb,mv_s,max_R_rank\n")
     flush(csv_stream)
-
+    first = true
     try
         for (i, h) in enumerate(h_values)
             println("--- Round $i (h = $h) ---")
@@ -257,7 +257,6 @@ function run_single_farfield_benchmark(
                 ButterflyFactorizations.GeometricRankEstimator(tree_params.C, tree_params.Cε)
             end
 
-            # 🚀 NEW: Build the Truth Matrix (Dense OR High-Precision Butterfly)
             ref_tol = minimum(tolvalues) * 1e-2
             A_ref = nothing
 
@@ -312,7 +311,6 @@ function run_single_farfield_benchmark(
                 xtest = randn(ComplexF64, length(X))
                 t_mv_bf = @belapsed $Bfmat * $xtest
 
-                # 🚀 Compute error against our dynamically chosen truth matrix
                 err_bf = estimate_reldifference(Bfmat, A_ref; tol=1e-5, itmax=150)
 
                 ranks_dict = extract_ranks_per_level_single(Bfmat)
@@ -422,7 +420,7 @@ function run_single_farfield_benchmark(
             traces_time_N = GenericTrace[]
             traces_mv_N = GenericTrace[]
             traces_mem_N = GenericTrace[]
-            traces_err_N = GenericTrace[] # 🚀 NEW
+            traces_err_N = GenericTrace[]
 
             colors = [
                 "#1f77b4",
@@ -446,7 +444,7 @@ function run_single_farfield_benchmark(
                 y_time = data_time[idx]
                 y_mv = data_mv[idx]
                 y_mem = data_mem[idx]
-                y_err = data_err[idx] # 🚀 NEW
+                y_err = data_err[idx]
 
                 c = colors[((idx_tol - 1) % length(colors)) + 1]
 

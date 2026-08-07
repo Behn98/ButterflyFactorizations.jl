@@ -41,12 +41,26 @@ function Logging.handle_message(
     )
 end
 
+# --- Geometry Helper ---
+function compute_hmax(mesh)
+    max_edge = 0.0
+    pts = vertices(mesh)
+    for cell in cells(mesh)
+        for i in cell.indices[1:length(cell.indices)]
+            for j in cell.indices[(i+1):length(cell.indices)]
+                max_edge = max(max_edge, norm(pts[i] - pts[j]))
+            end
+        end
+    end
+    return max_edge
+end
+
 # --- Fitting Helper Functions ---
 f_nlogn(N) = N * log2(N)
 f_nlog2n(N) = N * (log2(N))^2
 f_n43logn(N) = (N^(4/3)) * log2(N)
 
-# Log-space fitting to weight all N points equally across orders of magnitude
+# Log-space fitting to give equal weight to all N points
 function fit_scaling_factor(
     N_vec::Vector{Int}, Y_vec::Vector{Float64}, scaling_func::Function
 )
@@ -58,6 +72,7 @@ function fit_scaling_factor(
     Y_valid = Y_vec[valid_idx]
 
     # Minimize sum((log(Y) - log(c * f(N)))^2)
+    # log(c) = mean(log(Y) - log(f(N)))
     log_c = sum(log.(Y_valid) .- log.(scaling_func.(N_valid))) / length(N_valid)
     return exp(log_c)
 end
@@ -94,7 +109,7 @@ function extract_ranks_per_level(Bfmat)
             r_rank = maximum(
                 [size(b.data, 1) for b in level.blocks if b.data isa AbstractMatrix]; init=0
             )
-            level_max_ranks[l + 1] = max(get(level_max_ranks, l+1, 0), r_rank)
+            level_max_ranks[l+1] = max(get(level_max_ranks, l+1, 0), r_rank)
         end
     end
 
@@ -159,20 +174,6 @@ function extract_memory_per_depth(Bfmat)
     return mem_dict
 end
 
-function build_benchmark_mesh(shape, h::Float64)
-    if shape isa Function
-        return shape(h)
-    elseif shape == :sphere
-        return meshsphere(1.0, h)
-    elseif shape == :cube || shape == :box
-        return meshcuboid(1.0, 1.0, 1.0, h)
-    else
-        error(
-            "Unsupported shape: $shape. Options: :sphere, :cube, :cylinder, or a custom function h -> mesh",
-        )
-    end
-end
-
 function build_beast_operator(ie_type::Symbol, k::Float64)
     if ie_type == :EFIE
         return Maxwell3D.singlelayer(; wavenumber=k)
@@ -183,9 +184,60 @@ function build_beast_operator(ie_type::Symbol, k::Float64)
     end
 end
 
+
+function estimate_norm(mat; tol=1e-4, itmax=100)
+    v = rand(ComplexF64, size(mat, 2))
+    v ./= norm(v)
+    itermin = 3
+    i = 1
+    σold = 1.0
+    σnew = 1.0
+
+    while (norm(sqrt(σold) - sqrt(σnew)) / norm(sqrt(σold)) > tol || i < itermin) &&
+        i < itmax
+        σold = σnew
+        w = mat * v
+        x = adjoint(mat) * w
+        σnew = norm(x)
+        v = x ./ σnew
+        i += 1
+    end
+    return sqrt(σnew)
+end
+
+function estimate_reldifference(hmat::H, refmat; tol=1e-4, itmax=100) where {H}
+    @assert size(hmat) == size(refmat) "Dimensions of matrices do not match"
+
+    v = rand(ComplexF64, size(hmat, 2))
+    v ./= norm(v)
+    itermin = 3
+    i = 1
+    σold = 1.0
+    σnew = 1.0
+
+    while (norm(sqrt(σold) - sqrt(σnew)) / norm(sqrt(σold)) > tol || i < itermin) &&
+        i < itmax
+        σold = σnew
+        w = (hmat * v) .- (refmat * v)
+        x = (adjoint(hmat) * w) .- (adjoint(refmat) * w)
+        σnew = norm(x)
+
+        if σnew < 1e-14
+            v .= zero(eltype(v))
+            break
+        end
+
+        v = x ./ σnew
+        i += 1
+    end
+
+    norm_refmat = estimate_norm(refmat; tol=tol)
+    return sqrt(σnew) / norm_refmat
+end
+
 function run_benchmarks(
-    h_values;
-    shape::Union{Symbol,Function}=:sphere,
+    mesh_files::Vector{String};
+    separation_distance::Float64=150.0,
     treekind::Symbol=:KMeansTree,
     ie_type::Symbol=:EFIE,
     bf_tol::Float64=1e-3,
@@ -193,8 +245,7 @@ function run_benchmarks(
     maxpointsbisection=80,
     adaptive=false,
     admissibility_spec::Symbol=:isFarFunctor,
-    checkfarfieldaccuracy::Bool=false,
-    acarefmat::Bool=true,
+    checkaccuracy::Bool=true,
     acacomparison::Bool=false,
     disjointgeom::Bool=true,
     unbalancedints::Bool=false,
@@ -205,7 +256,6 @@ function run_benchmarks(
     log_file_path::String="benchmark_log.txt",
     scheduler=OhMyThreads.DynamicScheduler(),
     acamaxrank::Int=60,
-    refacamaxrank::Int=100,
 )
     BLAS.set_num_threads(1)
 
@@ -217,7 +267,7 @@ function run_benchmarks(
     mem_bf_total_vals = Float64[]
     mem_ButterflyFactorization_Mat_vals = Float64[]
     err_bf_vals = Float64[]
-    err_aca_vs_bf_vals = Float64[]
+    err_aca_vals = Float64[]
     t_mv_aca_vals = Float64[]
     t_mv_bf_vals = Float64[]
     k_vals = Float64[]
@@ -234,29 +284,49 @@ function run_benchmarks(
     p_level_ranks_all = PlotlyJS.SyncPlot[]
 
     println("==========================================================")
-    println(" Starting Benchmarks | Shape: $shape | IE Type: $ie_type")
+    println(" Starting Benchmarks | IE Type: $ie_type")
     println(" ACA Comparison      : $acacomparison")
+    println(" Accuracy Check      : $checkaccuracy")
     println(" Wavenumber Scaling  : $(highfscaling ? "Dynamic" : "Fixed (High-F)")")
     println(" Rank Estimator      : $rankestimator_type")
     println("==========================================================\n")
 
+    # Pre-parse meshes and compute global minimum h if highfscaling is false
+    loaded_meshes = []
+    h_max_values = Float64[]
+    mesh_names = String[]
+    for fn in mesh_files
+        println("Loading mesh: $(basename(fn))")
+        m = CompScienceMeshes.read_gmsh_mesh(fn)
+        h = compute_hmax(m)
+        push!(loaded_meshes, m)
+        push!(h_max_values, h)
+        push!(mesh_names, basename(fn))
+        @printf("  -> Discretization max step (h_max): %.4f\n", h)
+    end
+    min_h_global = minimum(h_max_values)
+
     csv_stream = open(csv_file, "w")
     write(
         csv_stream,
-        "h,N,shape,ie_type,time_aca_s,time_bf_s,ref_bf_time_nlogn,ref_bf_time_nlog2n,mem_aca_mb,mem_bf_total_mb,mem_bf_entries_mb,ref_bf_mem_nlogn,ref_bf_mem_nlog2n,rel_err_bf_far,rel_err_aca_vs_bf,mv_aca_s,mv_bf_s,ref_bf_mv_nlogn\n",
+        "mesh_name,h,N,ie_type,time_aca_s,time_bf_s,ref_bf_time_nlogn,ref_bf_time_nlog2n,mem_aca_mb,mem_bf_total_mb,mem_bf_entries_mb,ref_bf_mem_nlogn,ref_bf_mem_nlog2n,rel_err_bf,rel_err_aca,mv_aca_s,mv_bf_s,ref_bf_mv_nlogn\n",
     )
     flush(csv_stream)
 
     log_stream = open(log_file_path, "w")
-    write(log_stream, "Starting benchmarks for Shape: $shape, IE: $ie_type\n")
+    write(log_stream, "Starting real geometry benchmarks for IE: $ie_type\n")
     flush(log_stream)
 
     try
-        i = 1
-        for h in h_values
+        for i in 1:length(loaded_meshes)
+            m = loaded_meshes[i]
+            h = h_max_values[i]
+            m_name = mesh_names[i]
+
             round_str = @sprintf(
-                "==================================================== Round %-1d (h = %.3f) ==========================================================",
+                "==================================================== Round %-1d (%s, h = %.3f) ==========================================================",
                 i,
+                m_name,
                 h
             )
             println(round_str)
@@ -266,17 +336,16 @@ function run_benchmarks(
             if highfscaling
                 lambda = 10 * h
             else
-                lambda = 10 * minimum(h_values)
+                lambda = 10 * min_h_global
             end
             k = 2 * pi / lambda
 
             op = build_beast_operator(ie_type, k)
-            m = build_benchmark_mesh(shape, h)
             X = raviartthomas(m)
             N = length(X)
 
             if disjointgeom
-                y = translate(build_benchmark_mesh(shape, h), SVector(3.0, 0.0, 0.0))
+                y = translate(m, SVector(separation_distance, 0.0, 0.0))
                 Y = raviartthomas(y)
                 if treekind == :KMeansTree
                     Stree = H2Trees.KMeansTree(X.pos, 2; minvalues=50)
@@ -315,11 +384,11 @@ function run_benchmarks(
 
             if admissibility_spec == :CenterDistanceAdmissibility
                 admissibility = ButterflyFactorizations.CenterDistanceAdmissibility(
-                    ButterflyFactorizations.tree_parameters(blktree).β
+                    ButterflyFactorizations.tree_parameters(blktree).β,
                 )
             elseif admissibility_spec == :isFarFunctor
                 admissibility = ButterflyFactorizations.isFarFunctor(
-                    ButterflyFactorizations.tree_parameters(blktree).α
+                    ButterflyFactorizations.tree_parameters(blktree).α,
                 )
             else
                 error("Unsupported admissibility: $admissibility_spec")
@@ -336,13 +405,38 @@ function run_benchmarks(
 
             is_adaptive = (rankestimator_type == :Butterfly) || adaptive
 
+            xtest = randn(ComplexF64, length(X))
+            refmat = nothing
+
+            if checkaccuracy
+                println("\nComputing highly accurate reference Butterfly matrix (tol = $(bf_tol * 1e-2))...")
+                refmat = ButterflyFactorizations.PetrovGalerkinBF(
+                    op,
+                    disjointgeom ? Y : X,
+                    X,
+                    blktree,
+                    k;
+                    compressor=ButterflyFactorizations.PartialQR(),
+                    scheduler=scheduler,
+                    tol=bf_tol * 1e-2,
+                    unbalancedints=unbalancedints,
+                    leafimbalance=true,
+                    leafcomp=leafcompression,
+                    admissibility=admissibility,
+                    rankestimator=active_estimator,
+                    minbflvl=minbflvl,
+                    adaptive=true, # Always true for reference accuracy
+                )
+                println("Reference matrix computed. (Kept in memory for rigorous error estimation)")
+            end
+
             println("\nStarting ButterflyFactorization ($ie_type)...")
             farints, nearints = ButterflyFactorizations.nearandfar(
                 blktree,
                 admissibility;
                 unbalancedints=unbalancedints,
                 leafcomp=leafcompression,
-                leafimbalance=(!(checkfarfieldaccuracy&acarefmat)),
+                leafimbalance=true,
                 minbflvl=minbflvl,
             )
             ButterflyFactorizations.compute_interaction_percentages(
@@ -352,46 +446,24 @@ function run_benchmarks(
                 ButterflyFactorizations.cluster_trialtree(blktree),
             )
 
-            if disjointgeom
-                t_bf = @elapsed begin
-                    Bfmat = ButterflyFactorizations.PetrovGalerkinBF(
-                        op,
-                        Y,
-                        X,
-                        blktree,
-                        k;
-                        compressor=ButterflyFactorizations.PartialQR(),
-                        scheduler=scheduler,
-                        tol=bf_tol,
-                        unbalancedints=unbalancedints,
-                        leafimbalance=(!(checkfarfieldaccuracy&acarefmat)),
-                        leafcomp=leafcompression,
-                        admissibility=admissibility,
-                        rankestimator=active_estimator,
-                        minbflvl=minbflvl,
-                        adaptive=is_adaptive,
-                    )
-                end
-            else
-                t_bf = @elapsed begin
-                    Bfmat = ButterflyFactorizations.PetrovGalerkinBF(
-                        op,
-                        X,
-                        X,
-                        blktree,
-                        k;
-                        compressor=ButterflyFactorizations.PartialQR(),
-                        scheduler=scheduler,
-                        tol=bf_tol,
-                        unbalancedints=unbalancedints,
-                        leafimbalance=(!(checkfarfieldaccuracy&acarefmat)),
-                        leafcomp=leafcompression,
-                        admissibility=admissibility,
-                        rankestimator=active_estimator,
-                        minbflvl=minbflvl,
-                        adaptive=is_adaptive,
-                    )
-                end
+            t_bf = @elapsed begin
+                Bfmat = ButterflyFactorizations.PetrovGalerkinBF(
+                    op,
+                    disjointgeom ? Y : X,
+                    X,
+                    blktree,
+                    k;
+                    compressor=ButterflyFactorizations.PartialQR(),
+                    scheduler=scheduler,
+                    tol=bf_tol,
+                    unbalancedints=unbalancedints,
+                    leafimbalance=true,
+                    leafcomp=leafcompression,
+                    admissibility=admissibility,
+                    rankestimator=active_estimator,
+                    minbflvl=minbflvl,
+                    adaptive=is_adaptive,
+                )
             end
 
             ranks_dict = extract_ranks_per_level(Bfmat)
@@ -438,7 +510,7 @@ function run_benchmarks(
                     ),
                 ],
                 Layout(;
-                    title="BF Rank vs BF Level (h = $h, k = $(round(k, digits=2)))<br><sup>Total Tree Height = $tree_height</sup>",
+                    title="BF Rank vs BF Level ($m_name, k = $(round(k, digits=2)))<br><sup>Total Tree Height = $tree_height</sup>",
                     xaxis_title="Butterfly Factorization Level (1 = Leaves)",
                     yaxis_title="Maximum Rank",
                     template="plotly_white",
@@ -446,7 +518,7 @@ function run_benchmarks(
                 ),
             )
 
-            savefig(p_level_ranks, "plot_ranks_vs_level_h_$(h).html")
+            savefig(p_level_ranks, "plot_ranks_vs_level_mesh_$(i).html")
             push!(p_level_ranks_all, p_level_ranks)
 
             r_ranks = [ranks_dict[l] for l in sorted_levels if l > 1]
@@ -469,128 +541,25 @@ function run_benchmarks(
             println(mem_bf_str)
             write(log_stream, mem_bf_str * "\n")
 
-            xtest = randn(ComplexF64, size(Bfmat, 2))
-
             println("Benchmarking MV product for ButterflyFactorization...")
             t_mv_bf = @belapsed $Bfmat * $xtest
-            x_mv_bf = Bfmat * xtest
             mv_bf_str = @sprintf("Time for Butterfly mat-vec: %.5f seconds", t_mv_bf)
             println(mv_bf_str)
             write(log_stream, mv_bf_str * "\n")
 
             err_bf = NaN
-            ref_aca_warnings = 0
-            if checkfarfieldaccuracy
-                if acarefmat
-                    println(
-                        "\nComputing reference ACA Far-Matrix for accuracy check (tol = $(bf_tol * 1e-2))...",
-                    )
-                    ref_aca_logger = WarningCounterLogger(current_logger(), Ref(0))
-                    refmat = with_logger(ref_aca_logger) do
-                        if disjointgeom
-                            HMatrix(
-                                op,
-                                Y,
-                                X,
-                                blktree;
-                                tol=bf_tol * 1e-2,
-                                spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
-                                scheduler=scheduler,
-                                maxrank=refacamaxrank,
-                                isnear=local_isnear,
-                            )
-                        else
-                            HMatrix(
-                                op,
-                                X,
-                                X,
-                                blktree;
-                                tol=bf_tol * 1e-2,
-                                spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
-                                scheduler=scheduler,
-                                maxrank=refacamaxrank,
-                                isnear=local_isnear,
-                            )
-                        end
-                    end
-                    ref_aca_warnings = ref_aca_logger.count[]
-                    ref_far = AdaptiveCrossApproximation.farmatrix(refmat)
-                    bf_far = ButterflyFactorizations.farmatrix(Bfmat)
-
-                    y_exact_far = ref_far * xtest
-                    y_bf_far = bf_far * xtest
-
-                    err_bf = norm(y_exact_far - y_bf_far) / norm(y_exact_far)
-
-                    err_str = @sprintf(
-                        "Relative error of Far-field mat-vec: %.2e | Ref ACA MaxRank Warnings: %d",
-                        err_bf,
-                        ref_aca_warnings
-                    )
-                    println(err_str)
-                    write(log_stream, err_str * "\n")
-                else
-                    println(
-                        "\nComputing reference Butterfly Far-Matrix for accuracy check (tol = $(bf_tol * 1e-2))...",
-                    )
-                    refmat = if disjointgeom
-                        ButterflyFactorizations.PetrovGalerkinBF(
-                            op,
-                            Y,
-                            X,
-                            blktree,
-                            k;
-                            compressor=ButterflyFactorizations.PartialQR(),
-                            scheduler=scheduler,
-                            tol=bf_tol*1e-2,
-                            unbalancedints=unbalancedints,
-                            leafimbalance=(!(checkfarfieldaccuracy&acarefmat)),
-                            leafcomp=leafcompression,
-                            admissibility=admissibility,
-                            rankestimator=active_estimator,
-                            minbflvl=minbflvl,
-                            adaptive=is_adaptive,
-                            farfieldonly=true,
-                        )
-                    else
-                        ButterflyFactorizations.PetrovGalerkinBF(
-                            op,
-                            X,
-                            X,
-                            blktree,
-                            k;
-                            compressor=ButterflyFactorizations.PartialQR(),
-                            scheduler=scheduler,
-                            tol=bf_tol*1e-2,
-                            unbalancedints=unbalancedints,
-                            leafimbalance=(!(checkfarfieldaccuracy&acarefmat)),
-                            leafcomp=leafcompression,
-                            admissibility=admissibility,
-                            rankestimator=active_estimator,
-                            minbflvl=minbflvl,
-                            adaptive=is_adaptive,
-                            farfieldonly=true,
-                        )
-                    end
-
-                    ref_far = ButterflyFactorizations.farmatrix(refmat)
-                    bf_far = ButterflyFactorizations.farmatrix(Bfmat)
-
-                    y_exact_far = ref_far * xtest
-                    y_bf_far = bf_far * xtest
-
-                    err_bf = norm(y_exact_far - y_bf_far) / norm(y_exact_far)
-
-                    err_str = @sprintf("Relative error of Far-field mat-vec: %.2e", err_bf)
-                    println(err_str)
-                    write(log_stream, err_str * "\n")
-                end
+            if checkaccuracy && refmat !== nothing
+                println("Estimating rigorous relative error for Butterfly matrix...")
+                err_bf = estimate_reldifference(Bfmat, refmat; tol=1e-4, itmax=150)
+                err_str = @sprintf("Rigorous relative error of BF (Tol %g): %.2e", bf_tol, err_bf)
+                println(err_str)
+                write(log_stream, err_str * "\n")
             end
 
             t_aca = NaN
             mem_aca = NaN
             t_mv_aca = NaN
-            err_aca_vs_bf = NaN
+            err_aca = NaN
             aca_warnings = 0
 
             if acacomparison
@@ -598,29 +567,13 @@ function run_benchmarks(
                 aca_logger = WarningCounterLogger(current_logger(), Ref(0))
                 t_aca = @elapsed begin
                     hmat = with_logger(aca_logger) do
-                        if disjointgeom
-                            HMatrix(
-                                op,
-                                Y,
-                                X,
-                                ACAblktree;
-                                tol=bf_tol,
-                                spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
-                                scheduler=scheduler,
-                                maxrank=acamaxrank,
-                            )
-                        else
-                            HMatrix(
-                                op,
-                                X,
-                                X,
-                                ACAblktree;
-                                tol=bf_tol,
-                                spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
-                                scheduler=scheduler,
-                                maxrank=acamaxrank,
-                            )
-                        end
+                        HMatrix(
+                            op, disjointgeom ? Y : X, X, ACAblktree;
+                            tol=bf_tol,
+                            spaceordering=AdaptiveCrossApproximation.PreserveSpaceOrder(),
+                            scheduler=scheduler,
+                            maxrank=acamaxrank,
+                        )
                     end
                 end
                 aca_warnings = aca_logger.count[]
@@ -641,17 +594,22 @@ function run_benchmarks(
                 println("Benchmarking MV product for ACA...")
                 t_mv_aca = @belapsed $hmat * $xtest
                 mv_aca_str = @sprintf("Time for ACA mat-vec: %.5f seconds", t_mv_aca)
-                x_mv_aca = hmat * xtest
 
-                err_aca_vs_bf = norm(x_mv_aca - x_mv_bf) / norm(x_mv_aca)
-                relerror_str = @sprintf(
-                    "Relative error between ACA and BF mat-vec: %.2e", err_aca_vs_bf
-                )
-                println(relerror_str)
-                write(log_stream, relerror_str * "\n")
+                if checkaccuracy && refmat !== nothing
+                    println("Estimating rigorous relative error for ACA matrix...")
+                    err_aca = estimate_reldifference(hmat, refmat; tol=1e-4, itmax=150)
+                    err_str = @sprintf("Rigorous relative error of ACA (Tol %g): %.2e", bf_tol, err_aca)
+                    println(err_str)
+                    write(log_stream, err_str * "\n")
+                end
+
                 println(mv_aca_str)
                 write(log_stream, mv_aca_str * "\n")
             end
+
+            # Explicitly free reference matrix memory
+            refmat = nothing
+            GC.gc()
 
             push!(N_vals, N)
             push!(t_aca_vals, t_aca)
@@ -660,7 +618,7 @@ function run_benchmarks(
             push!(mem_bf_total_vals, mem_bf_total)
             push!(mem_ButterflyFactorization_Mat_vals, mem_ButterflyFactorization_Mat)
             push!(err_bf_vals, err_bf)
-            push!(err_aca_vs_bf_vals, err_aca_vs_bf)
+            push!(err_aca_vals, err_aca)
             push!(t_mv_aca_vals, t_mv_aca)
             push!(t_mv_bf_vals, t_mv_bf)
 
@@ -679,12 +637,11 @@ function run_benchmarks(
             p_mem_emp, coef_mem_emp = estimate_empirical_power(N_vals, mem_bf_total_vals)
             p_mv_emp, coef_mv_emp = estimate_empirical_power(N_vals, t_mv_bf_vals)
 
-            shape_str = shape isa Symbol ? string(shape) : "custom"
             csv_row = @sprintf(
-                "%.4f,%d,%s,%s,%.5f,%.5f,%.5f,%.5f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3e,%.3e,%.5f,%.5f,%.5f\n",
+                "%s,%.4f,%d,%s,%.5f,%.5f,%.5f,%.5f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3e,%.3e,%.5f,%.5f,%.5f\n",
+                m_name,
                 h,
                 N,
-                shape_str,
                 string(ie_type),
                 t_aca,
                 t_bf,
@@ -696,7 +653,7 @@ function run_benchmarks(
                 c_mem_nlogn * f_nlogn(N),
                 c_mem_nlog2n * f_nlog2n(N),
                 err_bf,
-                err_aca_vs_bf,
+                err_aca,
                 t_mv_aca,
                 t_mv_bf,
                 c_mv_nlogn * f_nlogn(N)
@@ -851,29 +808,29 @@ function run_benchmarks(
             end
 
             err_traces = GenericTrace[]
-            if checkfarfieldaccuracy
+            if checkaccuracy
                 push!(
                     err_traces,
                     scatter(;
                         x=N_vals,
                         y=err_bf_vals,
-                        name="Butterfly Far-Field Rel Error",
+                        name="BF Rel Error (Tol: $bf_tol)",
                         mode="lines+markers",
                         line=attr(; color="seagreen", width=3),
-                    ),
+                    )
                 )
-            end
-            if acacomparison
-                push!(
-                    err_traces,
-                    scatter(;
-                        x=N_vals,
-                        y=err_aca_vs_bf_vals,
-                        name="Rel Error (ACA vs Butterfly)",
-                        mode="lines+markers",
-                        line=attr(; color="firebrick", width=3, dash="dash"),
-                    ),
-                )
+                if acacomparison
+                    push!(
+                        err_traces,
+                        scatter(;
+                            x=N_vals,
+                            y=err_aca_vals,
+                            name="ACA Rel Error (Tol: $bf_tol)",
+                            mode="lines+markers",
+                            line=attr(; color="firebrick", dash="dot", width=3),
+                        )
+                    )
+                end
             end
 
             if acacomparison
@@ -950,7 +907,7 @@ function run_benchmarks(
             p_time = plot(
                 time_traces,
                 Layout(;
-                    title="Build Time vs N ($shape_str, $ie_type)",
+                    title="Build Time vs N (Real Shuttle, $ie_type)",
                     xaxis_title="N (DOFs)",
                     yaxis_title="Time (s)",
                     yaxis_type="log",
@@ -964,7 +921,7 @@ function run_benchmarks(
             p_mem = plot(
                 mem_traces,
                 Layout(;
-                    title="Memory Usage vs N Grouped by Depth ($shape_str, $ie_type)",
+                    title="Memory Usage vs N Grouped by Depth (Real Shuttle, $ie_type)",
                     xaxis_title="N (DOFs)",
                     yaxis_title="Memory (MB)",
                     yaxis_type="log",
@@ -978,7 +935,7 @@ function run_benchmarks(
             p_mv = plot(
                 mv_traces,
                 Layout(;
-                    title="Mat-Vec Time vs N ($shape_str, $ie_type)",
+                    title="Mat-Vec Time vs N (Real Shuttle, $ie_type)",
                     xaxis_title="N (DOFs)",
                     yaxis_title="Time (s)",
                     yaxis_type="log",
@@ -992,7 +949,7 @@ function run_benchmarks(
             p_err = plot(
                 err_traces,
                 Layout(;
-                    title="Accuracy vs N ($shape_str, $ie_type)",
+                    title="Accuracy vs N (Real Shuttle, $ie_type)",
                     xaxis_title="N (DOFs)",
                     yaxis_title="Relative Error",
                     yaxis_type="log",
@@ -1014,7 +971,7 @@ function run_benchmarks(
                     ),
                 ],
                 Layout(;
-                    title="Max R-Block Rank vs. Wavenumber (k) | $shape_str, $ie_type",
+                    title="Max R-Block Rank vs. Wavenumber (k) | Real Shuttle, $ie_type",
                     xaxis_title="Wavenumber (k)",
                     yaxis_title="Maximum Rank in R Factors",
                     xaxis_type="log",
@@ -1033,18 +990,13 @@ function run_benchmarks(
             println(end_str)
             write(log_stream, end_str * "\n")
             flush(log_stream)
-            i += 1
         end
 
     catch e
         if e isa InterruptException
-            println(
-                "\n\n⚠️  Benchmark manually aborted (Ctrl+C)! Salvaging data and plots up to step $(length(N_vals))...",
-            )
+            println("\n\n⚠️  Benchmark manually aborted (Ctrl+C)! Salvaging data and plots up to step $(length(N_vals))...")
         else
-            println(
-                "\n\n❌  An unexpected error occurred! Salvaging data and plots up to step $(length(N_vals))...",
-            )
+            println("\n\n❌  An unexpected error occurred! Salvaging data and plots up to step $(length(N_vals))...")
             Base.showerror(stdout, e)
             println()
         end
@@ -1052,17 +1004,8 @@ function run_benchmarks(
         if length(N_vals) > 0
             header1 = "===================================================================================================================================="
             header2 = @sprintf(
-                "%-6s | %-8s | %-12s | %-12s | %-12s | %-12s | %-12s | %-13s | %-10s | %-10s",
-                "h",
-                "N",
-                "Time ACA (s)",
-                "Time BF (s)",
-                "Mem ACA (MB)",
-                "Mem BF (MB)",
-                "Err BF Far",
-                "Err ACA vs BF",
-                "MV ACA (s)",
-                "MV BF (s)"
+                "%-6s | %-8s | %-12s | %-12s | %-12s | %-12s | %-12s | %-12s | %-10s | %-10s",
+                "h", "N", "Time ACA (s)", "Time BF (s)", "Mem ACA (MB)", "Mem BF (MB)", "Err BF", "Err ACA", "MV ACA (s)", "MV BF (s)"
             )
 
             println(header1)
@@ -1070,31 +1013,14 @@ function run_benchmarks(
             println(header1)
 
             if isopen(log_stream)
-                write(
-                    log_stream,
-                    "\n\nFINAL SUMMARY TABLE:\n" *
-                    header1 *
-                    "\n" *
-                    header2 *
-                    "\n" *
-                    header1 *
-                    "\n",
-                )
+                write(log_stream, "\n\nFINAL SUMMARY TABLE:\n" * header1 * "\n" * header2 * "\n" * header1 * "\n")
             end
 
             for j in 1:length(N_vals)
                 row_str = @sprintf(
-                    "%-6.2f | %-8d | %-12.3f | %-12.3f | %-12.2f | %-12.2f | %-12.2e | %-13.2e | %-10.5f | %-10.5f",
-                    h_values[j],
-                    N_vals[j],
-                    t_aca_vals[j],
-                    t_bf_vals[j],
-                    mem_aca_vals[j],
-                    mem_bf_total_vals[j],
-                    err_bf_vals[j],
-                    err_aca_vs_bf_vals[j],
-                    t_mv_aca_vals[j],
-                    t_mv_bf_vals[j]
+                    "%-6.2f | %-8d | %-12.3f | %-12.3f | %-12.2f | %-12.2f | %-12.2e | %-12.2e | %-10.5f | %-10.5f",
+                    h_max_values[j], N_vals[j], t_aca_vals[j], t_bf_vals[j], mem_aca_vals[j],
+                    mem_bf_total_vals[j], err_bf_vals[j], err_aca_vals[j], t_mv_aca_vals[j], t_mv_bf_vals[j]
                 )
                 println(row_str)
                 if isopen(log_stream)
@@ -1123,34 +1049,37 @@ function run_benchmarks(
     final_p_err = isempty(p_err_history) ? plot() : p_err_history[end]
     final_p_rank = isempty(p_rank_history) ? plot() : p_rank_history[end]
 
-    return final_p_time,
-    final_p_mem, final_p_mv, final_p_err, final_p_rank,
-    p_level_ranks_all
+    return final_p_time, final_p_mem, final_p_mv, final_p_err, final_p_rank, p_level_ranks_all
 end
 
 # --- Execution ---
-h_values = [0.03, 0.02, 0.015, 0.01, 0.0075, 0.005]
-# [0.03, 0.02, 0.015, 0.01, 0.0075, 0.005] --> N = [45k, 90k, 180k, 360k, 720k, 1.440M] for sphere
+mesh_files = [
+    joinpath(dirname(@__FILE__), "shuttle_gmsh.msh"),
+    joinpath(dirname(@__FILE__), "shuttle_gmsh_refined.msh"),
+    #joinpath(dirname(@__FILE__), "shuttle_gmsh_refinedx2.msh"),
+    #joinpath(dirname(@__FILE__), "shuttle_gmsh_refinedx3.msh")
+]
+
 p_time, p_mem, p_mv, p_err, p_rank_vs_k, p_level_ranks_all = run_benchmarks(
-    h_values;
+    mesh_files;
 
     # -------------------------------------------------------------------------
     # Physical Setup & Geometry
     # -------------------------------------------------------------------------
-    shape=:sphere,              # Geometry of the scatterer (Options: :sphere, :cube, or a custom h -> mesh function)
     ie_type=:EFIE,              # Integral equation formulation (Options: :EFIE, :MFIE)
     highfscaling=true,         # false: Locks wavenumber k to the finest mesh. true: Scales k with h.
-    disjointgeom=false,         # false: Standard self-interaction. true: Translates target mesh away.
+    disjointgeom=true,          # Translates target mesh away to evaluate pure far-field transmission.
+    separation_distance=150.0,  # Ensure complete far-field separation based on Shuttle bounds.
 
     # -------------------------------------------------------------------------
     # Butterfly Tree & Admissibility Configuration
     # -------------------------------------------------------------------------
     treekind=:BisectionTree,                   # Clustering strategy (Options: :KMeansTree, :BisectionTree, :TwoNTree)
     admissibility_spec=:CenterDistanceAdmissibility,       # Near/Far separation criteria (Options: :CenterDistanceAdmissibility, :isFarFunctor)
-    maxpointsbisection=100,                 # Maximum allowed degrees of freedom in a leaf node
+    maxpointsbisection=100,                 # Maximum allowed degrees of freedom in a leaf node (specifically for BisectionTrees)
     leafcompression=true,       # true: Compresses interactions all the way down to leaf nodes.
-    minbflvl=3,                             # Tree depth where compression begins
-    unbalancedints=false,                   # Allows butterfly interactions situated at different tree depths
+    minbflvl=3,                             # Tree depth where compression begins (ignored if leafcompression is true)
+    unbalancedints=false,                   # Allows butterfly interactions between source and observer clusters situated at different tree depths
 
     # -------------------------------------------------------------------------
     # Compression & Accuracy Targets
@@ -1161,19 +1090,17 @@ p_time, p_mem, p_mv, p_err, p_rank_vs_k, p_level_ranks_all = run_benchmarks(
     # -------------------------------------------------------------------------
     # Benchmarking Flags (ACA vs. Butterfly)
     # -------------------------------------------------------------------------
-    checkfarfieldaccuracy=true, # explicitly computes the relative error of the far-field Mat-Vec product against a highly accurate reference matrix
-    acarefmat=false,            # true: Uses a tightly toleranced ACA matrix as the exact truth. false: Uses a highly toleranced Butterfly matrix as truth.
-    acacomparison=true,         # Builds a standard ACA HMatrix alongside the Butterfly matrix
-    refacamaxrank=100,          # Hard limit for maximum rank allowed in ACA reference matrix
-    acamaxrank=100,              # Hard limit for maximum rank allowed in standard ACA comparison matrix
+    checkaccuracy=true,         # Explicitly compute standard Butterfly and standard ACA against highly accurate Butterfly matrix.
+    acacomparison=true,         # Builds a standard ACA HMatrix alongside the Butterfly matrix.
+    acamaxrank=100,             # Hard limit for the maximum rank allowed in the standard ACA comparison matrix
 
     # -------------------------------------------------------------------------
     # Logging & Schedulers
     # -------------------------------------------------------------------------
     rankestimator_type=:Butterfly,            # Choose :Butterfly or :Geometric
-    scheduler=OhMyThreads.DynamicScheduler(), # Threading strategy
-    csv_file="benchmark_results.csv",
-    log_file_path="benchmark_log.txt",
+    scheduler=OhMyThreads.DynamicScheduler(), # Threading strategy for matrix assembly and compression
+    csv_file="benchmark_results_shuttle.csv",
+    log_file_path="benchmark_log_shuttle.txt",
 );
 
 display(p_time)

@@ -29,7 +29,7 @@ struct ButterflyRankEstimator <: AbstractRankEstimator
     oversample::Int
 end
 
-ButterflyRankEstimator(Cε; Rmin=10, oversample=10) =
+ButterflyRankEstimator(Cε; Rmin=10, oversample=15) =
     ButterflyRankEstimator(Cε, Rmin, oversample)
 
 function (est::ButterflyRankEstimator)(k, trialT, testT, Snode::Int, Onode::Int, ε::Float64)
@@ -85,14 +85,14 @@ function estimate_rank_3d(
 end
 
 """
-    estimate_rank_butterfly(ε; Cε=4.0, Rmin=10, oversample=10)
+    estimate_rank_butterfly(ε; Cε=4.0, Rmin=10, oversample=15)
 
 Optimized Butterfly estimator. Discards the k-dependent geometric term (x1) because
 true Butterfly ranks are strictly bounded by admissibility. Relies on tolerance padding
 and a strict additive oversampling margin (p) to guarantee basis spanning and prevent
 premature adaptive-loop truncation.
 """
-function estimate_rank_butterfly(ε::Float64; Cε=4.0, Rmin=10, oversample=10)
+function estimate_rank_butterfly(ε::Float64; Cε=4.0, Rmin=10, oversample=15)
     x2 = log(1 / ε)
 
     # We compute the base mathematical estimate (which naturally scales with τ_scaled)
