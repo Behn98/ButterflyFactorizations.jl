@@ -23,20 +23,17 @@ function (est::GeometricRankEstimator)(k, trialT, testT, Snode::Int, Onode::Int,
     )
 end
 
-"""
-    ButterflyRankEstimator(Cε; Rmin=10)
-
-Optimized rank estimator for Butterfly Factorization blocks. Assumes rank is bounded
-independently of wavenumber k due to complementary cluster size admissibility.
-"""
 struct ButterflyRankEstimator <: AbstractRankEstimator
     Cε::Float64
     Rmin::Int
+    oversample::Int
 end
-ButterflyRankEstimator(Cε; Rmin=10) = ButterflyRankEstimator(Cε, Rmin)
+
+ButterflyRankEstimator(Cε; Rmin=10, oversample=10) =
+    ButterflyRankEstimator(Cε, Rmin, oversample)
 
 function (est::ButterflyRankEstimator)(k, trialT, testT, Snode::Int, Onode::Int, ε::Float64)
-    return estimate_rank_butterfly(ε; Cε=est.Cε, Rmin=est.Rmin)
+    return estimate_rank_butterfly(ε; Cε=est.Cε, Rmin=est.Rmin, oversample=est.oversample)
 end
 
 """
@@ -88,11 +85,22 @@ function estimate_rank_3d(
 end
 
 """
-    estimate_rank_butterfly(ε; Cε=4.0, Rmin=10)
+    estimate_rank_butterfly(ε; Cε=4.0, Rmin=10, oversample=10)
+
+Optimized Butterfly estimator. Discards the k-dependent geometric term (x1) because
+true Butterfly ranks are strictly bounded by admissibility. Relies on tolerance padding
+and a strict additive oversampling margin (p) to guarantee basis spanning and prevent
+premature adaptive-loop truncation.
 """
-function estimate_rank_butterfly(ε::Float64; Cε=4.0, Rmin=10)
+function estimate_rank_butterfly(ε::Float64; Cε=4.0, Rmin=10, oversample=10)
     x2 = log(1 / ε)
-    R = ceil(Int, Cε * x2)
-    n_otilde = max(R, Rmin)
+
+    # We compute the base mathematical estimate (which naturally scales with τ_scaled)
+    R_base = ceil(Int, Cε * x2)
+
+    # We apply an additive oversampling parameter (standard in randomized linear algebra)
+    # to guarantee the sample pool isn't corrupted by redundant random draws.
+    n_otilde = max(R_base, Rmin) + oversample
+
     return RankEstimate(n_otilde, 1.0, x2)
 end

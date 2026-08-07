@@ -31,7 +31,6 @@ function fit_scaling_factor(
     return sum(Y_valid .* f_vals) / sum(f_vals .^ 2)
 end
 
-# 🚀 NEW: Log-Log Linear Regression to find empirical O(N^p) scaling
 function estimate_empirical_power(N_vec::Vector{Int}, Y_vec::Vector{Float64})
     valid_idx = .!isnan.(Y_vec) .& (Y_vec .> 0)
     if sum(valid_idx) < 2
@@ -48,7 +47,7 @@ function estimate_empirical_power(N_vec::Vector{Int}, Y_vec::Vector{Float64})
 
     m = (n * sum_xy - sum_x * sum_y) / (n * sum_xx - sum_x^2)
     c = (sum_y - m * sum_x) / n
-    return m, 10^c # returns exponent (p) and coefficient (c)
+    return m, 10^c
 end
 
 function bf_matrix_memory(bf)
@@ -166,7 +165,17 @@ function run_single_farfield_benchmark(
     data_mem = Float64[]
     data_mv = Float64[]
     data_max_rank = Int[]
+
+    # 🚀 Plot Histories for Crash-Proofing
+    p_acc_history = PlotlyJS.SyncPlot[]
+    p_time_N_history = PlotlyJS.SyncPlot[]
+    p_mem_history = PlotlyJS.SyncPlot[]
+    p_mem_N_history = PlotlyJS.SyncPlot[]
+    p_mv_N_history = PlotlyJS.SyncPlot[]
+    p_rank_history = PlotlyJS.SyncPlot[]
+    p_err_N_history = PlotlyJS.SyncPlot[] # 🚀 NEW: Error vs N plot history
     p_level_ranks_all = PlotlyJS.SyncPlot[]
+
     dist = 2 * sqrt(2)
 
     if rectangulargeom
@@ -191,424 +200,529 @@ function run_single_farfield_benchmark(
     write(csv_stream, "h,N,target_tol,actual_err,time_s,mem_mb,mv_s,max_R_rank\n")
     flush(csv_stream)
 
-    for (i, h) in enumerate(h_values)
-        println("--- Round $i (h = $h) ---")
+    try
+        for (i, h) in enumerate(h_values)
+            println("--- Round $i (h = $h) ---")
 
-        lambda = highfscaling ? 10 * h : (10 * minimum(h_values))
-        k = 2 * pi / lambda
+            lambda = highfscaling ? 10 * h : (10 * minimum(h_values))
+            k = 2 * pi / lambda
 
-        op = Maxwell3D.singlelayer(; wavenumber=k)
+            op = Maxwell3D.singlelayer(; wavenumber=k)
 
-        if rectangulargeom
-            m_src = meshrectangle(1.0, 1.0, h)
-            m_tgt = translate(
-                meshrectangle(1.0, 1.0, h),
-                geomfaceoff ? SVector(0.0, 0.0, dist) : SVector(dist, 0.0, 0.0),
-            )
-        else
-            m_src = meshsphere(1.0, h)
-            m_tgt = translate(meshsphere(1.0, h), SVector(separation_distance, 0.0, 0.0))
-        end
+            if rectangulargeom
+                m_src = meshrectangle(1.0, 1.0, h)
+                m_tgt = translate(
+                    meshrectangle(1.0, 1.0, h),
+                    geomfaceoff ? SVector(0.0, 0.0, dist) : SVector(dist, 0.0, 0.0),
+                )
+            else
+                m_src = meshsphere(1.0, h)
+                m_tgt = translate(
+                    meshsphere(1.0, h), SVector(separation_distance, 0.0, 0.0)
+                )
+            end
 
-        X = raviartthomas(m_src)
-        Y = raviartthomas(m_tgt)
-        N = length(X)
-        if denseassemble
-            println("Computing Dense Reference Matrix A for N = $N...")
-            A = assemble(op, Y, X)
-        end
-        nearmatrix_far = ButterflyFactorizations.AbstractKernelMatrix(op, Y, X; type=:far)
-
-        if treekind == :KMeansTree
-            Stree = H2Trees.KMeansTree(X.pos, 2; minvalues=minpointskmeans)
-            Otree = H2Trees.KMeansTree(Y.pos, 2; minvalues=minpointskmeans)
-        elseif treekind == :BisectionTree
-            Stree = ButterflyFactorizations.build_bisection_tree(
-                X.pos; max_points=maxpointsbisection
-            )
-            Otree = ButterflyFactorizations.build_bisection_tree(
-                Y.pos; max_points=maxpointsbisection
-            )
-        elseif treekind == :TwoNTree
-            Stree = H2Trees.TwoNTree(X, h; minvalues=minpointstwon)
-            Otree = H2Trees.TwoNTree(Y, h; minvalues=minpointstwon)
-        else
-            error(
-                "Unsupported tree type: $treekind. Choose from :KMeansTree, :BisectionTree, or :TwoNTree.",
-            )
-        end
-        blktree = H2Trees.BlockTree(Otree, Stree)
-        tree_height = length(blktree.testcluster.nodesatlevel)
-
-        tree_params = ButterflyFactorizations.tree_parameters(blktree)
-        active_estimator = if rankestimator == :Butterfly
-            ButterflyFactorizations.ButterflyRankEstimator(tree_params.Cτ)
-        else
-            ButterflyFactorizations.GeometricRankEstimator(tree_params.C, tree_params.Cε)
-        end
-
-        traces_level_ranks = GenericTrace[]
-
-        for bf_tol in tolvalues
-            @printf("  -> Testing tol = %.1e ... \n", bf_tol)
-            @printf(
-                "Computing Butterfly Factorization (N = %d, h = %.4f, tol = %.1e)\n",
-                N,
-                h,
-                bf_tol
+            X = raviartthomas(m_src)
+            Y = raviartthomas(m_tgt)
+            N = length(X)
+            nearmatrix_far = ButterflyFactorizations.AbstractKernelMatrix(
+                op, Y, X; type=:far
             )
 
-            t_bf = @elapsed begin
-                Bfmat = ButterflyFactorizations.assemble_BF(
+            if treekind == :KMeansTree
+                Stree = H2Trees.KMeansTree(X.pos, 2; minvalues=minpointskmeans)
+                Otree = H2Trees.KMeansTree(Y.pos, 2; minvalues=minpointskmeans)
+            elseif treekind == :BisectionTree
+                Stree = ButterflyFactorizations.build_bisection_tree(
+                    X.pos; max_points=maxpointsbisection
+                )
+                Otree = ButterflyFactorizations.build_bisection_tree(
+                    Y.pos; max_points=maxpointsbisection
+                )
+            elseif treekind == :TwoNTree
+                Stree = H2Trees.TwoNTree(X, h; minvalues=minpointstwon)
+                Otree = H2Trees.TwoNTree(Y, h; minvalues=minpointstwon)
+            else
+                error(
+                    "Unsupported tree type: $treekind. Choose from :KMeansTree, :BisectionTree, or :TwoNTree.",
+                )
+            end
+            blktree = H2Trees.BlockTree(Otree, Stree)
+            tree_height = length(blktree.testcluster.nodesatlevel)
+
+            tree_params = ButterflyFactorizations.tree_parameters(blktree)
+            active_estimator = if rankestimator == :Butterfly
+                ButterflyFactorizations.ButterflyRankEstimator(tree_params.Cτ)
+            else
+                ButterflyFactorizations.GeometricRankEstimator(tree_params.C, tree_params.Cε)
+            end
+
+            # 🚀 NEW: Build the Truth Matrix (Dense OR High-Precision Butterfly)
+            ref_tol = minimum(tolvalues) * 1e-2
+            A_ref = nothing
+
+            if denseassemble
+                println("Computing Dense Reference Matrix A for N = $N...")
+                A_ref = assemble(op, Y, X)
+            else
+                println(
+                    "Computing Reference Butterfly Matrix (tol = $ref_tol) for N = $N..."
+                )
+                A_ref = ButterflyFactorizations.assemble_BF(
                     nearmatrix_far,
                     blktree,
                     1,
                     1,
                     k,
-                    bf_tol;
+                    ref_tol;
                     compressor=ButterflyFactorizations.PartialQR(),
                     rankestimator=active_estimator,
-                    adaptive=adaptive,
+                    adaptive=true, # Always adaptive to guarantee accuracy for the reference
+                    scheduler=scheduler,
                 )
             end
 
-            mem_entries = bf_matrix_memory(Bfmat)
+            traces_level_ranks = GenericTrace[]
 
-            xtest = randn(ComplexF64, length(X))
-            t_mv_bf = @belapsed $Bfmat * $xtest
-            err_bf = NaN
-            if denseassemble
-                # Using a tight tol=1e-5 for the power iteration to ensure the error measurement is accurate
-                err_bf = estimate_reldifference(Bfmat, A; tol=1e-5, itmax=150)
+            for bf_tol in tolvalues
+                @printf("  -> Testing tol = %.1e ... \n", bf_tol)
+                @printf(
+                    "Computing Butterfly Factorization (N = %d, h = %.4f, tol = %.1e)\n",
+                    N,
+                    h,
+                    bf_tol
+                )
+
+                t_bf = @elapsed begin
+                    Bfmat = ButterflyFactorizations.assemble_BF(
+                        nearmatrix_far,
+                        blktree,
+                        1,
+                        1,
+                        k,
+                        bf_tol;
+                        compressor=ButterflyFactorizations.PartialQR(),
+                        rankestimator=active_estimator,
+                        adaptive=adaptive,
+                    )
+                end
+
+                mem_entries = bf_matrix_memory(Bfmat)
+
+                xtest = randn(ComplexF64, length(X))
+                t_mv_bf = @belapsed $Bfmat * $xtest
+
+                # 🚀 Compute error against our dynamically chosen truth matrix
+                err_bf = estimate_reldifference(Bfmat, A_ref; tol=1e-5, itmax=150)
+
+                ranks_dict = extract_ranks_per_level_single(Bfmat)
+                sorted_levels = sort(collect(keys(ranks_dict)))
+                ranks_at_levels = [ranks_dict[l] for l in sorted_levels]
+
+                r_ranks = [ranks_dict[l] for l in sorted_levels if l > 1]
+                max_r_rank = isempty(r_ranks) ? 0 : maximum(r_ranks)
+
+                # Store Data
+                push!(data_N, N)
+                push!(data_tol, bf_tol)
+                push!(data_err, err_bf)
+                push!(data_time, t_bf)
+                push!(data_mem, mem_entries)
+                push!(data_mv, t_mv_bf)
+                push!(data_max_rank, max_r_rank)
+
+                push!(
+                    traces_level_ranks,
+                    scatter(;
+                        x=sorted_levels,
+                        y=ranks_at_levels,
+                        name="Tol = $(bf_tol)",
+                        mode="lines+markers",
+                    ),
+                )
+
+                @printf(
+                    "Err: %.2e | Time: %.3fs | Mem: %.1fMB\n", err_bf, t_bf, mem_entries
+                )
+
+                # Write immediately to CSV
+                csv_row = @sprintf(
+                    "%.4f,%d,%.1e,%.3e,%.5f,%.2f,%.5f,%d\n",
+                    h,
+                    N,
+                    bf_tol,
+                    err_bf,
+                    t_bf,
+                    mem_entries,
+                    t_mv_bf,
+                    max_r_rank
+                )
+                write(csv_stream, csv_row)
+                flush(csv_stream)
             end
-            ranks_dict = extract_ranks_per_level_single(Bfmat)
-            sorted_levels = sort(collect(keys(ranks_dict)))
-            ranks_at_levels = [ranks_dict[l] for l in sorted_levels]
 
-            r_ranks = [ranks_dict[l] for l in sorted_levels if l > 1]
-            max_r_rank = isempty(r_ranks) ? 0 : maximum(r_ranks)
-
-            # Store Data
-            push!(data_N, N)
-            push!(data_tol, bf_tol)
-            push!(data_err, err_bf)
-            push!(data_time, t_bf)
-            push!(data_mem, mem_entries)
-            push!(data_mv, t_mv_bf)
-            push!(data_max_rank, max_r_rank)
-
-            push!(
+            # Plot Ranks per level for this specific geometry (N)
+            p_lvl = plot(
                 traces_level_ranks,
-                scatter(;
-                    x=sorted_levels,
-                    y=ranks_at_levels,
-                    name="Tol = $(bf_tol)",
-                    mode="lines+markers",
+                Layout(;
+                    title="BF Rank per Level (N = $N, h = $h)",
+                    xaxis_title="Butterfly Factorization Level (1 = Leaves)",
+                    yaxis_title="Maximum Rank",
+                    template="plotly_white",
                 ),
             )
+            savefig(p_lvl, "plot_single_bf_ranks_N$(N)_h$(h).html")
+            push!(p_level_ranks_all, p_lvl)
 
-            @printf("Err: %.2e | Time: %.3fs | Mem: %.1fMB\n", err_bf, t_bf, mem_entries)
-
-            # Write immediately to CSV
-            csv_row = @sprintf(
-                "%.4f,%d,%.1e,%.3e,%.5f,%.2f,%.5f,%d\n",
-                h,
-                N,
-                bf_tol,
-                err_bf,
-                t_bf,
-                mem_entries,
-                t_mv_bf,
-                max_r_rank
-            )
-            write(csv_stream, csv_row)
-            flush(csv_stream)
-        end
-
-        # Plot Ranks per level for this specific geometry (N)
-        p_lvl = plot(
-            traces_level_ranks,
-            Layout(;
-                title="BF Rank per Level (N = $N, h = $h)",
-                xaxis_title="Butterfly Factorization Level (1 = Leaves)",
-                yaxis_title="Maximum Rank",
-                template="plotly_white",
-            ),
-        )
-        savefig(p_lvl, "plot_single_bf_ranks_N$(N)_h$(h).html")
-        push!(p_level_ranks_all, p_lvl)
-    end
-    close(csv_stream)
-
-    # --- Generate Plots grouped by N (Trade-offs) ---
-    unique_Ns = unique(data_N)
-    traces_acc = GenericTrace[]
-    traces_mem = GenericTrace[]
-    traces_rank = GenericTrace[]
-
-    push!(
-        traces_acc,
-        scatter(;
-            x=tolvalues,
-            y=tolvalues,
-            name="Ideal (Err = Tol)",
-            mode="lines",
-            line=attr(; color="black", dash="dash"),
-        ),
-    )
-
-    for n in unique_Ns
-        idx = findall(x -> x == n, data_N)
-        sort_idx = sortperm(data_tol[idx])
-        idx = idx[sort_idx]
-
-        x_tol = data_tol[idx]
-        y_err = data_err[idx]
-        y_mem_tradeoff = data_mem[idx]
-        y_rank = data_max_rank[idx]
-
-        push!(traces_acc, scatter(; x=x_tol, y=y_err, name="N = $n", mode="lines+markers"))
-        push!(
-            traces_mem,
-            scatter(; x=y_err, y=y_mem_tradeoff, name="N = $n", mode="lines+markers"),
-        )
-        push!(
-            traces_rank, scatter(; x=x_tol, y=y_rank, name="N = $n", mode="lines+markers")
-        )
-    end
-
-    # --- Generate Plots grouped by Tolerance (Scaling over N) ---
-    unique_tols = unique(data_tol)
-    traces_time_N = GenericTrace[]
-    traces_mv_N = GenericTrace[]
-    traces_mem_N = GenericTrace[]
-
-    colors = [
-        "#1f77b4",
-        "#ff7f0e",
-        "#2ca02c",
-        "#d62728",
-        "#9467bd",
-        "#8c564b",
-        "#e377c2",
-        "#7f7f7f",
-        "#bcbd22",
-        "#17becf",
-    ]
-
-    for (idx_tol, tol) in enumerate(unique_tols)
-        idx = findall(x -> x == tol, data_tol)
-        sort_idx = sortperm(data_N[idx])
-        idx = idx[sort_idx]
-
-        x_N = data_N[idx]
-        y_time = data_time[idx]
-        y_mv = data_mv[idx]
-        y_mem = data_mem[idx]
-
-        c = colors[((idx_tol - 1) % length(colors)) + 1]
-
-        # Actual Data
-        push!(
-            traces_time_N,
-            scatter(;
-                x=x_N,
-                y=y_time,
-                name="Tol = $tol",
-                mode="lines+markers",
-                line=attr(; color=c),
-            ),
-        )
-        push!(
-            traces_mv_N,
-            scatter(;
-                x=x_N, y=y_mv, name="Tol = $tol", mode="lines+markers", line=attr(; color=c)
-            ),
-        )
-        push!(
-            traces_mem_N,
-            scatter(;
-                x=x_N,
-                y=y_mem,
-                name="Tol = $tol",
-                mode="lines+markers",
-                line=attr(; color=c),
-            ),
-        )
-
-        # Standard Fits + Empirical Fits
-        if length(x_N) > 1
-            c_time = fit_scaling_factor(x_N, y_time, f_nlogn)
-            c_mv = fit_scaling_factor(x_N, y_mv, f_nlogn)
-            c_mem = fit_scaling_factor(x_N, y_mem, f_nlogn)
-
-            p_time_emp, coef_time_emp = estimate_empirical_power(x_N, y_time)
-            p_mv_emp, coef_mv_emp = estimate_empirical_power(x_N, y_mv)
-            p_mem_emp, coef_mem_emp = estimate_empirical_power(x_N, y_mem)
+            # --- Generate Plots grouped by N (Trade-offs) ---
+            unique_Ns = unique(data_N)
+            traces_acc = GenericTrace[]
+            traces_mem = GenericTrace[]
+            traces_rank = GenericTrace[]
 
             push!(
-                traces_time_N,
+                traces_acc,
                 scatter(;
-                    x=x_N,
-                    y=c_time .* f_nlogn.(x_N),
-                    name="O(N log N)",
+                    x=tolvalues,
+                    y=tolvalues,
+                    name="Ideal (Err = Tol)",
                     mode="lines",
-                    showlegend=false,
-                    line=attr(; color=c, dash="dash", width=1),
+                    line=attr(; color="black", dash="dash"),
                 ),
             )
-            if !isnan(p_time_emp)
-                emp_label = @sprintf("Empirical O(N^%.2f)", p_time_emp)
+
+            for n in unique_Ns
+                idx = findall(x -> x == n, data_N)
+                sort_idx = sortperm(data_tol[idx])
+                idx = idx[sort_idx]
+
+                x_tol = data_tol[idx]
+                y_err = data_err[idx]
+                y_mem_tradeoff = data_mem[idx]
+                y_rank = data_max_rank[idx]
+
+                push!(
+                    traces_acc,
+                    scatter(; x=x_tol, y=y_err, name="N = $n", mode="lines+markers"),
+                )
+                push!(
+                    traces_mem,
+                    scatter(;
+                        x=y_err, y=y_mem_tradeoff, name="N = $n", mode="lines+markers"
+                    ),
+                )
+                push!(
+                    traces_rank,
+                    scatter(; x=x_tol, y=y_rank, name="N = $n", mode="lines+markers"),
+                )
+            end
+
+            # --- Generate Plots grouped by Tolerance (Scaling over N) ---
+            unique_tols = unique(data_tol)
+            traces_time_N = GenericTrace[]
+            traces_mv_N = GenericTrace[]
+            traces_mem_N = GenericTrace[]
+            traces_err_N = GenericTrace[] # 🚀 NEW
+
+            colors = [
+                "#1f77b4",
+                "#ff7f0e",
+                "#2ca02c",
+                "#d62728",
+                "#9467bd",
+                "#8c564b",
+                "#e377c2",
+                "#7f7f7f",
+                "#bcbd22",
+                "#17becf",
+            ]
+
+            for (idx_tol, tol) in enumerate(unique_tols)
+                idx = findall(x -> x == tol, data_tol)
+                sort_idx = sortperm(data_N[idx])
+                idx = idx[sort_idx]
+
+                x_N = data_N[idx]
+                y_time = data_time[idx]
+                y_mv = data_mv[idx]
+                y_mem = data_mem[idx]
+                y_err = data_err[idx] # 🚀 NEW
+
+                c = colors[((idx_tol - 1) % length(colors)) + 1]
+
+                # Actual Data
                 push!(
                     traces_time_N,
                     scatter(;
                         x=x_N,
-                        y=coef_time_emp .* (x_N .^ p_time_emp),
-                        name=emp_label,
-                        mode="lines",
-                        line=attr(; color=c, dash="dot", width=1),
+                        y=y_time,
+                        name="Tol = $tol",
+                        mode="lines+markers",
+                        line=attr(; color=c),
                     ),
                 )
-            end
-
-            push!(
-                traces_mv_N,
-                scatter(;
-                    x=x_N,
-                    y=c_mv .* f_nlogn.(x_N),
-                    name="O(N log N)",
-                    mode="lines",
-                    showlegend=false,
-                    line=attr(; color=c, dash="dash", width=1),
-                ),
-            )
-            if !isnan(p_mv_emp)
-                emp_label = @sprintf("Empirical O(N^%.2f)", p_mv_emp)
                 push!(
                     traces_mv_N,
                     scatter(;
                         x=x_N,
-                        y=coef_mv_emp .* (x_N .^ p_mv_emp),
-                        name=emp_label,
-                        mode="lines",
-                        line=attr(; color=c, dash="dot", width=1),
+                        y=y_mv,
+                        name="Tol = $tol",
+                        mode="lines+markers",
+                        line=attr(; color=c),
                     ),
                 )
-            end
-
-            push!(
-                traces_mem_N,
-                scatter(;
-                    x=x_N,
-                    y=c_mem .* f_nlogn.(x_N),
-                    name="O(N log N)",
-                    mode="lines",
-                    showlegend=false,
-                    line=attr(; color=c, dash="dash", width=1),
-                ),
-            )
-            if !isnan(p_mem_emp)
-                emp_label = @sprintf("Empirical O(N^%.2f)", p_mem_emp)
                 push!(
                     traces_mem_N,
                     scatter(;
                         x=x_N,
-                        y=coef_mem_emp .* (x_N .^ p_mem_emp),
-                        name=emp_label,
-                        mode="lines",
-                        line=attr(; color=c, dash="dot", width=1),
+                        y=y_mem,
+                        name="Tol = $tol",
+                        mode="lines+markers",
+                        line=attr(; color=c),
                     ),
                 )
+                push!(
+                    traces_err_N,
+                    scatter(;
+                        x=x_N,
+                        y=y_err,
+                        name="Tol = $tol",
+                        mode="lines+markers",
+                        line=attr(; color=c),
+                    ),
+                )
+
+                # Standard Fits + Empirical Fits
+                if length(x_N) > 1
+                    c_time = fit_scaling_factor(x_N, y_time, f_nlogn)
+                    c_mv = fit_scaling_factor(x_N, y_mv, f_nlogn)
+                    c_mem = fit_scaling_factor(x_N, y_mem, f_nlogn)
+
+                    p_time_emp, coef_time_emp = estimate_empirical_power(x_N, y_time)
+                    p_mv_emp, coef_mv_emp = estimate_empirical_power(x_N, y_mv)
+                    p_mem_emp, coef_mem_emp = estimate_empirical_power(x_N, y_mem)
+
+                    push!(
+                        traces_time_N,
+                        scatter(;
+                            x=x_N,
+                            y=c_time .* f_nlogn.(x_N),
+                            name="O(N log N)",
+                            mode="lines",
+                            showlegend=false,
+                            line=attr(; color=c, dash="dash", width=1),
+                        ),
+                    )
+                    if !isnan(p_time_emp)
+                        emp_label = @sprintf("Empirical O(N^%.2f)", p_time_emp)
+                        push!(
+                            traces_time_N,
+                            scatter(;
+                                x=x_N,
+                                y=coef_time_emp .* (x_N .^ p_time_emp),
+                                name=emp_label,
+                                mode="lines",
+                                line=attr(; color=c, dash="dot", width=1),
+                            ),
+                        )
+                    end
+
+                    push!(
+                        traces_mv_N,
+                        scatter(;
+                            x=x_N,
+                            y=c_mv .* f_nlogn.(x_N),
+                            name="O(N log N)",
+                            mode="lines",
+                            showlegend=false,
+                            line=attr(; color=c, dash="dash", width=1),
+                        ),
+                    )
+                    if !isnan(p_mv_emp)
+                        emp_label = @sprintf("Empirical O(N^%.2f)", p_mv_emp)
+                        push!(
+                            traces_mv_N,
+                            scatter(;
+                                x=x_N,
+                                y=coef_mv_emp .* (x_N .^ p_mv_emp),
+                                name=emp_label,
+                                mode="lines",
+                                line=attr(; color=c, dash="dot", width=1),
+                            ),
+                        )
+                    end
+
+                    push!(
+                        traces_mem_N,
+                        scatter(;
+                            x=x_N,
+                            y=c_mem .* f_nlogn.(x_N),
+                            name="O(N log N)",
+                            mode="lines",
+                            showlegend=false,
+                            line=attr(; color=c, dash="dash", width=1),
+                        ),
+                    )
+                    if !isnan(p_mem_emp)
+                        emp_label = @sprintf("Empirical O(N^%.2f)", p_mem_emp)
+                        push!(
+                            traces_mem_N,
+                            scatter(;
+                                x=x_N,
+                                y=coef_mem_emp .* (x_N .^ p_mem_emp),
+                                name=emp_label,
+                                mode="lines",
+                                line=attr(; color=c, dash="dot", width=1),
+                            ),
+                        )
+                    end
+                end
             end
+
+            # Build Layouts and push to history
+            p_acc = plot(
+                traces_acc,
+                Layout(;
+                    title="Measured Error vs. Target Tolerance",
+                    xaxis_title="Target Tolerance",
+                    yaxis_title="Actual Relative Error",
+                    xaxis_type="log",
+                    yaxis_type="log",
+                    template="plotly_white",
+                ),
+            )
+            savefig(p_acc, "plot_single_bf_accuracy.html")
+            push!(p_acc_history, p_acc)
+
+            p_mem = plot(
+                traces_mem,
+                Layout(;
+                    title="Memory Footprint vs. Measured Error",
+                    xaxis_title="Actual Relative Error",
+                    yaxis_title="Memory (MB)",
+                    xaxis_type="log",
+                    yaxis_type="log",
+                    template="plotly_white",
+                ),
+            )
+            savefig(p_mem, "plot_single_bf_memory_tradeoff.html")
+            push!(p_mem_history, p_mem)
+
+            p_rank = plot(
+                traces_rank,
+                Layout(;
+                    title="Maximum Rank vs. Target Tolerance",
+                    xaxis_title="Target Tolerance",
+                    yaxis_title="Max R-Block Rank",
+                    xaxis_type="log",
+                    template="plotly_white",
+                ),
+            )
+            savefig(p_rank, "plot_single_bf_max_rank.html")
+            push!(p_rank_history, p_rank)
+
+            p_time_N = plot(
+                traces_time_N,
+                Layout(;
+                    title="Assembly Time vs N (Dashed = O(N log N))",
+                    xaxis_title="N (DOFs)",
+                    yaxis_title="Assembly Time (s)",
+                    xaxis_type="log",
+                    yaxis_type="log",
+                    template="plotly_white",
+                ),
+            )
+            savefig(p_time_N, "plot_single_bf_time_vs_N.html")
+            push!(p_time_N_history, p_time_N)
+
+            p_mv_N = plot(
+                traces_mv_N,
+                Layout(;
+                    title="Mat-Vec Time vs N (Dashed = O(N log N))",
+                    xaxis_title="N (DOFs)",
+                    yaxis_title="Mat-Vec Time (s)",
+                    xaxis_type="log",
+                    yaxis_type="log",
+                    template="plotly_white",
+                ),
+            )
+            savefig(p_mv_N, "plot_single_bf_mv_vs_N.html")
+            push!(p_mv_N_history, p_mv_N)
+
+            p_mem_N = plot(
+                traces_mem_N,
+                Layout(;
+                    title="Memory vs N (Dashed = O(N log N))",
+                    xaxis_title="N (DOFs)",
+                    yaxis_title="Memory (MB)",
+                    xaxis_type="log",
+                    yaxis_type="log",
+                    template="plotly_white",
+                ),
+            )
+            savefig(p_mem_N, "plot_single_bf_memory_vs_N.html")
+            push!(p_mem_N_history, p_mem_N)
+
+            p_err_N = plot(
+                traces_err_N,
+                Layout(;
+                    title="Actual Relative Error vs N",
+                    xaxis_title="N (DOFs)",
+                    yaxis_title="Relative Error",
+                    xaxis_type="log",
+                    yaxis_type="log",
+                    template="plotly_white",
+                ),
+            )
+            savefig(p_err_N, "plot_single_bf_err_vs_N.html")
+            push!(p_err_N_history, p_err_N)
+        end
+    catch e
+        if e isa InterruptException
+            println(
+                "\n\n⚠️  Benchmark manually aborted (Ctrl+C)! Salvaging data and plots up to step $(length(unique(data_N)))...",
+            )
+        else
+            println(
+                "\n\n❌  An unexpected error occurred! Salvaging data and plots up to step $(length(unique(data_N)))...",
+            )
+            Base.showerror(stdout, e)
+            println()
+        end
+    finally
+        if isopen(csv_stream)
+            close(csv_stream)
+            println("\n✅ Data safely flushed to '$csv_file'.")
         end
     end
 
-    # Build Layouts
-    p_acc = plot(
-        traces_acc,
-        Layout(;
-            title="Measured Error vs. Target Tolerance",
-            xaxis_title="Target Tolerance",
-            yaxis_title="Actual Relative Error",
-            xaxis_type="log",
-            yaxis_type="log",
-            template="plotly_white",
-        ),
-    )
-    p_mem = plot(
-        traces_mem,
-        Layout(;
-            title="Memory Footprint vs. Measured Error",
-            xaxis_title="Actual Relative Error",
-            yaxis_title="Memory (MB)",
-            xaxis_type="log",
-            yaxis_type="log",
-            template="plotly_white",
-        ),
-    )
-    p_rank = plot(
-        traces_rank,
-        Layout(;
-            title="Maximum Rank vs. Target Tolerance",
-            xaxis_title="Target Tolerance",
-            yaxis_title="Max R-Block Rank",
-            xaxis_type="log",
-            template="plotly_white",
-        ),
-    )
-
-    p_time_N = plot(
-        traces_time_N,
-        Layout(;
-            title="Assembly Time vs N (Dashed = O(N log N))",
-            xaxis_title="N (DOFs)",
-            yaxis_title="Assembly Time (s)",
-            xaxis_type="log",
-            yaxis_type="log",
-            template="plotly_white",
-        ),
-    )
-    p_mv_N = plot(
-        traces_mv_N,
-        Layout(;
-            title="Mat-Vec Time vs N (Dashed = O(N log N))",
-            xaxis_title="N (DOFs)",
-            yaxis_title="Mat-Vec Time (s)",
-            xaxis_type="log",
-            yaxis_type="log",
-            template="plotly_white",
-        ),
-    )
-    p_mem_N = plot(
-        traces_mem_N,
-        Layout(;
-            title="Memory vs N (Dashed = O(N log N))",
-            xaxis_title="N (DOFs)",
-            yaxis_title="Memory (MB)",
-            xaxis_type="log",
-            yaxis_type="log",
-            template="plotly_white",
-        ),
-    )
-
-    # Save to HTML
-    savefig(p_acc, "plot_single_bf_accuracy.html")
-    savefig(p_mem, "plot_single_bf_memory_tradeoff.html")
-    savefig(p_rank, "plot_single_bf_max_rank.html")
-    savefig(p_time_N, "plot_single_bf_time_vs_N.html")
-    savefig(p_mv_N, "plot_single_bf_mv_vs_N.html")
-    savefig(p_mem_N, "plot_single_bf_memory_vs_N.html")
-
     println("\nBenchmark complete! All data saved to '$csv_file'.")
-    return p_acc, p_time_N, p_mem, p_mem_N, p_mv_N, p_rank, p_level_ranks_all
+
+    # 🚀 Safely retrieve the last generated plot from the arrays
+    final_p_acc = isempty(p_acc_history) ? plot() : p_acc_history[end]
+    final_p_time_N = isempty(p_time_N_history) ? plot() : p_time_N_history[end]
+    final_p_mem = isempty(p_mem_history) ? plot() : p_mem_history[end]
+    final_p_mem_N = isempty(p_mem_N_history) ? plot() : p_mem_N_history[end]
+    final_p_mv_N = isempty(p_mv_N_history) ? plot() : p_mv_N_history[end]
+    final_p_rank = isempty(p_rank_history) ? plot() : p_rank_history[end]
+    final_p_err_N = isempty(p_err_N_history) ? plot() : p_err_N_history[end]
+
+    return final_p_acc,
+    final_p_time_N,
+    final_p_mem,
+    final_p_mem_N,
+    final_p_mv_N,
+    final_p_rank,
+    final_p_err_N,
+    p_level_ranks_all
 end
 
 # --- Execution ---
-h_values = [0.0125, 0.008, 0.006, 0.004, 0.003]
+h_values = [0.0125, 0.008, 0.006, 0.004, 0.003] #
 #For Rectangular Geometry:
 #h_values =[0.0125, 0.008, 0.006, 0.004, 0.003] N = [19040, 46625, 83333, 187000, 332001]
 #h_values =[0.0055]                             N = [99008]
-p_acc, p_time_N, p_mem, p_mem_N, p_mv_N, p_rank, p_level_ranks_all = run_single_farfield_benchmark(
+p_acc, p_time_N, p_mem, p_mem_N, p_mv_N, p_rank, p_err_N, p_level_ranks_all = run_single_farfield_benchmark(
     h_values;
 
     # -------------------------------------------------------------------------
@@ -622,7 +736,7 @@ p_acc, p_time_N, p_mem, p_mem_N, p_mv_N, p_rank, p_level_ranks_all = run_single_
     # -------------------------------------------------------------------------
     # Butterfly Tree Configuration
     # -------------------------------------------------------------------------
-    treekind=:KMeansTree,    # Clustering spatial division strategy (Options: :KMeansTree, :BisectionTree, :TwoNTree).
+    treekind=:BisectionTree,    # Clustering spatial division strategy (Options: :KMeansTree, :BisectionTree, :TwoNTree).
     maxpointsbisection=100,     # Maximum degrees of freedom allowed in a single leaf node before stopping the bisection split.
     minpointskmeans=100,        # Minimum degrees of freedom allowed in a single leaf node before stopping the k-means split.
     minpointstwon=100,          # Minimum degrees of freedom allowed in a single leaf node before stopping the 2N-tree split.
@@ -630,8 +744,8 @@ p_acc, p_time_N, p_mem, p_mem_N, p_mv_N, p_rank, p_level_ranks_all = run_single_
     # -------------------------------------------------------------------------
     # Compression & Accuracy Validation
     # -------------------------------------------------------------------------
-    tolvalues=[1e-3],           # Array of target relative tolerances to sweep through for the PartialQR compressor (e.g., [1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10]).
-    denseassemble=false,         # true: Computes the exact dense interaction matrix to measure true relative error (WARNING: Will run out of memory for large N!). false: Skips error computation.
+    tolvalues=[1e-3], # Array of target relative tolerances to sweep through for the PartialQR compressor(e.g., [1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10])
+    denseassemble=false,          # true: Computes the exact dense interaction matrix. false: Computes a highly accurate Butterfly Matrix (tol=minimum(tolvalues)*1e-2) as truth.
 
     # -------------------------------------------------------------------------
     # System & Logging
@@ -648,6 +762,7 @@ display(p_mem)
 display(p_mem_N)
 display(p_mv_N)
 display(p_rank)
+display(p_err_N)
 
 for p in p_level_ranks_all
     display(p)
