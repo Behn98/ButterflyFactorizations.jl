@@ -263,15 +263,16 @@ using CompScienceMeshes
 using H2Trees
 using ButterflyFactorizations
 using LinearAlgebra
+using OhMyThreads
 
-h = 0.05
-lambda = 1
+h = 0.1
+lambda = 10 * h
 k = 2 * pi / lambda
 m = meshsphere(1.0, h)
 X = raviartthomas(m)
 op = Maxwell3D.singlelayer(; wavenumber=k)
-blktree = TwoNTree(X, X, lambda / 10)
-
+tree = ButterflyFactorizations.build_bisection_tree(X.pos; max_points = 100)
+blktree = BlockTree(tree, tree)
 @time Bfmat = ButterflyFactorizations.PetrovGalerkinBF(
     op,
     X,
@@ -280,9 +281,9 @@ blktree = TwoNTree(X, X, lambda / 10)
     k;
     compressor=ButterflyFactorizations.PartialQR(),
     tol=1e-3,
-    scheduler=OhMyThreads.StaticScheduler(),
+    scheduler=OhMyThreads.DynamicScheduler(),
 )
-A = assemble(op, X, X)
+@time A = assemble(op, X, X)
 xtest = rand(ComplexF64, size(Bfmat, 2))
 xs1 = Bfmat * xtest
 xs = A * xtest
