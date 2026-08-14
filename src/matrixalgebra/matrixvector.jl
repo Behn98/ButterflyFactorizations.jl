@@ -37,21 +37,32 @@ using LinearMaps: LinearMaps
     end
 
     # 3. Far-Field Butterfly Evaluation
+    # 3. Far-Field Butterfly Evaluation
     if !isempty(A.BFs)
+        # Zero out all buffers before starting
         for buf in A.y_thread_buffers
             fill!(buf, zero(T))
         end
 
-        Threads.@threads :static for i in 1:length(A.BFs)
-            tid = Threads.threadid()
-            y_local = A.y_thread_buffers[tid]
-            ws_local = A.thread_workspaces[tid]
-            bf = A.BFs[i]
+        @tasks for i in 1:length(A.BFs)
+            @set scheduler = OhMyThreads.DynamicScheduler()
 
-            mul!(y_local, bf, x, ws_local, 1, 1)
+            # Safely "check out" a workspace ID (blocks if none available)
+            buf_id = take!(A.buffer_pool)
+
+            try
+                y_local = A.y_thread_buffers[buf_id]
+                ws_local = A.thread_workspaces[buf_id]
+
+                # Evaluate this specific butterfly
+                mul!(y_local, A.BFs[i], x, ws_local, 1, 1)
+            finally
+                # ALWAYS return the ID to the pool, even if an error occurs
+                put!(A.buffer_pool, buf_id)
+            end
         end
 
-        # Reduction back to global vector with α scaling factor
+        # Reduction: Sum the thread-local vectors back into the global y vector
         for buf in A.y_thread_buffers
             if α == 1
                 y .+= buf
