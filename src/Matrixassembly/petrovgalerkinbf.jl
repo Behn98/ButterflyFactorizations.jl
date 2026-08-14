@@ -26,6 +26,7 @@ far-field interactions are compressed block-by-block using `assemble_BF`.
   - `leafcomp`: Whether to allow leaf-level compression (default: `true`).
   - `acctype`: The numeric type to use for the factorization (default: `ComplexF64`).
   - `scheduler`: The threading scheduler to use for parallel assembly.
+  - `nestedparallel`: Whether to allow nested parallelism during assembly (default: `true`).
   - `minbflvl`: The minimum level in the tree to apply butterfly compression when leafcompression = false(default: `3`).
   - `adaptive`: Whether to adaptively determine the rank during compression (default: `false`).
   - `farfieldonly`: If true, only assemble far-field interactions (default: `false`).
@@ -38,12 +39,13 @@ function PetrovGalerkinBF(
     k::Float64;
     compressor=ButterflyFactorizations.PartialQR(),
     tol=1e-3,
-    admissibility=isFarFunctor(tree_parameters(cluster_testtree(tree)).α),
+    admissibility=CenterDistanceAdmissibility(tree_parameters(cluster_testtree(tree)).β),
     rankestimator::AbstractRankEstimator=ButterflyRankEstimator(
         tree_parameters(cluster_testtree(tree), admissibility).Cτ
     ),
 
-    scheduler=OhMyThreads.StaticScheduler(),
+    scheduler=OhMyThreads.DynamicScheduler(),
+    nestedparallel=false,
     acctype=ComplexF64,
     minbflvl=3,
     adaptive=true,
@@ -63,6 +65,10 @@ function PetrovGalerkinBF(
         leafimbalance=leafimbalance,
         minbflvl=minbflvl,
     )
+    complexity(interaction) =
+        length(cluster_values(tree.testcluster, interaction[1])) *
+        length(cluster_values(tree.trialcluster, interaction[2]))
+    sort!(farints; by=complexity, rev=true)
     n_ints = length(nearints)
     if farfieldonly
         n_ints = 0
@@ -124,7 +130,11 @@ function PetrovGalerkinBF(
     far_rows = Vector{Int}(undef, length(farints))
     far_cols = Vector{Int}(undef, length(farints))
     far_vals = Vector{Int}(undef, length(farints))
-
+    bfscheduler = if nestedparallel
+        OhMyThreads.DynamicScheduler()
+    else
+        OhMyThreads.SerialScheduler()
+    end
     let nearmatrix_far = nearmatrix_far
         @tasks for i in eachindex(farints)
             @set scheduler = scheduler
@@ -143,7 +153,7 @@ function PetrovGalerkinBF(
                 tol;
                 compressor=compressor,
                 rankestimator=rankestimator,
-                scheduler=OhMyThreads.SerialScheduler(),
+                scheduler=bfscheduler,
                 adaptive=adaptive,
                 acctype=acctype,
             )
@@ -177,13 +187,13 @@ function PetrovGalerkinBF_Mat(
     tree,
     k::Float64;
     compressor=ButterflyFactorizations.PartialQR(),
-    admissibility=isFarFunctor(tree_parameters(cluster_testtree(tree)).α),
+    admissibility=CenterDistanceAdmissibility(tree_parameters(cluster_testtree(tree)).β),
     rankestimator::AbstractRankEstimator=ButterflyRankEstimator(
-        tree_parameters(tree, admissibility).Cτ
+        tree_parameters(cluster_testtree(tree), admissibility).Cτ
     ),
     tol=1e-3,
     adaptive=true,
-    scheduler=OhMyThreads.StaticScheduler(),
+    scheduler=OhMyThreads.DynamicScheduler(),
     acctype=ComplexF64,
     minbflvl=3,
     unbalancedints=false,
