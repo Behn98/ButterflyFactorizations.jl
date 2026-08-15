@@ -43,7 +43,7 @@ function PetrovGalerkinBF(
         tree_parameters(cluster_testtree(tree), admissibility).Cτ
     ),
 
-    scheduler=OhMyThreads.StaticScheduler(),
+    scheduler=OhMyThreads.DynamicScheduler(),
     acctype=ComplexF64,
     minbflvl=3,
     adaptive=true,
@@ -64,6 +64,11 @@ function PetrovGalerkinBF(
         minbflvl=minbflvl,
     )
     n_ints = length(nearints)
+    #Loadbalancing: sort farfield interactions by complexity (largest first)
+    complexity(interaction) =
+        length(cluster_values(cluster_testtree(tree), interaction[1])) *
+        length(cluster_values(cluster_trialtree(tree), interaction[2]))
+    sort!(farints; by=complexity, rev=true)
     if farfieldonly
         n_ints = 0
     end
