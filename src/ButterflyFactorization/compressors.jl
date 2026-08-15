@@ -8,15 +8,22 @@ abstract type Abstractcompressor end
 """
     PartialQRWorkspace{T}
 
-A zero-allocation workspace utilizing Task-Local Storage (TLS).
-Stores a unique key used to safely fetch or initialize task-bound dense matrix buffers.
+A thread-safe, pre-allocated workspace containing dense matrix buffers.
+This prevents the `PartialQR` compressor from reallocating large memory blocks
+during the randomized sampling phase of the factorization.
 """
 struct PartialQRWorkspace{T}
-    tls_key::Symbol
+    buffers::Vector{Matrix{T}}
 
     function PartialQRWorkspace{T}() where {T}
-        # gensym() creates a guaranteed-unique symbol (e.g., #:pqr_workspace_123)
-        return new{T}(gensym(:pqr_workspace))
+        # Use maxthreadid() to safely account for interactive/main threads in modern Julia
+        n_buffers = if isdefined(Threads, :maxthreadid)
+            Threads.maxthreadid()
+        else
+            Threads.nthreads() + 1
+        end
+
+        return new([Matrix{T}(undef, 256, 256) for _ in 1:n_buffers])
     end
 end
 
@@ -90,34 +97,24 @@ function (t::PartialQR{L,T})(
 
     n_otilde_guess = get_n_otilde(rank_est)
     n_otilde = min(max(n_otilde_guess, 10), n_obs)
+
     shuffled_obs = obs_index[randperm(n_obs)]
 
-    # --- TASK-LOCAL BUFFER MANAGEMENT ---
-    key = t.workspace.tls_key
+    # --- NO-ALLOCATION BUFFER MANAGEMENT ---
+    tid = Threads.threadid()
+    buffer = t.workspace.buffers[tid]
 
-    # 1. Grab the current task's local dictionary
-    tls = task_local_storage()
-
-    # 2. Fetch the buffer, or initialize it if it doesn't exist yet
-    buffer = get!(tls, key) do
-        return Matrix{T}(undef, 256, 256)
-    end::Matrix{T}
-
-    # 3. Dynamically grow the task's buffer if the current block is larger than expected
+    # Dynamically grow the thread's buffer if the current block is larger than expected
     if size(buffer, 1) < n_obs || size(buffer, 2) < n_src
         new_rows = max(size(buffer, 1), n_obs)
         new_cols = max(size(buffer, 2), n_src)
-
-        buffer = Matrix{T}(undef, new_rows, new_cols)
-        # Update the dictionary so this task remembers the larger size for next time
-        tls[key] = buffer
+        t.workspace.buffers[tid] = Matrix{T}(undef, new_rows, new_cols)
+        buffer = t.workspace.buffers[tid]
     end
 
     # Create a view for the initial sample size and explicitly zero it out
     Z = view(buffer, 1:n_otilde, 1:n_src)
     fill!(Z, zero(T))
-
-    # ... The rest of your functor remains exactly the same ...
 
     current_rows = @view shuffled_obs[1:n_otilde]
     farassembler(Z, current_rows, src_index)

@@ -57,7 +57,7 @@ function assemble_BF(
     ),
     adaptive=true,
     compressor=ButterflyFactorizations.PartialQR(),
-    scheduler=OhMyThreads.DynamicScheduler(),
+    scheduler=OhMyThreads.StaticScheduler(),
     acctype=ComplexF64,
 )
     # --- Trees & Helpers ---

@@ -219,7 +219,7 @@ function browswap_split(P::ButterflyLevel{T}) where {T}
                 currentblks = cluster[(idx * 4 - 3):(idx * 4)]
                 sort!(currentblks; by=x -> (x.obs_in, x.src_in))
 
-                offset = 0
+                offset = 1
                 for k in 1:2:3
                     ckblkcolkey = (currentblks[k].obs_in, currentblks[k].src_in)
                     ck_1blkcolkey = (currentblks[k + 1].obs_in, currentblks[k + 1].src_in)

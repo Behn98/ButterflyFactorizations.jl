@@ -204,7 +204,6 @@ function run_benchmarks(
     csv_file::String="benchmark_results.csv",
     log_file_path::String="benchmark_log.txt",
     scheduler=OhMyThreads.DynamicScheduler(),
-    bfnestedparallelism=true,
     acamaxrank::Int=60,
     refacamaxrank::Int=100,
 )
@@ -363,7 +362,6 @@ function run_benchmarks(
                         k;
                         compressor=ButterflyFactorizations.PartialQR(),
                         scheduler=scheduler,
-                        nestedparallel=bfnestedparallelism,
                         tol=bf_tol,
                         unbalancedints=unbalancedints,
                         leafimbalance=(!(checkfarfieldaccuracy&acarefmat)),
@@ -384,7 +382,6 @@ function run_benchmarks(
                         k;
                         compressor=ButterflyFactorizations.PartialQR(),
                         scheduler=scheduler,
-                        nestedparallel=bfnestedparallelism,
                         tol=bf_tol,
                         unbalancedints=unbalancedints,
                         leafimbalance=(!(checkfarfieldaccuracy&acarefmat)),
@@ -1132,7 +1129,7 @@ function run_benchmarks(
 end
 
 # --- Execution ---
-h_values = [0.1]
+h_values = [0.03, 0.02, 0.015, 0.01, 0.0075, 0.005]
 # [0.03, 0.02, 0.015, 0.01, 0.0075, 0.005] --> N = [45k, 90k, 180k, 360k, 720k, 1.440M] for sphere
 p_time, p_mem, p_mv, p_err, p_rank_vs_k, p_level_ranks_all = run_benchmarks(
     h_values;
@@ -1151,8 +1148,8 @@ p_time, p_mem, p_mv, p_err, p_rank_vs_k, p_level_ranks_all = run_benchmarks(
     treekind=:BisectionTree,                   # Clustering strategy (Options: :KMeansTree, :BisectionTree, :TwoNTree)
     admissibility_spec=:CenterDistanceAdmissibility,       # Near/Far separation criteria (Options: :CenterDistanceAdmissibility, :isFarFunctor)
     maxpointsbisection=100,                 # Maximum allowed degrees of freedom in a leaf node
-    leafcompression=true,                   # true: Compresses interactions all the way down to leaf nodes.
-    minbflvl=3,                             # Tree depth where compression begins --> ignored when leafcompression is true
+    leafcompression=true,       # true: Compresses interactions all the way down to leaf nodes.
+    minbflvl=3,                             # Tree depth where compression begins
     unbalancedints=false,                   # Allows butterfly interactions situated at different tree depths
 
     # -------------------------------------------------------------------------
@@ -1165,7 +1162,7 @@ p_time, p_mem, p_mv, p_err, p_rank_vs_k, p_level_ranks_all = run_benchmarks(
     # Benchmarking Flags (ACA vs. Butterfly)
     # -------------------------------------------------------------------------
     checkfarfieldaccuracy=true, # explicitly computes the relative error of the far-field Mat-Vec product against a highly accurate reference matrix
-    acarefmat=true,            # true: Uses a tightly toleranced ACA matrix as the exact truth. false: Uses a highly toleranced Butterfly matrix as truth.
+    acarefmat=false,            # true: Uses a tightly toleranced ACA matrix as the exact truth. false: Uses a highly toleranced Butterfly matrix as truth.
     acacomparison=true,         # Builds a standard ACA HMatrix alongside the Butterfly matrix
     refacamaxrank=100,          # Hard limit for maximum rank allowed in ACA reference matrix
     acamaxrank=100,              # Hard limit for maximum rank allowed in standard ACA comparison matrix
@@ -1175,7 +1172,6 @@ p_time, p_mem, p_mv, p_err, p_rank_vs_k, p_level_ranks_all = run_benchmarks(
     # -------------------------------------------------------------------------
     rankestimator_type=:Butterfly,            # Choose :Butterfly or :Geometric
     scheduler=OhMyThreads.DynamicScheduler(), # Threading strategy
-    bfnestedparallelism=false,                 # true: Enables nested parallelism for ButterflyFactorization. false: Disables nested parallelism.
     csv_file="benchmark_results.csv",
     log_file_path="benchmark_log.txt",
 );

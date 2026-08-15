@@ -64,6 +64,7 @@ function bsymswap(P::ButterflyLevel{T}) where {T}
                 currentblks = cluster[(idx * 4 - 3):(idx * 4)]
                 sort!(currentblks; by=x -> (x.obs_in, x.src_in))
 
+                offset = 1
                 for k in 1:2:3
                     ckblkcolkey = (currentblks[k].obs_in, currentblks[k].src_in)
                     ck_1blkcolkey = (currentblks[k + 1].obs_in, currentblks[k + 1].src_in)
@@ -72,41 +73,28 @@ function bsymswap(P::ButterflyLevel{T}) where {T}
                     ksizes = (
                         size(currentblks[k].data, 2), size(currentblks[k + 1].data, 2)
                     )
-                    if (idx == 1 || idx == 2)
-                        ckblk = vcat(
-                            Matrix{T}(I, ksizes[1], ksizes[1]),
-                            zeros(T, ksizes[2], ksizes[1]),
-                        )
-                        ck_1blk = vcat(
-                            zeros(T, ksizes[1], ksizes[2]),
-                            Matrix{T}(I, ksizes[2], ksizes[2]),
-                        )
-                    end
+                    ckblk = vcat(
+                        Matrix{T}(I, ksizes[1], ksizes[1]), zeros(T, ksizes[2], ksizes[1])
+                    )
+                    ck_1blk = vcat(
+                        zeros(T, ksizes[1], ksizes[2]), Matrix{T}(I, ksizes[2], ksizes[2])
+                    )
+
                     # 1. B Blocks depend on the row
                     if !iseven(idx)
-                        if k == 1
-                            push!(
-                                B_blocks,
-                                ButterflyBlock(row[1], row[2], 1, colcount1, newbblock),
-                            )
-                        else
-                            push!(
-                                B_blocks,
-                                ButterflyBlock(row[1], row[2], 2, colcount2, newbblock),
-                            )
-                        end
+                        push!(
+                            B_blocks,
+                            ButterflyBlock(
+                                row[1], row[2], 1, colcount1 + offset, newbblock
+                            ),
+                        )
                     else
-                        if k == 1
-                            push!(
-                                B_blocks,
-                                ButterflyBlock(row[1], row[2], 1, colcount1+1, newbblock),
-                            )
-                        else
-                            push!(
-                                B_blocks,
-                                ButterflyBlock(row[1], row[2], 2, colcount2+1, newbblock),
-                            )
-                        end
+                        push!(
+                            B_blocks,
+                            ButterflyBlock(
+                                row[1], row[2], 2, colcount2 + offset, newbblock
+                            ),
+                        )
                     end
 
                     # 2. C Blocks only route columns
@@ -114,33 +102,38 @@ function bsymswap(P::ButterflyLevel{T}) where {T}
                         push!(
                             C_blocks,
                             ButterflyBlock(
-                                1, colcount1, ckblkcolkey[1], ckblkcolkey[2], ckblk
+                                1, colcount1 + offset, ckblkcolkey[1], ckblkcolkey[2], ckblk
                             ),
                         )
                         push!(
                             C_blocks,
                             ButterflyBlock(
-                                2, colcount2, ck_1blkcolkey[1], ck_1blkcolkey[2], ck_1blk
+                                1,
+                                colcount1 + offset,
+                                ck_1blkcolkey[1],
+                                ck_1blkcolkey[2],
+                                ck_1blk,
                             ),
                         )
-                    elseif idx == 2
+                    elseif idx == 3
                         push!(
                             C_blocks,
                             ButterflyBlock(
-                                1, colcount1 + 1, ckblkcolkey[1], ckblkcolkey[2], ckblk
+                                2, colcount2 + offset, ckblkcolkey[1], ckblkcolkey[2], ckblk
                             ),
                         )
                         push!(
                             C_blocks,
                             ButterflyBlock(
                                 2,
-                                colcount2 + 1,
+                                colcount2 + offset,
                                 ck_1blkcolkey[1],
                                 ck_1blkcolkey[2],
                                 ck_1blk,
                             ),
                         )
                     end
+                    offset += 1
                 end
             end
             colcount1 += 2
