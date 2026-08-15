@@ -34,7 +34,7 @@ function BisectionTree(
     N_points = length(positions)
     indices = collect(1:N_points)
     max_depth = if max_points > 0
-        max(1, ceil(Int, log2(N_points / max_points)+1))
+        max(1, round(Int, log2(N_points / max_points)))
     else
         -1
     end

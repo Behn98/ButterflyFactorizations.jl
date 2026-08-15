@@ -43,7 +43,7 @@ function PetrovGalerkinBF(
         tree_parameters(cluster_testtree(tree), admissibility).Cτ
     ),
 
-    scheduler=OhMyThreads.StaticScheduler(),
+    scheduler=OhMyThreads.DynamicScheduler(),
     acctype=ComplexF64,
     minbflvl=3,
     adaptive=true,
