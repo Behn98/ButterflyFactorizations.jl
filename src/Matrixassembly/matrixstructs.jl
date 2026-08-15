@@ -20,9 +20,6 @@ struct PetrovGalerkinBF{
     y_thread_buffers::Vector{Vector{T}}
     thread_workspaces::Vector{ThreadButterflyWorkspace{T}}
 
-    # NEW: Token pool for safe task scheduling
-    buffer_pool::Channel{Int}
-
     function PetrovGalerkinBF{T}(
         nearinteractions, tree, BFs, dim, near_lookup, far_lookup
     ) where {T}
@@ -32,25 +29,14 @@ struct PetrovGalerkinBF{
             Threads.nthreads() + 1
         end
 
+        # 1. Initialize empty workspaces for each thread (max depth 20 levels)
         thread_ws = [ThreadButterflyWorkspace{T}(20) for _ in 1:n_threads]
+
+        # 2. Initialize thread-local output buffers
         thread_y = [zeros(T, dim[1]) for _ in 1:n_threads]
 
-        # Initialize the token pool with the available IDs
-        pool = Channel{Int}(n_threads)
-        for i in 1:n_threads
-            put!(pool, i)
-        end
-
         return new{T,typeof(nearinteractions),typeof(near_lookup),eltype(BFs),typeof(tree)}(
-            nearinteractions,
-            dim,
-            tree,
-            BFs,
-            near_lookup,
-            far_lookup,
-            thread_y,
-            thread_ws,
-            pool,
+            nearinteractions, dim, tree, BFs, near_lookup, far_lookup, thread_y, thread_ws
         )
     end
 end
