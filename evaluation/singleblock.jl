@@ -173,7 +173,7 @@ function run_single_farfield_benchmark(
     p_mem_N_history = PlotlyJS.SyncPlot[]
     p_mv_N_history = PlotlyJS.SyncPlot[]
     p_rank_history = PlotlyJS.SyncPlot[]
-    p_err_N_history = PlotlyJS.SyncPlot[] # 🚀 NEW: Error vs N plot history
+    p_err_N_history = PlotlyJS.SyncPlot[]
     p_level_ranks_all = PlotlyJS.SyncPlot[]
 
     dist = 2 * sqrt(2)
