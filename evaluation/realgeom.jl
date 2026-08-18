@@ -347,8 +347,8 @@ function run_benchmarks(
                 y = translate(m, SVector(separation_distance, 0.0, 0.0))
                 Y = raviartthomas(y)
                 if treekind == :KMeansTree
-                    Stree = H2Trees.KMeansTree(X.pos, 2; minvalues=50)
-                    Otree = H2Trees.KMeansTree(Y.pos, 2; minvalues=50)
+                    Stree = H2Trees.KMeansTree(X.pos, 2; minvalues=100)
+                    Otree = H2Trees.KMeansTree(Y.pos, 2; minvalues=100)
                 elseif treekind == :BisectionTree
                     Stree = ButterflyFactorizations.build_bisection_tree(
                         X.pos; max_points=maxpointsbisection
@@ -367,7 +367,7 @@ function run_benchmarks(
                 ACAblktree = H2Trees.BlockTree(ACAstree, ACAotree)
             else
                 if treekind == :KMeansTree
-                    tree = H2Trees.KMeansTree(X.pos, 2; minvalues=30)
+                    tree = H2Trees.KMeansTree(X.pos, 2; minvalues=100)
                 elseif treekind == :BisectionTree
                     tree = ButterflyFactorizations.build_bisection_tree(
                         X.pos; max_points=maxpointsbisection
