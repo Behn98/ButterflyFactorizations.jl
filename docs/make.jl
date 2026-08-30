@@ -1,22 +1,19 @@
 using Documenter
 using ButterflyFactorizations
-using BEAST
 
 makedocs(;
-    modules=[ButterflyFactorizations],
-    authors="Ben Christopher Merten <ben.merten@uni-rostock.de>",
     sitename="ButterflyFactorizations.jl",
+    modules=[ButterflyFactorizations],
     format=Documenter.HTML(;
-        prettyurls=get(ENV, "CI", "false") == "true",
-        canonical="https://Behn98.github.io/ButterflyFactorizations.jl",
+        prettyurls=get(ENV, "CI", nothing) == "true",
+        logo="assets/logo.png", # Enables your new transparent logo in the sidebar
         assets=String[],
     ),
     pages=[
-        "Home" => "index.md",
-        # You can add more pages here later, e.g.:
-        # "API Reference" => "api.md"
+        "Home & API" => "index.md",
+        "Mathematical Theory" => "theory.md",
+        "Performance Benchmarks" => "benchmarks.md",
     ],
-    checkdocs=:exports,
 )
 
-deploydocs(; repo="github.com/Behn98/ButterflyFactorizations.jl", devbranch="main")
+deploydocs(; repo="github.com/Behn98/ButterflyFactorizations.jl.git", devbranch="main")

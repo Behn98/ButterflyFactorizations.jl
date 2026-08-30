@@ -492,7 +492,7 @@ interactions across the entire physical space.
 
 **Why Matrix format?**
 While slightly less memory efficient than the flat dictionary format (due to sparsity tracking
-overhead), it allows for dramatically faster direct Matrix-Vector applications using
+overhead), it allows for faster direct Matrix-Vector applications using
 standard linear algebra methods, providing a clear visual and algebraic representation of the
 overall block structure for debugging.
 """
