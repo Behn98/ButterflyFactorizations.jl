@@ -10,6 +10,7 @@ makedocs(;
         "Mathematical Theory" => "theory.md",
         "Performance Benchmarks" => "benchmarks.md",
     ],
+    checkdocs=:exports,
 )
 
 deploydocs(; repo="github.com/Behn98/ButterflyFactorizations.jl.git", devbranch="main")
