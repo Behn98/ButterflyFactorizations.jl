@@ -1,17 +1,13 @@
-# ButterflyFactorizations
+# ButterflyFactorizations.jl
 
 <p align="center">
-  <img src="assets/logo.png" width="400" alt="ButterflyFactorizations Logo"/>
+  <img src="docs/src/assets/logo.png" width="400" alt="ButterflyFactorizations Logo"/>
 </p>
- 
+
 <p align="center">
   <b>High-frequency matrix compression for electromagnetic integral equations using Butterfly Factorization</b>
 </p>
- 
-<p align="center">
-  Research software for scalable compression of far-field interactions in Method of Moments (MoM) discretizations.
-</p>
- 
+
 <p align="center">
   <a href="https://Behn98.github.io/ButterflyFactorizations.jl/stable/"><img src="https://img.shields.io/badge/docs-stable-blue.svg" alt="Stable"></a>
   <a href="https://Behn98.github.io/ButterflyFactorizations.jl/dev/"><img src="https://img.shields.io/badge/docs-dev-blue.svg" alt="Dev"></a>
@@ -19,232 +15,21 @@
 </p>
 
 ---
- 
-## Overview
- 
-ButterflyFactorizations.jl is a high-performance, research-oriented implementation of a Butterfly Factorization framework designed for high-frequency electromagnetic applications.
- 
-The project focuses on compressing far-field interactions arising in the discretization of integral equations, particularly in the context of Method of Moments (MoM) formulations of electromagnetic scattering problems.
- 
-In high-frequency regimes, conventional low-rank compression methods become increasingly inefficient. Butterfly factorization exploits the hierarchical structure of interactions between spatially separated domains to significantly reduce computational cost and storage requirements.
 
-## At a Glance
+## Introduction
 
-**What this repository demonstrates**
+`ButterflyFactorizations.jl` is a high-performance Julia package providing a Butterfly Factorization framework for high-frequency electromagnetic applications. 
 
-- Scientific computing
-- Hierarchical matrix compression
-- Electromagnetic simulation
-- High-performance numerical methods
-- Julia package development
-- Research software engineering
+By exploiting the complementary low-rank property of far-field interactions across hierarchical domain trees, this package reduces the storage and matrix-vector multiplication complexity of dense oscillatory kernel matrices from $\mathcal{O}(N^2)$ to $\mathcal{O}(N \log N)$. It integrates natively with `H2Trees.jl` for hierarchical clustering and supports flat-array, thread-safe workspaces for zero-allocation matrix-vector products.
 
-**Core techniques**
-
-- Butterfly factorization
-- Hierarchical trees (via H2Trees integration)
-- Skeleton DoFs and RRQR compression
-- Thread-safe flat-array workspaces
-- Method of Moments (MoM) & EFIE discretization
-
-### Main Goals
- 
-- Efficient compression of far-field interactions
-- Reduced memory consumption for large scattering problems
-- Fast, zero-allocation matrix-vector products for iterative solvers via static thread-local workspaces
-- Foundation for butterfly algebra operations (addition, recompression)
-- Scalable implementation for electrically large problems
- 
----
- 
-## Why Butterfly Factorization?
-
-Large-scale electromagnetic simulations appear in numerous scientific and engineering domains:
-
-- Radar cross-section analysis
-- Wireless communication and massive MIMO systems
-- Medical imaging and ultrasound tomography
-- Remote sensing
-- Space systems and scattering analysis
-- Non-destructive testing
- 
-<p align="center">
-  <img src="assets/application_domains.png" width="900" alt="Application domains"/>
-</p>
-
-When solving electromagnetic scattering problems using the Electric Field Integral Equation (EFIE) and Method of Moments (MoM), the resulting dense matrices become computationally expensive.
-
-In low-frequency settings, matrix blocks are often compressed using low-rank approximations such as:
-
-- Singular Value Decomposition (SVD)
-- Adaptive Cross Approximation (ACA)
-
-However, in the high-frequency regime, singular values deteriorate but do not vanish sufficiently fast, making classical low-rank approximations increasingly inefficient.
-
-Butterfly factorization addresses this challenge by exploiting structured interactions between sufficiently separated source and observer domains.
-
----
-
-## Mathematical Background
-
-The implementation targets matrices arising from high-frequency discretizations of electromagnetic integral equations.
-
-Using the Method of Moments (MoM), the boundary integral formulation is discretized using basis functions (e.g., RWG basis functions), resulting in dense interaction matrices.
-
-Far-field interactions exhibit hierarchical structure and can be compressed efficiently using butterfly decompositions.
-
-### Complexity Improvements
-
-The butterfly approach reduces:
-
-- Computational complexity
-- Storage complexity
-- Cost of matrix-vector products
-
-for large-scale scattering problems.
-
----
-
-## Algorithm Overview
-
-At a high level, the butterfly factorization proceeds through a hierarchical decomposition of source and observer domains, supported externally via `H2Trees`.
-
-### 1. Hierarchical Domain Decomposition
-
-Source and observer domains are recursively subdivided into trees.
-
-<p align="center">
-  <img src="assets/tree_decomposition.png" width="750" alt="Observer and source tree decomposition"/>
-</p>
-   
-<p align="center">
-  <i>Hierarchical observer and source tree decomposition.</i>
-</p>
-
-This hierarchical structure enables the identification of admissible interactions between sufficiently separated clusters.
-
----
-
-### 2. Admissibility Criterion
-
-Interactions between sufficiently separated source-observer pairs exhibit reduced effective dimensionality.
-
-<p align="center">
-  <img src="assets/admissibility_criterion.png" width="700" alt="Admissibility criterion"/>
-</p>
-
-These admissible blocks become suitable for butterfly compression.
-
----
-
-### 3. Skeleton Degree of Freedom Compression
-
-Physical degrees of freedom are mapped onto skeleton degrees of freedom, allowing compressed interaction representations.
-
-Compression is performed using:
-
-- Oversampling-based rank estimation
-- Partial RRQR factorization
-- Hierarchical propagation of skeleton information
-
-<p align="center">
-  <img src="assets/skeleton_mapping.png" width="850" alt="Skeleton mapping process"/>
-</p>
-
-As the hierarchy progresses:
-
-- Source clusters grow larger
-- Observer clusters become smaller
-- Effective interaction rank remains approximately constant
-
-This property is central to the efficiency of butterfly factorization.
-
----
-
-### 4. Matrix-Vector Product Application
-
-The compressed butterfly representation is applied efficiently within matrix-vector products.
-
-<p align="center">
-  <img src="assets/mv_product_pipeline.png" width="850" alt="Matrix vector multiplication pipeline"/>
-</p>
-
-This forms the basis for efficient iterative solvers.
-
----
-
-## Numerical Results
-
-The implementation has been tested on benchmark scattering scenarios.
-
-### Example Configuration
-
-Parameters:
-```txt
-N = number of unknowns,
-radius,
-distance,
-λ = wavelength,
-h = discretization stepsize,
-
-```
-
-### Compression Accuracy
-
-<p align="center">
-  <img src="assets/error_analysis.png" width="750" alt="Compression error analysis"/>
-</p>
-     
-### Runtime and Scaling
-     
-<p align="center">
-  <img src="assets/runtime_scaling.png" width="750" alt="Runtime scaling"/>
-</p>
-
-### Memory Efficiency
-      
-<p align="center">
-  <img src="assets/storage_scaling.png" width="750" alt="Storage scaling"/>
-</p>
-
-Additional benchmarks and performance evaluations will be added soon.
-        
----
-
-## Current Status
-        
-### Implemented 
-
-- ✅ Dictionary-free, flat-array architecture with thread-safe workspaces
-- ✅ Compression of far-field interactions with controllable error bounds
-- ✅ Near- and far-field integration (Petrov-Galerkin formulations)
-- ✅ Hierarchical tree decomposition via H2Trees integration
-- ✅ High-performance, statically threaded matrix-vector products
-- ✅ Butterfly algebra modules (recompression, addition and multiplication for balanced binary trees)
-- ✅ Benchmarking, rank evaluation, and admissibility plotting framework
-
-
-### Work in Progress
-
-The development roadmap focuses on:
-
-1. **Advanced Butterfly Algebra**
-   - Implementing splitting and concatenation of butterflies
-   - Improved scaling for large systems
-
-2. **Performance Engineering**
-   - Profiling bottlenecks
-   - Further profiling memory footprints for massive meshes
-   - Improved benchmark coverage
-        
----
+For a deep dive into the mathematical background, algorithmic structure, and performance benchmarks, please see the [official documentation](https://Behn98.github.io/ButterflyFactorizations.jl/stable/).
 
 ## Installation
 
+Installing `ButterflyFactorizations.jl` is done by entering the package manager (enter `]` at the Julia REPL) and issuing:
+
 ```julia
-using Pkg
-Pkg.add(url="https://github.com/Behn98/ButterflyFactorizations.jl")
-```
+pkg> add [https://github.com/Behn98/ButterflyFactorizations.jl.git](https://github.com/Behn98/ButterflyFactorizations.jl.git)
         
 Or clone locally:
         
@@ -264,33 +49,45 @@ using H2Trees
 using ButterflyFactorizations
 using LinearAlgebra
 using OhMyThreads
+using BenchmarkTools
 
-h = 0.1
+# Restrict BLAS threads for efficient custom parallelization
+LinearAlgebra.BLAS.set_num_threads(1)
+
+# Problem Setup
+h = 0.05
 lambda = 10 * h
 k = 2 * pi / lambda
 m = meshsphere(1.0, h)
 X = raviartthomas(m)
 op = Maxwell3D.singlelayer(; wavenumber=k)
-tree = ButterflyFactorizations.build_bisection_tree(X.pos; max_points = 100)
+
+# Tree Decomposition
+tree = ButterflyFactorizations.build_bisection_tree(X.pos; max_points=100)
 blktree = BlockTree(tree, tree)
+
+# Assemble Butterfly Factorization
 @time Bfmat = ButterflyFactorizations.PetrovGalerkinBF(
-    op,
-    X,
-    X,
-    blktree,
-    k;
+    op, X, X, blktree, k;
     compressor=ButterflyFactorizations.PartialQR(),
     tol=1e-3,
     scheduler=OhMyThreads.DynamicScheduler(),
 )
-@time A = assemble(op, X, X)
+
+# Matrix-Vector Multiplication Validation
+@time A = assemble(op, X, X) # dense assembly by BEAST!
 xtest = rand(ComplexF64, size(Bfmat, 2))
 xs1 = Bfmat * xtest
 xs = A * xtest
+
+@belapsed Bfmat * xtest
+@belapsed A * xtest
+
 diff2 = norm(xs - xs1) / norm(xs)
+println("Relative Error: ", diff2)
+
 ```
-        
-> Examples will be expanded with reproducible benchmark scripts.
+  
         
 ## References (selection)
         

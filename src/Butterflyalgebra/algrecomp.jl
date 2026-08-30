@@ -2,19 +2,19 @@
     recompress_BF(Butterfly::ButterflyFactorization, τ)
 
 Recompresses a structural Butterfly Factorization (`BF`) by extracting its algebraic
-factors, recompressing them with tolerance `τ`, and restructuring the output back into a `BF`.
+factors, recompressing them with tolerance `τ`, and restructuring the output back into a
+`BF`.
 
-This process involves two main steps: first, the right factors are recompressed using
-a QR-based approach, and then the left factors are recompressed by transposing the
-structure, applying the same right recompression, and transposing back.
+Blocks that are occupying the same column space are grouped together, their matrices are
+vertically concatenated, and a QR decomposition is applied to find a low rank representation
+with respect to the given tolerance. The Q factors are then split back into the original
+block structure, and the R factors are stored in a dictionary representation of the the
+blockdiagonal matrix for updating the next level of the factorization. This compresses empty
+blocks and identity matrices introduced via the butterfly algebra.
 
 The resulting `BF` maintains the same hierarchical structure but with potentially reduced
 ranks in the `R` factors, leading to improved efficiency in storage and matrix-vector
 products while preserving the overall accuracy within the specified tolerance.
-
-*Note:* Algebraic recompression is only supported for the dictionary-based versions
-of the butterflies. The matrix-based format is not designed for such manipulations and
-would require a complete restructuring of its underlying data representation.
 """
 function recompress_BF(Butterfly::ButterflyFactorization, τ)
     return recompress_BF_left(recompress_BF_right(Butterfly, τ), τ)
@@ -23,7 +23,7 @@ end
 """
     recompress_BF_left(Butterfly::ButterflyFactorization, τ)
 
-Recompresses the left-hand side factors of a Butterfly Factorization by taking its adjoint,
+Recompresses towards left starting from the right of a Butterfly Factorization by taking its adjoint,
 applying right-recompression, and taking the adjoint again.
 """
 function recompress_BF_left(Butterfly::ButterflyFactorization, τ)
@@ -37,9 +37,8 @@ _row_key(b::ButterflyBlock) = (b.obs_out, b.src_out)
 """
     recompress_BF_right(Butterfly_init::ButterflyFactorization, τ::Float64; scheduler)
 
-Applies QR-based rank reduction to the right-hand side hierarchical `R` factors of the
-Butterfly Factorization. Processes interacting chunks in parallel using `OhMyThreads`
-to maintain high assembly performance.
+Applies QR-based rank reduction to the `R` factors of the Butterfly Factorization. Processes
+interacting chunks in parallel using `OhMyThreads` to maintain high assembly performance.
 """
 function recompress_BF_right(
     Butterfly_init::ButterflyFactorization{T,M},
